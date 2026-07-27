@@ -10,11 +10,11 @@
   celulares dos produtores substituam o cache antigo automaticamente.
 */
 
-const CACHE_NAME = 'leitefacil-v1';
+const CACHE_NAME = 'leitefacil-v3';
 
 const ARQUIVOS_ESSENCIAIS = [
   './',
-  './leitefacil.html',
+  './index.html',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
@@ -69,7 +69,7 @@ self.addEventListener('fetch', (evento) => {
       })
       .catch(() =>
         caches.match(requisicao).then((respostaCache) =>
-          respostaCache || caches.match('./leitefacil.html')
+          respostaCache || caches.match('./index.html')
         )
       )
   );
