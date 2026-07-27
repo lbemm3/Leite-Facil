@@ -2,7 +2,7 @@
   "name": "LeiteFácil",
   "short_name": "LeiteFácil",
   "description": "Gestão simples e completa para o produtor de leite: animais, produção, sanidade, financeiro e indicadores.",
-  "start_url": "./leitefacil.html",
+  "start_url": "./index.html",
   "scope": "./",
   "id": "leitefacil-app",
   "display": "standalone",
