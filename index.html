@@ -309,7 +309,8 @@ const ICONES = {
   grafico: '<line x1="4" y1="20" x2="20" y2="20"/><rect x="6" y="12" width="3" height="8"/><rect x="11" y="7" width="3" height="13"/><rect x="16" y="15" width="3" height="5"/>',
   compartilhar: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><line x1="8.2" y1="10.8" x2="15.8" y2="7.2"/><line x1="8.2" y1="13.2" x2="15.8" y2="16.8"/>',
   frasco: '<path d="M9 2h6"/><path d="M10 2v6.2L4.6 18a2 2 0 0 0 1.8 3h11.2a2 2 0 0 0 1.8-3L14 8.2V2"/><path d="M7.2 15h9.6"/>',
-  documento: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>'
+  documento: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>',
+  sino: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/>'
 };
 function iconeInline(nome, tamanho){ return ic(ICONES[nome] || '', tamanho); }
 function iniciais(nome){ return (nome||'').split(' ').filter(Boolean).slice(0,2).map(p=>p[0]).join('').toUpperCase(); }
@@ -355,7 +356,7 @@ const TERMO_USO_HTML =
   + '<p style="margin-bottom:12px"><strong>Uma exceção importante.</strong> Seus dados financeiros (receitas, despesas e saldo) são privados. Só você tem acesso a eles. O administrador não vê, em nenhuma hipótese, o financeiro de nenhum produtor.</p>'
   + '<p style="margin-bottom:12px"><strong>Compartilhamento com outras pessoas.</strong> Você pode convidar um veterinário, técnico ou sócio para ver os dados da sua propriedade, escolhendo módulo por módulo o que essa pessoa enxerga, inclusive o financeiro, se você quiser. Essa decisão é sua e pode ser desfeita a qualquer momento na aba Perfil.</p>'
   + '<p style="margin-bottom:12px"><strong>Seus direitos.</strong> Você pode editar ou corrigir seus dados diretamente no aplicativo quando quiser, e pode pedir a exclusão da sua conta e de todos os seus dados a qualquer momento, entrando em contato com o responsável pelo projeto.</p>'
-  + '<p style="margin-bottom:0"><strong>Dúvidas ou pedido de exclusão de dados:</strong> cbemm2@gmail.com. Última atualização: julho de 2026.</p>'
+  + '<p style="margin-bottom:0"><strong>Dúvidas ou pedido de exclusão de dados:</strong> [INSIRA SEU E-MAIL AQUI]. Última atualização: julho de 2026.</p>'
   + '</div>';
 
 function mostrarMensagemLogin(msg, tipo){
@@ -1738,6 +1739,7 @@ function renderPerfil(){
     + '<div class="cartao" style="padding:4px 16px">'
       + '<button class="linha-menu" onclick="abrirEdicaoPerfil()"><span class="ic">'+iconeInline('telefone',18)+'</span><span class="txt">Meus dados (nome, propriedade, telefone)</span></button>'
       + '<button class="linha-menu" onclick="abrirTermosDeUso(false)"><span class="ic">'+iconeInline('documento',18)+'</span><span class="txt">Termos de uso e privacidade'+(p.termos_aceitos_em ? '<div class="legenda-muted" style="margin:0; font-size:12px">Aceito em '+formatarData(p.termos_aceitos_em.slice(0,10))+'</div>' : '')+'</span></button>'
+      + '<button class="linha-menu" id="btn-notificacoes-push" onclick="alternarNotificacoesPush()"><span class="ic">'+iconeInline('sino',18)+'</span><span class="txt" id="txt-notificacoes-push">Avisos no celular<div class="legenda-muted" style="margin:0; font-size:12px">Verificando...</div></span></button>'
     + '</div>'
     + '<div class="cartao">'
       + '<div class="rotulo-secao" style="margin-top:0">Dados salvos</div>'
@@ -1751,6 +1753,7 @@ function renderPerfil(){
     + '<div id="lista-colaboradores"><div class="legenda-muted">Carregando...</div></div>'
     + '<button class="botao-perigo-fino" onclick="sair()">'+iconeInline('sair',16)+' Sair da conta</button>';
   renderListaColaboradores();
+  atualizarStatusNotificacoesPush();
 }
 
 async function renderListaColaboradores(){
@@ -1986,6 +1989,89 @@ async function aceitarTermosDeUso(){
   await continuarAposAceite();
 }
 
+// ---------- Notificações push (avisos no celular) ----------
+
+// Chave pública VAPID (não é segredo — pode ficar exposta no código do site).
+const VAPID_CHAVE_PUBLICA = 'BGTcEfnGzWkzQLdaznjDLKpJY9UlEQ1Nwt5NQk44D3PMJtG1GsK5P3CHlz4g0W78mojw3ksK_jB3ZQgq7MnFrMA';
+
+function base64UrlParaUint8Array(base64Url){
+  const preenchimento = '='.repeat((4 - base64Url.length % 4) % 4);
+  const base64 = (base64Url + preenchimento).replace(/-/g, '+').replace(/_/g, '/');
+  const bruto = atob(base64);
+  const saida = new Uint8Array(bruto.length);
+  for(let i=0; i<bruto.length; i++) saida[i] = bruto.charCodeAt(i);
+  return saida;
+}
+
+function suportaNotificacoesPush(){
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+async function atualizarStatusNotificacoesPush(){
+  const elTxt = document.getElementById('txt-notificacoes-push');
+  if(!elTxt) return;
+  if(!suportaNotificacoesPush()){
+    elTxt.innerHTML = 'Avisos no celular<div class="legenda-muted" style="margin:0; font-size:12px">Não disponível neste navegador</div>';
+    return;
+  }
+  try{
+    const registro = await navigator.serviceWorker.ready;
+    const inscricao = await registro.pushManager.getSubscription();
+    if(inscricao && Notification.permission === 'granted'){
+      elTxt.innerHTML = 'Avisos no celular<div class="legenda-muted" style="margin:0; font-size:12px; color:var(--verde,#2E7D32)">Ativados — toque para desativar</div>';
+    } else {
+      elTxt.innerHTML = 'Avisos no celular<div class="legenda-muted" style="margin:0; font-size:12px">Desativados — toque para ativar</div>';
+    }
+  }catch(e){
+    elTxt.innerHTML = 'Avisos no celular<div class="legenda-muted" style="margin:0; font-size:12px">Desativados — toque para ativar</div>';
+  }
+}
+
+async function alternarNotificacoesPush(){
+  if(!suportaNotificacoesPush()){
+    alert('Este navegador não aceita notificações. No iPhone, é preciso ter instalado o LeiteFácil na tela inicial (Adicionar à Tela de Início) para os avisos funcionarem.');
+    return;
+  }
+  const registro = await navigator.serviceWorker.ready;
+  const inscricaoAtual = await registro.pushManager.getSubscription();
+
+  if(inscricaoAtual){
+    // Já está ativado -> desativar
+    try{
+      await sb.from('inscricoes_push').delete().eq('endpoint', inscricaoAtual.endpoint);
+      await inscricaoAtual.unsubscribe();
+    }catch(e){ /* mesmo se der erro, seguimos e atualizamos o status */ }
+    await atualizarStatusNotificacoesPush();
+    return;
+  }
+
+  // Ainda não está ativado -> pedir permissão e inscrever
+  const permissao = await Notification.requestPermission();
+  if(permissao !== 'granted'){
+    alert('Sem a permissão de notificações, não é possível ativar os avisos no celular.');
+    await atualizarStatusNotificacoesPush();
+    return;
+  }
+
+  try{
+    const novaInscricao = await registro.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: base64UrlParaUint8Array(VAPID_CHAVE_PUBLICA)
+    });
+    const dados = novaInscricao.toJSON();
+    const { error } = await sb.from('inscricoes_push').upsert({
+      produtor_id: usuarioAtual.id,
+      endpoint: dados.endpoint,
+      p256dh: dados.keys.p256dh,
+      auth: dados.keys.auth
+    }, { onConflict: 'produtor_id,endpoint' });
+    if(error){ alert('Não foi possível salvar sua inscrição de avisos. Tente novamente.'); }
+  }catch(e){
+    alert('Não foi possível ativar os avisos no celular agora. Tente novamente em instantes.');
+  }
+  await atualizarStatusNotificacoesPush();
+}
+
 async function sair(){
   await sb.auth.signOut();
   usuarioAtual = null;
@@ -2007,13 +2093,6 @@ if('serviceWorker' in navigator){
     navigator.serviceWorker.register('service-worker.js').catch(function(erro){
       console.error('Falha ao registrar o service worker:', erro);
     });
-  });
-}
-  if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./service-worker.js')
-      .then(reg => console.log('Service Worker registrado', reg))
-      .catch(err => console.error('Erro ao registrar Service Worker', err));
   });
 }
 </script>
