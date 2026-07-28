@@ -5,7 +5,7 @@
   Isso garante que o produtor sempre veja a versão mais atual do app quando
   conectado, mas ainda consiga abrir o app no curral sem sinal.
 
-  IMPORTANTE: sempre que uma nova versão do leitefacil.html for publicada,
+  IMPORTANTE: sempre que uma nova versão do index.html for publicada,
   aumente o número de CACHE_NAME abaixo (ex.: 'leitefacil-v2') para que os
   celulares dos produtores substituam o cache antigo automaticamente.
 */
@@ -72,5 +72,41 @@ self.addEventListener('fetch', (evento) => {
           respostaCache || caches.match('./index.html')
         )
       )
+  );
+});
+
+// Recebe uma notificação push enviada pelo servidor (Edge Function) e exibe
+// na tela do celular, mesmo com o app fechado.
+self.addEventListener('push', (evento) => {
+  let dados = {};
+  try {
+    dados = evento.data ? evento.data.json() : {};
+  } catch (e) {
+    dados = { title: 'LeiteFácil', body: evento.data ? evento.data.text() : '' };
+  }
+
+  const titulo = dados.title || 'LeiteFácil';
+  const opcoes = {
+    body: dados.body || '',
+    icon: './icons/icon-192.png',
+    badge: './icons/icon-192.png',
+    data: { url: dados.url || './index.html' }
+  };
+
+  evento.waitUntil(self.registration.showNotification(titulo, opcoes));
+});
+
+// Quando a pessoa toca na notificação, abre o app (ou foca a aba já aberta).
+self.addEventListener('notificationclick', (evento) => {
+  evento.notification.close();
+  const urlAlvo = (evento.notification.data && evento.notification.data.url) || './index.html';
+
+  evento.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((listaJanelas) => {
+      for (const janela of listaJanelas) {
+        if (janela.url.includes('index.html') && 'focus' in janela) return janela.focus();
+      }
+      if (clients.openWindow) return clients.openWindow(urlAlvo);
+    })
   );
 });
