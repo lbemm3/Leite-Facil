@@ -2020,6 +2020,25 @@ function suportaNotificacoesPush(){
   return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 }
 
+// Descobre, ao mesmo tempo: (1) se este navegador já tem uma inscrição de
+// push ativa (independente de conta) e (2) se ESTE produtor específico já
+// está associado a ela no banco. Como o navegador guarda só uma inscrição
+// por aparelho (não por conta), duas contas diferentes no mesmo celular
+// podem compartilhar o mesmo "endpoint" — por isso a checagem certa é
+// sempre por produtor, nunca só "existe alguma inscrição no navegador?".
+async function statusInscricaoPushDoProdutor(){
+  if(!suportaNotificacoesPush()) return { suportado:false };
+  const registro = await navigator.serviceWorker.ready;
+  const inscricaoNavegador = await registro.pushManager.getSubscription();
+  if(!inscricaoNavegador) return { suportado:true, inscricaoNavegador:null, ativoParaEsteProdutor:false };
+  const { data } = await sb.from('inscricoes_push')
+    .select('id')
+    .eq('produtor_id', usuarioAtual.id)
+    .eq('endpoint', inscricaoNavegador.endpoint)
+    .maybeSingle();
+  return { suportado:true, inscricaoNavegador, ativoParaEsteProdutor: !!data };
+}
+
 async function atualizarStatusNotificacoesPush(){
   const elTxt = document.getElementById('txt-notificacoes-push');
   if(!elTxt) return;
@@ -2028,9 +2047,8 @@ async function atualizarStatusNotificacoesPush(){
     return;
   }
   try{
-    const registro = await navigator.serviceWorker.ready;
-    const inscricao = await registro.pushManager.getSubscription();
-    if(inscricao && Notification.permission === 'granted'){
+    const status = await statusInscricaoPushDoProdutor();
+    if(status.ativoParaEsteProdutor && Notification.permission === 'granted'){
       elTxt.innerHTML = 'Avisos no celular<div class="legenda-muted" style="margin:0; font-size:12px; color:var(--verde,#2E7D32)">Ativados — toque para desativar</div>';
     } else {
       elTxt.innerHTML = 'Avisos no celular<div class="legenda-muted" style="margin:0; font-size:12px">Desativados — toque para ativar</div>';
@@ -2045,33 +2063,50 @@ async function alternarNotificacoesPush(){
     alert('Este navegador não aceita notificações. No iPhone, é preciso ter instalado o LeiteFácil na tela inicial (Adicionar à Tela de Início) para os avisos funcionarem.');
     return;
   }
-  const registro = await navigator.serviceWorker.ready;
-  const inscricaoAtual = await registro.pushManager.getSubscription();
 
-  if(inscricaoAtual){
-    // Já está ativado -> desativar
+  const status = await statusInscricaoPushDoProdutor();
+
+  if(status.ativoParaEsteProdutor){
+    // Já ativado para ESTE produtor -> desativar só a associação dele.
     try{
-      await sb.from('inscricoes_push').delete().eq('endpoint', inscricaoAtual.endpoint);
-      await inscricaoAtual.unsubscribe();
+      await sb.from('inscricoes_push').delete().eq('produtor_id', usuarioAtual.id).eq('endpoint', status.inscricaoNavegador.endpoint);
+      // Cancela também a inscrição do navegador. Se outra conta deste
+      // mesmo aparelho ainda quiser avisos, ela reativa normalmente —
+      // isso cria uma inscrição nova (o navegador permite de novo).
+      await status.inscricaoNavegador.unsubscribe();
     }catch(e){ /* mesmo se der erro, seguimos e atualizamos o status */ }
     await atualizarStatusNotificacoesPush();
     return;
   }
 
-  // Ainda não está ativado -> pedir permissão e inscrever
-  const permissao = await Notification.requestPermission();
-  if(permissao !== 'granted'){
-    alert('Sem a permissão de notificações, não é possível ativar os avisos no celular.');
-    await atualizarStatusNotificacoesPush();
-    return;
+  // Ainda não ativado para este produtor.
+  const registro = await navigator.serviceWorker.ready;
+  let inscricaoNavegador = status.inscricaoNavegador;
+
+  if(!inscricaoNavegador){
+    const permissao = await Notification.requestPermission();
+    if(permissao !== 'granted'){
+      alert('Sem a permissão de notificações, não é possível ativar os avisos no celular.');
+      await atualizarStatusNotificacoesPush();
+      return;
+    }
+    try{
+      inscricaoNavegador = await registro.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: base64UrlParaUint8Array(VAPID_CHAVE_PUBLICA)
+      });
+    }catch(e){
+      alert('Não foi possível ativar os avisos no celular agora. Tente novamente em instantes.');
+      await atualizarStatusNotificacoesPush();
+      return;
+    }
   }
+  // Se o navegador já tinha uma inscrição (de outra conta usando o mesmo
+  // aparelho), só precisamos associar ESTE produtor a ela também — os
+  // dois recebem os avisos normalmente no mesmo aparelho.
 
   try{
-    const novaInscricao = await registro.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: base64UrlParaUint8Array(VAPID_CHAVE_PUBLICA)
-    });
-    const dados = novaInscricao.toJSON();
+    const dados = inscricaoNavegador.toJSON();
     const { error } = await sb.from('inscricoes_push').upsert({
       produtor_id: usuarioAtual.id,
       endpoint: dados.endpoint,
