@@ -789,6 +789,7 @@ const TIPOS_EVENTO = {
 };
 const DIAS_GESTACAO = 283;
 const DIAS_LACTACAO_ATE_SECAGEM = 305;
+const DIAS_CICLO_ESTRO = 21;
 
 function somarDias(dataIso, dias){
   const d = new Date(dataIso + 'T00:00:00');
@@ -812,6 +813,8 @@ async function renderHistoricoReprodutivo(animalId){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de parto:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_GESTACAO))+'</div>';
     } else if(maisRecente.tipo === 'parto'){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de secagem:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_LACTACAO_ATE_SECAGEM))+'</div>';
+    } else if(maisRecente.tipo === 'cio'){
+      previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de próximo cio:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_CICLO_ESTRO))+' <span class="legenda-muted" style="margin:0">(caso não tenha sido coberta)</span></div>';
     }
   }
 
@@ -893,7 +896,8 @@ async function renderHistoricoSanitario(animalId){
     return '<div class="cartao" style="display:flex; align-items:center; gap:12px; margin-bottom:8px'+(emCarencia ? '; border-color:var(--manteiga)' : '')+'">'
       + '<div style="flex:1"><strong>'+(TIPOS_SANITARIO[ev.tipo]||ev.tipo)+(ev.descricao ? ' — '+escaparHTML(ev.descricao) : '')+'</strong>'
       + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Aplicado em '+formatarData(ev.data_aplicacao)
-      + (ev.data_fim_carencia ? ' · Carência até '+formatarData(ev.data_fim_carencia)+(emCarencia ? ' (em andamento)' : '') : '')+'</div></div>'
+      + (ev.data_fim_carencia ? ' · Carência até '+formatarData(ev.data_fim_carencia)+(emCarencia ? ' (em andamento)' : '') : '')
+      + (ev.proxima_dose_em ? ' · Próxima dose em '+formatarData(ev.proxima_dose_em) : '')+'</div></div>'
       + '<button class="botao-perigo-fino" style="margin-top:0" onclick="excluirEventoSanitario('+ev.id+','+animalId+')">'+iconeInline('lixo',15)+'</button>'
       + '</div>';
   }).join('');
@@ -913,6 +917,7 @@ function abrirFormularioSanitario(animalId){
     + '<div class="grupo-campo"><label for="campo-descricao-sanitario">Descrição</label><input id="campo-descricao-sanitario" type="text" placeholder="Ex.: Vacina aftosa, Antibiótico X"></div>'
     + '<div class="grupo-campo"><label for="campo-data-sanitario">Data da aplicação</label><input id="campo-data-sanitario" type="date" value="'+hoje+'"></div>'
     + '<div class="grupo-campo"><label for="campo-carencia-dias">Dias de carência</label><input id="campo-carencia-dias" type="number" min="0" value="0"></div>'
+    + '<div class="grupo-campo"><label for="campo-proxima-dose">Próxima dose prevista (opcional)</label><input id="campo-proxima-dose" type="date"></div>'
     + '<div id="mensagem-sanitario" class="legenda-muted" style="min-height:18px"></div>'
     + '<button class="botao botao-primario botao-bloco" onclick="salvarEventoSanitario('+animalId+')">Salvar</button>'
     + '</div>'
@@ -924,6 +929,7 @@ async function salvarEventoSanitario(animalId){
   const descricao = document.getElementById('campo-descricao-sanitario').value.trim();
   const data_aplicacao = document.getElementById('campo-data-sanitario').value;
   const dias_carencia = Number(document.getElementById('campo-carencia-dias').value) || 0;
+  const proxima_dose_em = document.getElementById('campo-proxima-dose').value || null;
   const msg = document.getElementById('mensagem-sanitario');
 
   if(!data_aplicacao){ msg.textContent = 'Preencha a data da aplicação.'; msg.style.color = 'var(--perigo)'; return; }
@@ -934,7 +940,7 @@ async function salvarEventoSanitario(animalId){
   msg.style.color = 'var(--tinta-suave)';
 
   const { error } = await sb.from('eventos_sanitarios').insert({
-    animal_id: animalId, produtor_id: usuarioAtual.id, tipo, descricao, data_aplicacao, dias_carencia, data_fim_carencia
+    animal_id: animalId, produtor_id: usuarioAtual.id, tipo, descricao, data_aplicacao, dias_carencia, data_fim_carencia, proxima_dose_em
   });
 
   if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
@@ -1172,13 +1178,14 @@ async function excluirProducao(data){
 
 /* ======================= CALENDÁRIO DE ATIVIDADES (exibido na tela de Início) ======================= */
 async function buscarAlertasCalendario(){
-  const [{ data: meusAnimais, error: erroAnimais }, { data: eventosRepro, error: erroRepro }, { data: eventosSan, error: erroSan }] = await Promise.all([
+  const [{ data: meusAnimais, error: erroAnimais }, { data: eventosRepro, error: erroRepro }, { data: eventosSan, error: erroSan }, { data: eventosDose, error: erroDose }] = await Promise.all([
     sb.from('animais').select('id, identificacao').eq('produtor_id', usuarioAtual.id),
     sb.from('eventos_reprodutivos').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:true }),
-    sb.from('eventos_sanitarios').select('*').eq('produtor_id', usuarioAtual.id).not('data_fim_carencia', 'is', null)
+    sb.from('eventos_sanitarios').select('*').eq('produtor_id', usuarioAtual.id).not('data_fim_carencia', 'is', null),
+    sb.from('eventos_sanitarios').select('*').eq('produtor_id', usuarioAtual.id).not('proxima_dose_em', 'is', null)
   ]);
 
-  if(erroAnimais || erroRepro || erroSan){
+  if(erroAnimais || erroRepro || erroSan || erroDose){
     return [];
   }
 
@@ -1195,11 +1202,17 @@ async function buscarAlertasCalendario(){
       alertas.push({ data: somarDias(ev.data, DIAS_GESTACAO), titulo: 'Previsão de parto', animal: mapaAnimais[ev.animal_id] });
     } else if(ev.tipo === 'parto'){
       alertas.push({ data: somarDias(ev.data, DIAS_LACTACAO_ATE_SECAGEM), titulo: 'Previsão de secagem', animal: mapaAnimais[ev.animal_id] });
+    } else if(ev.tipo === 'cio'){
+      alertas.push({ data: somarDias(ev.data, DIAS_CICLO_ESTRO), titulo: 'Previsão de próximo cio', animal: mapaAnimais[ev.animal_id] });
     }
   });
 
   eventosSan.forEach(ev => {
     alertas.push({ data: ev.data_fim_carencia, titulo: 'Fim da carência — '+(TIPOS_SANITARIO[ev.tipo]||ev.tipo)+(ev.descricao ? ' ('+ev.descricao+')' : ''), animal: mapaAnimais[ev.animal_id] });
+  });
+
+  eventosDose.forEach(ev => {
+    alertas.push({ data: ev.proxima_dose_em, titulo: 'Próxima dose — '+(TIPOS_SANITARIO[ev.tipo]||ev.tipo)+(ev.descricao ? ' ('+ev.descricao+')' : ''), animal: mapaAnimais[ev.animal_id] });
   });
 
   alertas.sort((a,b) => a.data.localeCompare(b.data));
