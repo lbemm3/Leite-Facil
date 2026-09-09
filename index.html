@@ -1117,7 +1117,7 @@ async function renderProducao(){
   document.getElementById('tela-producao').innerHTML = cabecalho + corpoLitros + renderSecaoQualidade()
     + '<div class="linha-tracejada"></div>'
     + '<div class="rotulo-secao">Ordenha por vaca (individual) <span class="legenda-muted" style="font-size:12px; margin:0">— opcional</span></div>'
-    + '<div class="legenda-muted" style="margin-top:-6px">Só aparecem aqui as vacas em lactação. Quando uma vaca seca, ela sai da lista sozinha.</div>'
+    + '<div class="legenda-muted" style="margin-top:-6px">Só aparecem aqui as vacas em lactação. Quando uma vaca seca, ela sai da lista sozinha. Para ver a curva de lactação de uma vaca, abra a ficha dela em "Meus animais" (toque na vaca que quiser ver).</div>'
     + '<div class="cartao" style="display:flex; align-items:center; justify-content:center; gap:16px; margin:12px 0">'
       + '<button style="border:none; background:none; font-size:20px; color:var(--azul); cursor:pointer; padding:4px 10px" onclick="mudarDiaOrdenhaIndividual(-1)">‹</button>'
       + '<input type="date" id="campo-data-ordenha-individual" value="'+DATA_ORDENHA_INDIVIDUAL+'" onchange="mudarDataOrdenhaIndividual(this.value)">'
