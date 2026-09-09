@@ -857,10 +857,46 @@ function abrirEdicaoAnimal(id){
     + '<div id="secao-reprodutivo"><div class="legenda-muted">Carregando histórico...</div></div>'
     + '<div class="linha-tracejada"></div>'
     + '<div class="rotulo-secao">Manejo sanitário</div>'
-    + '<div id="secao-sanitario"><div class="legenda-muted">Carregando histórico...</div></div>';
+    + '<div id="secao-sanitario"><div class="legenda-muted">Carregando histórico...</div></div>'
+    + '<div class="linha-tracejada"></div>'
+    + '<div class="rotulo-secao">Curva de lactação (produção individual) <span class="legenda-muted" style="font-size:12px; margin:0">— opcional</span></div>'
+    + '<div id="secao-producao-individual"><div class="legenda-muted">Carregando...</div></div>';
   abrirModal();
   renderHistoricoReprodutivo(a.id);
   renderHistoricoSanitario(a.id);
+  renderCurvaLactacao(a.id);
+}
+
+async function renderCurvaLactacao(animalId){
+  const container = document.getElementById('secao-producao-individual');
+  if(!container) return;
+
+  const { data, error } = await sb.from('producao_leite_individual')
+    .select('data, litros_manha, litros_tarde')
+    .eq('animal_id', animalId)
+    .order('data', { ascending:true });
+
+  if(error){
+    container.innerHTML = '<div class="legenda-muted">Não foi possível carregar a produção individual.</div>';
+    return;
+  }
+  if(!data || data.length === 0){
+    container.innerHTML = '<div class="legenda-muted">Nenhum registro individual de ordenha ainda para este animal. Isso é opcional — só aparece aqui se você usar a seção "Ordenha por vaca" na tela de Produção.</div>';
+    return;
+  }
+
+  const totalDia = r => Number(r.litros_manha||0) + Number(r.litros_tarde||0);
+  const paraGrafico = data.slice(-60);
+  const maxGrafico = Math.max(1, ...paraGrafico.map(totalDia));
+  const barras = paraGrafico.map(r=>{
+    const altura = Math.round((totalDia(r)/maxGrafico)*80) + 4;
+    return '<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; min-width:8px">'
+      + '<div title="'+formatarData(r.data)+': '+totalDia(r).toFixed(1)+' L" style="width:100%; max-width:14px; height:'+altura+'px; background:var(--azul); border-radius:3px 3px 0 0"></div>'
+      + '</div>';
+  }).join('');
+
+  container.innerHTML = '<div class="legenda-muted" style="margin-bottom:8px">Últimos '+paraGrafico.length+' dias registrados (manhã + tarde somadas). Passe o dedo/mouse sobre uma barra para ver a data e o total.</div>'
+    + '<div class="cartao"><div style="display:flex; align-items:flex-end; gap:3px; height:110px">'+barras+'</div></div>';
 }
 
 const TIPOS_EVENTO = {
@@ -1078,7 +1114,117 @@ async function renderProducao(){
     }).join('');
   }
 
-  document.getElementById('tela-producao').innerHTML = cabecalho + corpoLitros + renderSecaoQualidade();
+  document.getElementById('tela-producao').innerHTML = cabecalho + corpoLitros + renderSecaoQualidade()
+    + '<div class="linha-tracejada"></div>'
+    + '<div class="rotulo-secao">Ordenha por vaca (individual) <span class="legenda-muted" style="font-size:12px; margin:0">— opcional</span></div>'
+    + '<div class="legenda-muted" style="margin-top:-6px">Só aparecem aqui as vacas em lactação. Quando uma vaca seca, ela sai da lista sozinha.</div>'
+    + '<div class="cartao" style="display:flex; align-items:center; justify-content:center; gap:16px; margin:12px 0">'
+      + '<button style="border:none; background:none; font-size:20px; color:var(--azul); cursor:pointer; padding:4px 10px" onclick="mudarDiaOrdenhaIndividual(-1)">‹</button>'
+      + '<input type="date" id="campo-data-ordenha-individual" value="'+DATA_ORDENHA_INDIVIDUAL+'" onchange="mudarDataOrdenhaIndividual(this.value)">'
+      + '<button style="border:none; background:none; font-size:20px; color:var(--azul); cursor:pointer; padding:4px 10px" onclick="mudarDiaOrdenhaIndividual(1)">›</button>'
+    + '</div>'
+    + '<div id="secao-ordenha-individual"><div class="legenda-muted">Carregando...</div></div>';
+  renderSecaoOrdenhaIndividual();
+}
+
+let DATA_ORDENHA_INDIVIDUAL = new Date().toISOString().slice(0,10);
+
+async function renderSecaoOrdenhaIndividual(){
+  const container = document.getElementById('secao-ordenha-individual');
+  if(!container) return;
+  container.innerHTML = '<div class="legenda-muted">Carregando...</div>';
+
+  const [{ data: animais, error: erroAnimais }, { data: eventosRepro, error: erroEventos }] = await Promise.all([
+    sb.from('animais').select('*').eq('produtor_id', usuarioAtual.id),
+    sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id)
+  ]);
+
+  if(erroAnimais || erroEventos){
+    container.innerHTML = '<div class="legenda-muted">Não foi possível carregar os animais.</div>';
+    return;
+  }
+
+  const eventosPorAnimal = {};
+  (eventosRepro||[]).forEach(ev=>{ (eventosPorAnimal[ev.animal_id] = eventosPorAnimal[ev.animal_id] || []).push(ev); });
+
+  const hoje = new Date().toISOString().slice(0,10);
+  const lactantes = (animais||[])
+    .map(a => ({ ...a, lote: calcularLoteAnimal(a, eventosPorAnimal[a.id], hoje) }))
+    .filter(a => a.lote === 'lactante')
+    .sort((x,y)=> String(x.identificacao).localeCompare(String(y.identificacao), 'pt-BR', {numeric:true}));
+
+  if(lactantes.length === 0){
+    container.innerHTML = '<div class="legenda-muted">Nenhuma vaca lactante no momento.</div>';
+    return;
+  }
+
+  const { data: registrosDoDia } = await sb.from('producao_leite_individual')
+    .select('*')
+    .eq('produtor_id', usuarioAtual.id)
+    .eq('data', DATA_ORDENHA_INDIVIDUAL);
+
+  const registroPorAnimal = {};
+  (registrosDoDia||[]).forEach(r => { registroPorAnimal[r.animal_id] = r; });
+
+  const linhas = lactantes.map(a => {
+    const r = registroPorAnimal[a.id] || {};
+    const statusInfo = statusOrdenhaIndividual(r);
+    return '<tr data-linha-animal="'+a.id+'">'
+      + '<td style="font-weight:700">Nº '+escaparHTML(a.identificacao)+'</td>'
+      + '<td><input type="number" min="0" step="0.1" inputmode="decimal" value="'+(r.litros_manha ?? '')+'" style="width:70px" onchange="salvarOrdenhaIndividual('+a.id+', this)"></td>'
+      + '<td><input type="number" min="0" step="0.1" inputmode="decimal" value="'+(r.litros_tarde ?? '')+'" style="width:70px" onchange="salvarOrdenhaIndividual('+a.id+', this)"></td>'
+      + '<td id="status-ordenha-'+a.id+'" style="text-align:center"><span title="'+statusInfo.titulo+'" style="display:inline-block; width:12px; height:12px; border-radius:50%; background:'+statusInfo.cor+'"></span></td>'
+      + '</tr>';
+  }).join('');
+
+  container.innerHTML = '<div style="overflow-x:auto"><table class="tabela-admin"><thead><tr><th>Vaca</th><th>Manhã (L)</th><th>Tarde (L)</th><th></th></tr></thead><tbody>'+linhas+'</tbody></table></div>'
+    + '<div class="legenda-muted" style="margin-top:10px; font-size:12px">'
+      + '<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--zinco-claro); margin-right:4px"></span>Nada lançado&nbsp; &nbsp;'
+      + '<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--manteiga); margin-right:4px"></span>Falta uma ordenha&nbsp; &nbsp;'
+      + '<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--pasto); margin-right:4px"></span>Dia completo'
+    + '</div>';
+}
+
+function statusOrdenhaIndividual(r){
+  const temManha = r.litros_manha !== null && r.litros_manha !== undefined && r.litros_manha !== '';
+  const temTarde = r.litros_tarde !== null && r.litros_tarde !== undefined && r.litros_tarde !== '';
+  if(temManha && temTarde) return { cor:'var(--pasto)', titulo:'Manhã e tarde lançadas' };
+  if(temManha || temTarde) return { cor:'var(--manteiga)', titulo:'Falta lançar uma ordenha' };
+  return { cor:'var(--zinco-claro)', titulo:'Nada lançado ainda' };
+}
+
+async function salvarOrdenhaIndividual(animalId, inputAlterado){
+  const linhaEl = inputAlterado.closest('tr');
+  const inputs = linhaEl.querySelectorAll('input');
+  const litros_manha = inputs[0].value === '' ? null : Number(inputs[0].value);
+  const litros_tarde = inputs[1].value === '' ? null : Number(inputs[1].value);
+  const statusEl = document.getElementById('status-ordenha-'+animalId);
+
+  const { error } = await sb.from('producao_leite_individual').upsert({
+    animal_id: animalId,
+    produtor_id: usuarioAtual.id,
+    data: DATA_ORDENHA_INDIVIDUAL,
+    litros_manha, litros_tarde
+  }, { onConflict: 'animal_id,data' });
+
+  if(error){
+    if(statusEl) statusEl.innerHTML = '<span title="Não foi possível salvar" style="color:var(--perigo); font-size:11px; font-weight:700">Erro</span>';
+    return;
+  }
+  const statusInfo = statusOrdenhaIndividual({ litros_manha, litros_tarde });
+  if(statusEl) statusEl.innerHTML = '<span title="'+statusInfo.titulo+'" style="display:inline-block; width:12px; height:12px; border-radius:50%; background:'+statusInfo.cor+'"></span>';
+}
+
+function mudarDiaOrdenhaIndividual(delta){
+  DATA_ORDENHA_INDIVIDUAL = somarDias(DATA_ORDENHA_INDIVIDUAL, delta);
+  const campoData = document.getElementById('campo-data-ordenha-individual');
+  if(campoData) campoData.value = DATA_ORDENHA_INDIVIDUAL;
+  renderSecaoOrdenhaIndividual();
+}
+
+function mudarDataOrdenhaIndividual(novaData){
+  DATA_ORDENHA_INDIVIDUAL = novaData;
+  renderSecaoOrdenhaIndividual();
 }
 
 /* ======================= QUALIDADE DO LEITE (CCS/CBT) ======================= */
@@ -1745,14 +1891,15 @@ async function gerarPDFProdutor(){
   const inicio = document.getElementById('campo-relatorio-inicio').value;
   const fim = document.getElementById('campo-relatorio-fim').value;
 
-  const [{ data: producao }, { data: animais }, { data: eventosRepro }, { data: eventosSan }, { data: lancamentos }, { data: qualidade }, { data: eventosReproCompletos }] = await Promise.all([
+  const [{ data: producao }, { data: animais }, { data: eventosRepro }, { data: eventosSan }, { data: lancamentos }, { data: qualidade }, { data: eventosReproCompletos }, { data: producaoIndividual }] = await Promise.all([
     sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('animais').select('*').eq('produtor_id', usuarioAtual.id),
     sb.from('eventos_reprodutivos').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('eventos_sanitarios').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data_aplicacao', inicio).lte('data_aplicacao', fim).order('data_aplicacao', { ascending:true }),
     sb.from('financeiro_lancamentos').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
-    sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id)
+    sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id),
+    sb.from('producao_leite_individual').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true })
   ]);
 
   const eventosPorAnimalRelatorio = {};
@@ -1769,6 +1916,13 @@ async function gerarPDFProdutor(){
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção de leite</h2>';
   conteudo += '<div class="cartao">Total no período: <strong>'+totalLitros.toFixed(1)+' L</strong> — Registros: '+(producao?producao.length:0)+'</div>';
+
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção individual por vaca (opcional)</h2>';
+  conteudo += (producaoIndividual&&producaoIndividual.length)
+    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Vaca</th><th>Manhã (L)</th><th>Tarde (L)</th><th>Total (L)</th></tr></thead><tbody>'
+      + producaoIndividual.map(r=>'<tr><td>'+formatarData(r.data)+'</td><td>Nº '+escaparHTML((r.animais&&r.animais.identificacao)||'?')+'</td><td>'+(r.litros_manha??'—')+'</td><td>'+(r.litros_tarde??'—')+'</td><td>'+(Number(r.litros_manha||0)+Number(r.litros_tarde||0)).toFixed(1)+'</td></tr>').join('')
+      + '</tbody></table>'
+    : '<div class="legenda-muted">Nenhum registro individual por vaca neste período (recurso opcional).</div>';
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Animais (total: '+(animais?animais.length:0)+')</h2>';
   conteudo += '<table class="tabela-admin"><thead><tr><th>Nº</th><th>Grau de sangue</th><th>Lote</th></tr></thead><tbody>'
