@@ -583,10 +583,21 @@ async function abrirVisualizacaoColaborador(colabId){
   let html = '';
 
   if(c.ve_animais){
-    const { data: animais } = await sb.from('animais').select('*').eq('produtor_id', produtorId).order('criado_em', { ascending:false });
+    const [{ data: animais }, { data: eventosReproDoProdutor }] = await Promise.all([
+      sb.from('animais').select('*').eq('produtor_id', produtorId).order('criado_em', { ascending:false }),
+      sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', produtorId)
+    ]);
+    const eventosPorAnimalColab = {};
+    (eventosReproDoProdutor||[]).forEach(ev => {
+      if(!eventosPorAnimalColab[ev.animal_id]) eventosPorAnimalColab[ev.animal_id] = [];
+      eventosPorAnimalColab[ev.animal_id].push(ev);
+    });
     html += '<div class="rotulo-secao">Animais</div>';
     html += (animais && animais.length)
-      ? animais.map(a=>'<div class="cartao"><strong>Nº '+escaparHTML(a.identificacao)+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+escaparHTML(a.grau_sangue||'—')+' · '+(STATUS_ANIMAL[a.status]?STATUS_ANIMAL[a.status].rot:a.status||'—')+'</div></div>').join('')
+      ? animais.map(a=>{
+          const lote = calcularLoteAnimal(a, eventosPorAnimalColab[a.id]);
+          return '<div class="cartao"><strong>Nº '+escaparHTML(a.identificacao)+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+escaparHTML(a.grau_sangue||'—')+' · '+(STATUS_ANIMAL[lote]?STATUS_ANIMAL[lote].rot:'—')+'</div></div>';
+        }).join('')
       : '<div class="legenda-muted">Nenhum animal cadastrado.</div>';
   }
 
@@ -658,20 +669,73 @@ async function renderAlertasNoInicio(){
 }
 
 const STATUS_ANIMAL = {
+  bezerra: { rot:'Bezerra', cor:'var(--azul-claro)' },
+  novilha: { rot:'Novilha', cor:'var(--manteiga-escura)' },
   lactante: { rot:'Lactante', cor:'var(--pasto)' },
-  seca: { rot:'Seca', cor:'var(--zinco)' },
-  novilha: { rot:'Novilha', cor:'var(--manteiga-escura)' }
+  seca: { rot:'Seca', cor:'var(--zinco)' }
 };
 let MEUS_ANIMAIS = [];
+let FILTRO_LOTE_ATUAL = 'todos';
+
+// Calcula automaticamente o lote do animal (bezerra / novilha / lactante /
+// seca) a partir da idade e do histórico de eventos reprodutivos — o
+// produtor não escolhe mais isso manualmente, o app decide sozinho.
+//
+// Regras:
+// - Nunca pariu e tem menos de 180 dias de vida -> Bezerra
+// - Nunca pariu e tem 180 dias ou mais -> Novilha
+// - Já pariu, e depois do último parto o produtor já registrou uma
+//   "Secagem" -> Seca (a ação real do produtor sempre manda)
+// - Já pariu, está coberta de novo, e faltam 60 dias ou menos para a
+//   previsão do próximo parto -> Seca (mesmo sem secagem registrada)
+// - Nos demais casos, com pelo menos um parto -> Lactante
+function calcularLoteAnimal(animal, eventosDoAnimal, hojeIso){
+  const hoje = hojeIso || new Date().toISOString().slice(0,10);
+  const eventos = (eventosDoAnimal || []).slice().sort((a,b)=>a.data.localeCompare(b.data));
+  const partos = eventos.filter(e=>e.tipo==='parto');
+
+  if(partos.length === 0){
+    if(!animal.data_nascimento) return 'novilha'; // sem data de nascimento informada, não dá para saber se é bezerra
+    const idadeDias = diasEntre(animal.data_nascimento, hoje);
+    return idadeDias < DIAS_BEZERRA_ATE_NOVILHA ? 'bezerra' : 'novilha';
+  }
+
+  const ultimoParto = partos[partos.length - 1];
+  const eventosDepoisDoParto = eventos.filter(e => e.data > ultimoParto.data);
+
+  const teveSecagemRegistrada = eventosDepoisDoParto.some(e => e.tipo === 'secagem');
+  if(teveSecagemRegistrada) return 'seca';
+
+  const coberturasDepois = eventosDepoisDoParto.filter(e => e.tipo === 'cobertura').sort((a,b)=>a.data.localeCompare(b.data));
+  if(coberturasDepois.length){
+    const ultimaCobertura = coberturasDepois[coberturasDepois.length - 1];
+    const previsaoParto = somarDias(ultimaCobertura.data, DIAS_GESTACAO);
+    const inicioPeriodoSeco = somarDias(previsaoParto, -DIAS_SECA_ANTES_PARTO);
+    if(hoje >= inicioPeriodoSeco) return 'seca';
+  }
+
+  return 'lactante';
+}
 
 async function renderAnimais(){
   document.getElementById('tela-animais').innerHTML = '<div class="legenda-muted">Carregando animais...</div>';
-  const { data, error } = await sb.from('animais').select('*').eq('produtor_id', usuarioAtual.id).order('criado_em', { ascending:false });
+  const [{ data, error }, { data: eventosRepro, error: erroEventos }] = await Promise.all([
+    sb.from('animais').select('*').eq('produtor_id', usuarioAtual.id).order('criado_em', { ascending:false }),
+    sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id)
+  ]);
   if(error){
     document.getElementById('tela-animais').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Meus animais</div><div class="legenda-muted">Não foi possível carregar seus animais: '+error.message+'</div>';
     return;
   }
-  MEUS_ANIMAIS = data;
+
+  const eventosPorAnimal = {};
+  (eventosRepro||[]).forEach(ev => {
+    if(!eventosPorAnimal[ev.animal_id]) eventosPorAnimal[ev.animal_id] = [];
+    eventosPorAnimal[ev.animal_id].push(ev);
+  });
+
+  const hoje = new Date().toISOString().slice(0,10);
+  MEUS_ANIMAIS = data.map(a => ({ ...a, lote: erroEventos ? (a.status||'novilha') : calcularLoteAnimal(a, eventosPorAnimal[a.id], hoje) }));
 
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Meus animais</div>'
     + '<button class="botao botao-primario" style="margin-bottom:18px" onclick="abrirCadastroAnimal()">'+iconeInline('vaca',18)+' Adicionar animal</button>';
@@ -683,25 +747,41 @@ async function renderAnimais(){
     return;
   }
 
-  const linhas = MEUS_ANIMAIS.map(a=>{
-    const st = STATUS_ANIMAL[a.status] || { rot: a.status || '—', cor:'var(--zinco)' };
-    return '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirEdicaoAnimal('+a.id+')">'
-      + '<div class="avatar">'+iconeInline('vaca',22)+'</div>'
-      + '<div style="flex:1">'
-        + '<div style="font-weight:700; font-size:15px">Nº '+escaparHTML(a.identificacao)+'</div>'
-        + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+escaparHTML(a.grau_sangue||'Grau de sangue não informado')+'</div>'
-      + '</div>'
-      + '<span style="background:'+st.cor+'; color:var(--branco); font-size:11px; font-weight:800; padding:4px 10px; border-radius:999px; text-transform:uppercase">'+st.rot+'</span>'
-      + '</button>';
-  }).join('');
+  const contagens = { todos: MEUS_ANIMAIS.length };
+  Object.keys(STATUS_ANIMAL).forEach(k => { contagens[k] = MEUS_ANIMAIS.filter(a=>a.lote===k).length; });
 
-  document.getElementById('tela-animais').innerHTML = cabecalho + linhas;
+  const abasHTML = '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px">'
+    + botaoFiltroLote('todos', 'Todos', contagens.todos)
+    + Object.keys(STATUS_ANIMAL).map(k => botaoFiltroLote(k, STATUS_ANIMAL[k].rot, contagens[k])).join('')
+    + '</div>';
+
+  const animaisFiltrados = FILTRO_LOTE_ATUAL === 'todos' ? MEUS_ANIMAIS : MEUS_ANIMAIS.filter(a => a.lote === FILTRO_LOTE_ATUAL);
+
+  const linhas = animaisFiltrados.length === 0
+    ? '<div class="legenda-muted">Nenhum animal nesse lote.</div>'
+    : animaisFiltrados.map(a=>{
+        const st = STATUS_ANIMAL[a.lote] || { rot: a.lote || '—', cor:'var(--zinco)' };
+        return '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirEdicaoAnimal('+a.id+')">'
+          + '<div class="avatar">'+iconeInline('vaca',22)+'</div>'
+          + '<div style="flex:1">'
+            + '<div style="font-weight:700; font-size:15px">Nº '+escaparHTML(a.identificacao)+'</div>'
+            + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+escaparHTML(a.grau_sangue||'Grau de sangue não informado')+'</div>'
+          + '</div>'
+          + '<span style="background:'+st.cor+'; color:var(--branco); font-size:11px; font-weight:800; padding:4px 10px; border-radius:999px; text-transform:uppercase">'+st.rot+'</span>'
+          + '</button>';
+      }).join('');
+
+  document.getElementById('tela-animais').innerHTML = cabecalho + abasHTML + linhas;
 }
 
-function opcoesStatusAnimal(selecionado){
-  return Object.keys(STATUS_ANIMAL).map(k=>
-    '<option value="'+k+'" '+(k===selecionado?'selected':'')+'>'+STATUS_ANIMAL[k].rot+'</option>'
-  ).join('');
+function botaoFiltroLote(chave, rotulo, contagem){
+  const ativo = FILTRO_LOTE_ATUAL === chave;
+  return '<button onclick="filtrarAnimaisPorLote(\''+chave+'\')" style="padding:7px 14px; border-radius:999px; border:1px solid '+(ativo?'var(--azul)':'var(--zinco-claro)')+'; background:'+(ativo?'var(--azul)':'var(--branco)')+'; color:'+(ativo?'var(--branco)':'var(--tinta)')+'; font-size:13px; font-weight:700; cursor:pointer">'+rotulo+' ('+contagem+')</button>';
+}
+
+function filtrarAnimaisPorLote(chave){
+  FILTRO_LOTE_ATUAL = chave;
+  renderAnimais();
 }
 
 function abrirCadastroAnimal(){
@@ -710,7 +790,6 @@ function abrirCadastroAnimal(){
     + '<div class="grupo-campo"><label for="campo-identificacao">Número / brinco</label><input id="campo-identificacao" type="text" placeholder="Ex.: 042"></div>'
     + '<div class="grupo-campo"><label for="campo-grau-sangue">Grau de sangue</label><input id="campo-grau-sangue" type="text" placeholder="Ex.: 3/4 Holandês, 1/4 Jersey"></div>'
     + '<div class="grupo-campo"><label for="campo-nascimento">Data de nascimento</label><input id="campo-nascimento" type="date"></div>'
-    + '<div class="grupo-campo"><label for="campo-status">Status</label><select id="campo-status">'+opcoesStatusAnimal('lactante')+'</select></div>'
     + '<div class="linha-tracejada"></div>'
     + '<div class="rotulo-secao">Genealogia (opcional)</div>'
     + '<div class="grupo-campo"><label for="campo-mae-nome">Nome da mãe</label><input id="campo-mae-nome" type="text"></div>'
@@ -727,7 +806,7 @@ async function salvarNovoAnimal(){
   const identificacao = document.getElementById('campo-identificacao').value.trim();
   const grau_sangue = document.getElementById('campo-grau-sangue').value.trim();
   const data_nascimento = document.getElementById('campo-nascimento').value || null;
-  const status = document.getElementById('campo-status').value;
+  const status = calcularLoteAnimal({ data_nascimento }, []);
   const mae_nome = document.getElementById('campo-mae-nome').value.trim();
   const mae_brinco = document.getElementById('campo-mae-brinco').value.trim();
   const pai_nome = document.getElementById('campo-pai-nome').value.trim();
@@ -759,7 +838,10 @@ function abrirEdicaoAnimal(id){
     + '<div class="grupo-campo"><label for="campo-identificacao">Número / brinco</label><input id="campo-identificacao" type="text" value="'+escaparHTML(a.identificacao||'')+'"></div>'
     + '<div class="grupo-campo"><label for="campo-grau-sangue">Grau de sangue</label><input id="campo-grau-sangue" type="text" value="'+escaparHTML(a.grau_sangue||'')+'" placeholder="Ex.: 3/4 Holandês, 1/4 Jersey"></div>'
     + '<div class="grupo-campo"><label for="campo-nascimento">Data de nascimento</label><input id="campo-nascimento" type="date" value="'+(a.data_nascimento||'')+'"></div>'
-    + '<div class="grupo-campo"><label for="campo-status">Status</label><select id="campo-status">'+opcoesStatusAnimal(a.status)+'</select></div>'
+    + '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga); display:flex; align-items:center; justify-content:space-between; gap:10px">'
+      + '<span class="legenda-muted" style="margin:0">Lote atual (calculado automaticamente)</span>'
+      + '<span style="background:'+(STATUS_ANIMAL[a.lote]||{cor:'var(--zinco)'}).cor+'; color:var(--branco); font-size:11px; font-weight:800; padding:4px 10px; border-radius:999px; text-transform:uppercase">'+(STATUS_ANIMAL[a.lote]?STATUS_ANIMAL[a.lote].rot:'—')+'</span>'
+    + '</div>'
     + '<div class="linha-tracejada"></div>'
     + '<div class="rotulo-secao">Genealogia (opcional)</div>'
     + '<div class="grupo-campo"><label for="campo-mae-nome">Nome da mãe</label><input id="campo-mae-nome" type="text" value="'+escaparHTML(a.mae_nome||'')+'"></div>'
@@ -790,6 +872,8 @@ const TIPOS_EVENTO = {
 const DIAS_GESTACAO = 283;
 const DIAS_LACTACAO_ATE_SECAGEM = 305;
 const DIAS_CICLO_ESTRO = 21;
+const DIAS_BEZERRA_ATE_NOVILHA = 180;
+const DIAS_SECA_ANTES_PARTO = 60;
 
 function somarDias(dataIso, dias){
   const d = new Date(dataIso + 'T00:00:00');
@@ -1661,14 +1745,21 @@ async function gerarPDFProdutor(){
   const inicio = document.getElementById('campo-relatorio-inicio').value;
   const fim = document.getElementById('campo-relatorio-fim').value;
 
-  const [{ data: producao }, { data: animais }, { data: eventosRepro }, { data: eventosSan }, { data: lancamentos }, { data: qualidade }] = await Promise.all([
+  const [{ data: producao }, { data: animais }, { data: eventosRepro }, { data: eventosSan }, { data: lancamentos }, { data: qualidade }, { data: eventosReproCompletos }] = await Promise.all([
     sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('animais').select('*').eq('produtor_id', usuarioAtual.id),
     sb.from('eventos_reprodutivos').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('eventos_sanitarios').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data_aplicacao', inicio).lte('data_aplicacao', fim).order('data_aplicacao', { ascending:true }),
     sb.from('financeiro_lancamentos').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
-    sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true })
+    sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
+    sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id)
   ]);
+
+  const eventosPorAnimalRelatorio = {};
+  (eventosReproCompletos||[]).forEach(ev => {
+    if(!eventosPorAnimalRelatorio[ev.animal_id]) eventosPorAnimalRelatorio[ev.animal_id] = [];
+    eventosPorAnimalRelatorio[ev.animal_id].push(ev);
+  });
 
   const totalLitros = (producao||[]).reduce((s,r)=>s+Number(r.litros_manha||0)+Number(r.litros_tarde||0),0);
   const totalReceitas = (lancamentos||[]).filter(l=>l.tipo==='receita').reduce((s,l)=>s+Number(l.valor),0);
@@ -1680,8 +1771,11 @@ async function gerarPDFProdutor(){
   conteudo += '<div class="cartao">Total no período: <strong>'+totalLitros.toFixed(1)+' L</strong> — Registros: '+(producao?producao.length:0)+'</div>';
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Animais (total: '+(animais?animais.length:0)+')</h2>';
-  conteudo += '<table class="tabela-admin"><thead><tr><th>Nº</th><th>Grau de sangue</th><th>Status</th></tr></thead><tbody>'
-    + (animais||[]).map(a=>'<tr><td>'+escaparHTML(a.identificacao)+'</td><td>'+escaparHTML(a.grau_sangue||'—')+'</td><td>'+(STATUS_ANIMAL[a.status]?STATUS_ANIMAL[a.status].rot:a.status||'—')+'</td></tr>').join('')
+  conteudo += '<table class="tabela-admin"><thead><tr><th>Nº</th><th>Grau de sangue</th><th>Lote</th></tr></thead><tbody>'
+    + (animais||[]).map(a=>{
+        const lote = calcularLoteAnimal(a, eventosPorAnimalRelatorio[a.id]);
+        return '<tr><td>'+escaparHTML(a.identificacao)+'</td><td>'+escaparHTML(a.grau_sangue||'—')+'</td><td>'+(STATUS_ANIMAL[lote]?STATUS_ANIMAL[lote].rot:'—')+'</td></tr>';
+      }).join('')
     + '</tbody></table>';
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Eventos reprodutivos no período</h2>';
@@ -1709,7 +1803,6 @@ async function salvarEdicaoAnimal(id){
   const identificacao = document.getElementById('campo-identificacao').value.trim();
   const grau_sangue = document.getElementById('campo-grau-sangue').value.trim();
   const data_nascimento = document.getElementById('campo-nascimento').value || null;
-  const status = document.getElementById('campo-status').value;
   const mae_nome = document.getElementById('campo-mae-nome').value.trim();
   const mae_brinco = document.getElementById('campo-mae-brinco').value.trim();
   const pai_nome = document.getElementById('campo-pai-nome').value.trim();
@@ -1721,6 +1814,9 @@ async function salvarEdicaoAnimal(id){
 
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
+
+  const { data: eventosDoAnimal } = await sb.from('eventos_reprodutivos').select('tipo, data').eq('animal_id', id);
+  const status = calcularLoteAnimal({ data_nascimento }, eventosDoAnimal || []);
 
   const { error } = await sb.from('animais')
     .update({ identificacao, grau_sangue, data_nascimento, status, mae_nome, mae_brinco, pai_nome, avo_nome, avo_macho_nome })
