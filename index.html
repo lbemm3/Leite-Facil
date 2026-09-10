@@ -645,27 +645,30 @@ async function abrirVisualizacaoColaborador(colabId){
 }
 
 async function renderAlertasNoInicio(){
-  const alertas = await buscarAlertasCalendario();
+  const todosAlertas = await buscarAlertasCalendario();
   const alvo = document.getElementById('bloco-alertas-inicio');
   if(!alvo) return;
 
   const hoje = new Date().toISOString().slice(0,10);
   const emSeteDias = somarDias(hoje, 7);
 
+  // Eventos que já passaram não aparecem mais aqui, para não poluir a tela
+  // inicial — o histórico continua acessível na ficha de cada animal.
+  const alertas = todosAlertas.filter(al => al.data >= hoje);
+
   const linhas = alertas.map(al=>{
     const proximo = al.data <= emSeteDias;
-    const vencido = al.data < hoje;
-    const cor = vencido ? 'var(--perigo)' : (proximo ? 'var(--manteiga-escura)' : 'var(--zinco)');
-    return '<div class="cartao" style="display:flex; align-items:center; gap:14px; border-color:'+(proximo||vencido ? cor : 'var(--zinco-claro)')+'">'
-      + '<div class="avatar" style="background:'+cor+'; color:var(--branco)">'+iconeInline('calendario',20)+'</div>'
-      + '<div style="flex:1"><strong>'+escaparHTML(al.titulo)+'</strong>'
-      + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Animal Nº '+escaparHTML(al.animal||'—')+' · '+formatarData(al.data)+(vencido ? ' · já passou' : '')+'</div></div>'
+    const cor = proximo ? 'var(--manteiga-escura)' : 'var(--zinco)';
+    return '<div class="cartao" style="display:flex; align-items:center; gap:10px; padding:9px 12px; margin-bottom:8px; border-color:'+(proximo ? cor : 'var(--zinco-claro)')+'">'
+      + '<div class="avatar" style="width:30px; height:30px; background:'+cor+'; color:var(--branco)">'+iconeInline('calendario',15)+'</div>'
+      + '<div style="flex:1; min-width:0"><div style="font-weight:700; font-size:13.5px">'+escaparHTML(al.titulo)+'</div>'
+      + '<div class="legenda-muted" style="margin-bottom:0; font-size:12px">Animal Nº '+escaparHTML(al.animal||'—')+' · '+formatarData(al.data)+'</div></div>'
       + '</div>';
   }).join('');
 
   alvo.innerHTML =
     '<div class="rotulo-secao">Calendário de atividades</div>'
-    + (alertas.length ? linhas : '<div class="cartao"><div class="legenda-muted" style="margin-bottom:0">Nenhum evento previsto no momento. À medida que você registrar coberturas, partos e tratamentos, os prazos aparecem aqui automaticamente.</div></div>');
+    + (alertas.length ? linhas : '<div class="cartao" style="padding:12px 14px"><div class="legenda-muted" style="margin-bottom:0">Nenhum evento previsto no momento. À medida que você registrar coberturas, partos e tratamentos, os prazos aparecem aqui automaticamente.</div></div>');
 }
 
 const STATUS_ANIMAL = {
