@@ -1103,7 +1103,7 @@ async function renderProducao(){
   QUALIDADE_LEITE = erroQualidade ? [] : dadosQualidade;
 
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Produção de leite</div>'
-    + '<button class="botao botao-primario" style="margin-bottom:18px" onclick="abrirRegistroProducao()">'+iconeInline('gota',18)+' Registrar produção do dia</button>';
+    + '<button class="botao botao-primario" style="margin-bottom:18px; padding:9px 16px; font-size:13px" onclick="abrirRegistroProducao()">'+iconeInline('gota',15)+' Registrar produção do dia</button>';
 
   let corpoLitros;
   if(PRODUCAO_LEITE.length === 0){
@@ -1288,15 +1288,15 @@ function renderSecaoQualidade(){
   const corNivel = status.nivel==='alerta' ? 'var(--perigo)' : (status.nivel==='atencao' ? 'var(--manteiga-escura)' : 'var(--sucesso)');
   const textoNivel = status.nivel==='alerta' ? 'Fora do limite legal' : (status.nivel==='atencao' ? 'Próximo do limite — atenção' : (status.registros ? 'Dentro do limite' : 'Sem resultados suficientes'));
 
-  const resumo = '<div class="cartao" style="border-color:'+corNivel+'">'
-    + '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:10px; text-align:center; margin-bottom:10px">'
-      + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">CCS (méd. geom. 90d)</div><div style="font-weight:700; font-size:15px">'+(status.mediaCCS!==null ? formatarNumero(Math.round(status.mediaCCS)) : '—')+'</div></div>'
-      + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">CBT (méd. geom. 90d)</div><div style="font-weight:700; font-size:15px">'+(status.mediaCBT!==null ? formatarNumero(Math.round(status.mediaCBT)) : '—')+'</div></div>'
-      + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Gordura (méd. 90d)</div><div style="font-weight:700; font-size:15px">'+formatarPercentual(status.mediaGordura)+'</div></div>'
-      + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Proteína (méd. 90d)</div><div style="font-weight:700; font-size:15px">'+formatarPercentual(status.mediaProteina)+'</div></div>'
+  const resumo = '<div class="cartao" style="border-color:'+corNivel+'; padding:10px 14px">'
+    + '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(90px,1fr)); gap:6px; text-align:center; margin-bottom:6px">'
+      + '<div><div class="legenda-muted" style="font-size:10.5px; margin-bottom:1px">CCS (méd. geom. 90d)</div><div style="font-weight:700; font-size:13px">'+(status.mediaCCS!==null ? formatarNumero(Math.round(status.mediaCCS)) : '—')+'</div></div>'
+      + '<div><div class="legenda-muted" style="font-size:10.5px; margin-bottom:1px">CBT (méd. geom. 90d)</div><div style="font-weight:700; font-size:13px">'+(status.mediaCBT!==null ? formatarNumero(Math.round(status.mediaCBT)) : '—')+'</div></div>'
+      + '<div><div class="legenda-muted" style="font-size:10.5px; margin-bottom:1px">Gordura (méd. 90d)</div><div style="font-weight:700; font-size:13px">'+formatarPercentual(status.mediaGordura)+'</div></div>'
+      + '<div><div class="legenda-muted" style="font-size:10.5px; margin-bottom:1px">Proteína (méd. 90d)</div><div style="font-weight:700; font-size:13px">'+formatarPercentual(status.mediaProteina)+'</div></div>'
     + '</div>'
-    + '<div style="text-align:center; font-weight:800; color:'+corNivel+'">'+textoNivel+'</div>'
-    + '<div class="legenda-muted" style="text-align:center; margin:6px 0 0">IN 76/77 do MAPA: CCS até 500.000 céls/mL e CBT até 300.000 UFC/mL (média geométrica trimestral) · gordura mínima de 3,0% e proteína mínima de 2,9%.</div>'
+    + '<div style="text-align:center; font-weight:800; font-size:13px; color:'+corNivel+'">'+textoNivel+'</div>'
+    + '<div class="legenda-muted" style="text-align:center; margin:4px 0 0; font-size:11px">IN 76/77 do MAPA: CCS até 500.000 céls/mL e CBT até 300.000 UFC/mL (média geométrica trimestral) · gordura mínima de 3,0% e proteína mínima de 2,9%.</div>'
     + '</div>';
 
   const linhas = QUALIDADE_LEITE.map(r=>{
@@ -1310,7 +1310,7 @@ function renderSecaoQualidade(){
   return '<div class="linha-tracejada"></div>'
     + '<div class="rotulo-secao">Qualidade do leite (CCS, CBT, gordura e proteína)</div>'
     + resumo
-    + '<button class="botao botao-primario" style="margin:12px 0 14px" onclick="abrirRegistroQualidade()">'+iconeInline('frasco',18)+' Registrar resultado</button>'
+    + '<button class="botao botao-primario" style="margin:12px 0 14px; padding:9px 16px; font-size:13px" onclick="abrirRegistroQualidade()">'+iconeInline('frasco',15)+' Registrar parâmetros de qualidade</button>'
     + (QUALIDADE_LEITE.length ? linhas : '<div class="legenda-muted">Nenhum resultado registrado ainda. Lance aqui os valores de CCS, CBT, gordura e proteína informados periodicamente pelo laticínio.</div>');
 }
 
