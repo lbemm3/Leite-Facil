@@ -1078,6 +1078,17 @@ async function excluirEventoSanitario(id, animalId){
 /* ======================= PRODUÇÃO DE LEITE (por rebanho, manhã/tarde) ======================= */
 let PRODUCAO_LEITE = [];
 
+function linhaCompacta(icone, titulo, subtitulo, valorDireita, onclickAttr, corBorda){
+  return '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:10px; cursor:pointer; padding:9px 12px; margin-bottom:8px'+(corBorda?('; border-color:'+corBorda):'')+'"'+(onclickAttr?(' onclick="'+onclickAttr+'"'):'')+'>'
+    + '<div class="avatar" style="width:30px; height:30px">'+iconeInline(icone,15)+'</div>'
+    + '<div style="flex:1; min-width:0">'
+      + '<div style="font-weight:700; font-size:13.5px">'+titulo+'</div>'
+      + '<div class="legenda-muted" style="margin-bottom:0; font-size:12px">'+subtitulo+'</div>'
+    + '</div>'
+    + (valorDireita ? '<span style="font-family:var(--fonte-dados); font-weight:600; font-size:14px; color:var(--azul); white-space:nowrap">'+valorDireita+'</span>' : '')
+    + '</button>';
+}
+
 async function renderProducao(){
   document.getElementById('tela-producao').innerHTML = '<div class="legenda-muted">Carregando produção...</div>';
   const [{ data, error }, { data: dadosQualidade, error: erroQualidade }] = await Promise.all([
@@ -1099,25 +1110,19 @@ async function renderProducao(){
     corpoLitros = '<div class="estado-vazio"><div class="ic">'+iconeInline('gota',28)+'</div>'
       + '<p>Nenhum registro de produção ainda. Registre a ordenha da manhã e da tarde para começar a acompanhar o total do rebanho.</p></div>';
   } else {
-    corpoLitros = PRODUCAO_LEITE.map(r=>{
+    corpoLitros = '<div class="legenda-muted" style="margin:-8px 0 10px">Mostrando os 7 registros mais recentes.</div>'
+      + PRODUCAO_LEITE.slice(0,7).map(r=>{
       const manha = Number(r.litros_manha)||0;
       const tarde = Number(r.litros_tarde)||0;
       const total = manha + tarde;
-      return '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirRegistroProducao(\''+r.data+'\')">'
-        + '<div class="avatar">'+iconeInline('gota',20)+'</div>'
-        + '<div style="flex:1">'
-          + '<div style="font-weight:700; font-size:15px">'+formatarData(r.data)+'</div>'
-          + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Manhã: '+manha+' L · Tarde: '+tarde+' L</div>'
-        + '</div>'
-        + '<span style="font-family:var(--fonte-dados); font-weight:600; font-size:16px; color:var(--azul)">'+total+' L</span>'
-        + '</button>';
+      return linhaCompacta('gota', formatarData(r.data), 'Manhã: '+manha+' L · Tarde: '+tarde+' L', total+' L', 'abrirRegistroProducao(\''+r.data+'\')');
     }).join('');
   }
 
   document.getElementById('tela-producao').innerHTML = cabecalho + corpoLitros + renderSecaoQualidade()
     + '<div class="linha-tracejada"></div>'
     + '<div class="rotulo-secao">Ordenha por vaca (individual) <span class="legenda-muted" style="font-size:12px; margin:0">— opcional</span></div>'
-    + '<div class="legenda-muted" style="margin-top:-6px">Só aparecem aqui as vacas em lactação. Quando uma vaca seca, ela sai da lista sozinha. Para ver a curva de lactação de uma vaca, abra a ficha dela em "Meus animais" (toque na vaca que quiser ver).</div>'
+    + '<div class="legenda-muted" style="margin-top:-6px">Aqui só aparecem as vacas em lactação. Quando uma vaca seca, ela sai dessa lista automaticamente. Basta digitar o volume de leite por ordenha. Essa informação é salva automaticamente. Para ver a curva de lactação de uma vaca, abra a ficha dela em "Meus animais" (toque na vaca que quiser ver).</div>'
     + '<div class="cartao" style="display:flex; align-items:center; justify-content:center; gap:16px; margin:12px 0">'
       + '<button style="border:none; background:none; font-size:20px; color:var(--azul); cursor:pointer; padding:4px 10px" onclick="mudarDiaOrdenhaIndividual(-1)">‹</button>'
       + '<input type="date" id="campo-data-ordenha-individual" value="'+DATA_ORDENHA_INDIVIDUAL+'" onchange="mudarDataOrdenhaIndividual(this.value)">'
@@ -1173,24 +1178,27 @@ async function renderSecaoOrdenhaIndividual(){
       + '<td style="font-weight:700">Nº '+escaparHTML(a.identificacao)+'</td>'
       + '<td><input type="number" min="0" step="0.1" inputmode="decimal" value="'+(r.litros_manha ?? '')+'" style="width:70px" onchange="salvarOrdenhaIndividual('+a.id+', this)"></td>'
       + '<td><input type="number" min="0" step="0.1" inputmode="decimal" value="'+(r.litros_tarde ?? '')+'" style="width:70px" onchange="salvarOrdenhaIndividual('+a.id+', this)"></td>'
-      + '<td id="status-ordenha-'+a.id+'" style="text-align:center"><span title="'+statusInfo.titulo+'" style="display:inline-block; width:12px; height:12px; border-radius:50%; background:'+statusInfo.cor+'"></span></td>'
+      + '<td id="total-ordenha-'+a.id+'" style="font-weight:700">'+totalOrdenhaIndividual(r)+'</td>'
+      + '<td id="status-ordenha-'+a.id+'"><span style="color:'+statusInfo.cor+'; font-weight:700; font-size:12.5px">'+statusInfo.texto+'</span></td>'
       + '</tr>';
   }).join('');
 
-  container.innerHTML = '<div style="overflow-x:auto"><table class="tabela-admin"><thead><tr><th>Vaca</th><th>Manhã (L)</th><th>Tarde (L)</th><th></th></tr></thead><tbody>'+linhas+'</tbody></table></div>'
-    + '<div class="legenda-muted" style="margin-top:10px; font-size:12px">'
-      + '<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--zinco-claro); margin-right:4px"></span>Nada lançado&nbsp; &nbsp;'
-      + '<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--manteiga); margin-right:4px"></span>Falta uma ordenha&nbsp; &nbsp;'
-      + '<span style="display:inline-block; width:10px; height:10px; border-radius:50%; background:var(--pasto); margin-right:4px"></span>Dia completo'
-    + '</div>';
+  container.innerHTML = '<div style="overflow-x:auto"><table class="tabela-admin"><thead><tr><th>Vaca</th><th>Manhã (L)</th><th>Tarde (L)</th><th>Total (L)</th><th>Situação</th></tr></thead><tbody>'+linhas+'</tbody></table></div>';
+}
+
+function totalOrdenhaIndividual(r){
+  const temManha = r.litros_manha !== null && r.litros_manha !== undefined && r.litros_manha !== '';
+  const temTarde = r.litros_tarde !== null && r.litros_tarde !== undefined && r.litros_tarde !== '';
+  if(!temManha && !temTarde) return '—';
+  return (Number(r.litros_manha||0) + Number(r.litros_tarde||0)).toFixed(1);
 }
 
 function statusOrdenhaIndividual(r){
   const temManha = r.litros_manha !== null && r.litros_manha !== undefined && r.litros_manha !== '';
   const temTarde = r.litros_tarde !== null && r.litros_tarde !== undefined && r.litros_tarde !== '';
-  if(temManha && temTarde) return { cor:'var(--pasto)', titulo:'Manhã e tarde lançadas' };
-  if(temManha || temTarde) return { cor:'var(--manteiga)', titulo:'Falta lançar uma ordenha' };
-  return { cor:'var(--zinco-claro)', titulo:'Nada lançado ainda' };
+  if(temManha && temTarde) return { cor:'var(--pasto)', texto:'Dia completo' };
+  if(temManha || temTarde) return { cor:'var(--manteiga-escura)', texto:'Falta uma ordenha' };
+  return { cor:'var(--zinco)', texto:'Nada lançado' };
 }
 
 async function salvarOrdenhaIndividual(animalId, inputAlterado){
@@ -1199,6 +1207,7 @@ async function salvarOrdenhaIndividual(animalId, inputAlterado){
   const litros_manha = inputs[0].value === '' ? null : Number(inputs[0].value);
   const litros_tarde = inputs[1].value === '' ? null : Number(inputs[1].value);
   const statusEl = document.getElementById('status-ordenha-'+animalId);
+  const totalEl = document.getElementById('total-ordenha-'+animalId);
 
   const { error } = await sb.from('producao_leite_individual').upsert({
     animal_id: animalId,
@@ -1208,11 +1217,12 @@ async function salvarOrdenhaIndividual(animalId, inputAlterado){
   }, { onConflict: 'animal_id,data' });
 
   if(error){
-    if(statusEl) statusEl.innerHTML = '<span title="Não foi possível salvar" style="color:var(--perigo); font-size:11px; font-weight:700">Erro</span>';
+    if(statusEl) statusEl.innerHTML = '<span style="color:var(--perigo); font-size:12.5px; font-weight:700">Erro ao salvar</span>';
     return;
   }
   const statusInfo = statusOrdenhaIndividual({ litros_manha, litros_tarde });
-  if(statusEl) statusEl.innerHTML = '<span title="'+statusInfo.titulo+'" style="display:inline-block; width:12px; height:12px; border-radius:50%; background:'+statusInfo.cor+'"></span>';
+  if(statusEl) statusEl.innerHTML = '<span style="color:'+statusInfo.cor+'; font-weight:700; font-size:12.5px">'+statusInfo.texto+'</span>';
+  if(totalEl) totalEl.textContent = totalOrdenhaIndividual({ litros_manha, litros_tarde });
 }
 
 function mudarDiaOrdenhaIndividual(delta){
@@ -1293,11 +1303,8 @@ function renderSecaoQualidade(){
     const problema = (r.ccs && Number(r.ccs) > LIMITE_CCS) || (r.cbt && Number(r.cbt) > LIMITE_CBT)
       || (r.gordura !== null && r.gordura !== undefined && r.gordura !== '' && Number(r.gordura) < MINIMO_GORDURA)
       || (r.proteina !== null && r.proteina !== undefined && r.proteina !== '' && Number(r.proteina) < MINIMO_PROTEINA);
-    return '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer'+(problema ? '; border-color:var(--perigo)' : '')+'" onclick="abrirRegistroQualidade('+r.id+')">'
-      + '<div class="avatar">'+iconeInline('frasco',20)+'</div>'
-      + '<div style="flex:1"><strong>'+formatarData(r.data)+'</strong>'
-      + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">CCS: '+formatarNumero(r.ccs)+' · CBT: '+formatarNumero(r.cbt)+' · Gordura: '+formatarPercentual(r.gordura)+' · Proteína: '+formatarPercentual(r.proteina)+'</div></div>'
-      + '</button>';
+    const subtitulo = 'CCS: '+formatarNumero(r.ccs)+' · CBT: '+formatarNumero(r.cbt)+' · Gordura: '+formatarPercentual(r.gordura)+' · Proteína: '+formatarPercentual(r.proteina);
+    return linhaCompacta('frasco', formatarData(r.data), subtitulo, '', 'abrirRegistroQualidade('+r.id+')', problema ? 'var(--perigo)' : null);
   }).join('');
 
   return '<div class="linha-tracejada"></div>'
