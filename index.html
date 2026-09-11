@@ -941,12 +941,13 @@ async function renderHistoricoReprodutivo(animalId){
     }
   }
 
-  const lista = data.map(ev=>
-    '<div class="cartao" style="display:flex; align-items:center; gap:12px; margin-bottom:8px">'
-    + '<div style="flex:1"><strong>'+TIPOS_EVENTO[ev.tipo]+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(ev.data)+(ev.observacoes ? ' · '+escaparHTML(ev.observacoes) : '')+'</div></div>'
+  const lista = data.map(ev=>{
+    const detalhesParto = ev.tipo === 'parto' ? formatarDetalhesParto(ev) : '';
+    return '<div class="cartao" style="display:flex; align-items:center; gap:12px; margin-bottom:8px">'
+    + '<div style="flex:1"><strong>'+TIPOS_EVENTO[ev.tipo]+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(ev.data)+(detalhesParto ? ' · '+detalhesParto : '')+(ev.observacoes ? ' · '+escaparHTML(ev.observacoes) : '')+'</div></div>'
     + '<button class="botao-perigo-fino" style="margin-top:0" onclick="excluirEventoReprodutivo('+ev.id+','+animalId+')">'+iconeInline('lixo',15)+'</button>'
-    + '</div>'
-  ).join('');
+    + '</div>';
+  }).join('');
 
   alvo.innerHTML = previsaoHTML
     + (data.length ? lista : '<div class="legenda-muted">Nenhum evento registrado ainda.</div>')
@@ -959,19 +960,79 @@ function formatarData(iso){
   return dia+'/'+mes+'/'+ano;
 }
 
+const CONDICOES_PARTO = {
+  normal: 'Parto normal',
+  correcao_posicao: 'Auxílio humano para correção de posição do bezerro',
+  tracao_extracao: 'Auxílio humano com tração para extração do bezerro',
+  cesariana: 'Cesariana'
+};
+const PERIODOS_PARTO = { manha:'Manhã', tarde:'Tarde', noite:'Noite', madrugada:'Madrugada' };
+
+function formatarDetalhesParto(ev){
+  const partes = [];
+  if(ev.periodo_parto) partes.push(PERIODOS_PARTO[ev.periodo_parto] || ev.periodo_parto);
+  if(ev.condicao_parto) partes.push(CONDICOES_PARTO[ev.condicao_parto] || ev.condicao_parto);
+  if(ev.peso_nascimento_kg !== null && ev.peso_nascimento_kg !== undefined) partes.push(ev.peso_nascimento_kg+' kg');
+  if(ev.sexo_bezerro) partes.push(ev.sexo_bezerro === 'femea' ? 'Fêmea' : 'Macho');
+  if(ev.bezerra_animal_id) partes.push('bezerra cadastrada no rebanho');
+  return partes.join(' · ');
+}
+
 function abrirFormularioEvento(animalId){
   const alvo = document.getElementById('secao-reprodutivo');
   alvo.insertAdjacentHTML('beforeend',
     '<div class="cartao" id="form-evento">'
-    + '<div class="grupo-campo"><label for="campo-tipo-evento">Tipo de evento</label><select id="campo-tipo-evento">'
+    + '<div class="grupo-campo"><label for="campo-tipo-evento">Tipo de evento</label><select id="campo-tipo-evento" onchange="atualizarCamposFormularioEvento(this.value)">'
       + Object.keys(TIPOS_EVENTO).map(k=>'<option value="'+k+'">'+TIPOS_EVENTO[k]+'</option>').join('')
     + '</select></div>'
     + '<div class="grupo-campo"><label for="campo-data-evento">Data</label><input id="campo-data-evento" type="date"></div>'
+    + '<div id="campos-extras-evento"></div>'
     + '<div class="grupo-campo"><label for="campo-obs-evento">Observações (opcional)</label><input id="campo-obs-evento" type="text"></div>'
     + '<div id="mensagem-evento" class="legenda-muted" style="min-height:18px"></div>'
     + '<button class="botao botao-primario botao-bloco" onclick="salvarEventoReprodutivo('+animalId+')">Salvar evento</button>'
     + '</div>'
   );
+  atualizarCamposFormularioEvento(Object.keys(TIPOS_EVENTO)[0]);
+}
+
+function atualizarCamposFormularioEvento(tipo){
+  const alvo = document.getElementById('campos-extras-evento');
+  if(!alvo) return;
+  if(tipo !== 'parto'){ alvo.innerHTML = ''; return; }
+
+  alvo.innerHTML =
+    '<div class="grupo-campo"><label for="campo-periodo-parto">Período do parto</label><select id="campo-periodo-parto">'
+      + '<option value="manha">Manhã</option><option value="tarde">Tarde</option><option value="noite">Noite</option><option value="madrugada">Madrugada</option>'
+    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-condicao-parto">Condição de parto</label><select id="campo-condicao-parto">'
+      + Object.keys(CONDICOES_PARTO).map(k=>'<option value="'+k+'">'+CONDICOES_PARTO[k]+'</option>').join('')
+    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-peso-nascimento">Peso do bezerro (kg)</label><input id="campo-peso-nascimento" type="number" min="0" step="0.1"></div>'
+    + '<div class="grupo-campo"><label for="campo-sexo-bezerro">Sexo do bezerro</label><select id="campo-sexo-bezerro" onchange="atualizarCamposSexoBezerra(this.value)">'
+      + '<option value="macho">Macho</option><option value="femea">Fêmea</option>'
+    + '</select></div>'
+    + '<div id="campos-femea-bezerra"></div>';
+
+  atualizarCamposSexoBezerra('macho');
+}
+
+function atualizarCamposSexoBezerra(sexo){
+  const alvo = document.getElementById('campos-femea-bezerra');
+  if(!alvo) return;
+  if(sexo !== 'femea'){ alvo.innerHTML = ''; return; }
+  alvo.innerHTML =
+    '<div class="grupo-campo"><label for="campo-adicionar-rebanho">Adicionar ao rebanho?</label><select id="campo-adicionar-rebanho" onchange="atualizarCampoBrincoBezerra(this.value)">'
+      + '<option value="nao">Não</option><option value="sim">Sim</option>'
+    + '</select></div>'
+    + '<div id="campo-brinco-bezerra-wrap"></div>';
+}
+
+function atualizarCampoBrincoBezerra(valor){
+  const alvo = document.getElementById('campo-brinco-bezerra-wrap');
+  if(!alvo) return;
+  alvo.innerHTML = valor === 'sim'
+    ? '<div class="grupo-campo"><label for="campo-brinco-bezerra">Número do brinco da bezerra</label><input id="campo-brinco-bezerra" type="text" placeholder="ex.: 015"></div>'
+    : '';
 }
 
 async function salvarEventoReprodutivo(animalId){
@@ -982,14 +1043,58 @@ async function salvarEventoReprodutivo(animalId){
 
   if(!data){ msg.textContent = 'Preencha a data do evento.'; msg.style.color = 'var(--perigo)'; return; }
 
+  const registro = { animal_id: animalId, produtor_id: usuarioAtual.id, tipo, data, observacoes };
+
+  let sexoBezerra = null, adicionarRebanho = null, brincoBezerra = '';
+
+  if(tipo === 'parto'){
+    registro.periodo_parto = document.getElementById('campo-periodo-parto').value;
+    registro.condicao_parto = document.getElementById('campo-condicao-parto').value;
+    const pesoEl = document.getElementById('campo-peso-nascimento');
+    registro.peso_nascimento_kg = pesoEl.value === '' ? null : Number(pesoEl.value);
+    sexoBezerra = document.getElementById('campo-sexo-bezerro').value;
+    registro.sexo_bezerro = sexoBezerra;
+
+    if(sexoBezerra === 'femea'){
+      adicionarRebanho = document.getElementById('campo-adicionar-rebanho').value;
+      if(adicionarRebanho === 'sim'){
+        const brincoEl = document.getElementById('campo-brinco-bezerra');
+        brincoBezerra = brincoEl ? brincoEl.value.trim() : '';
+        if(!brincoBezerra){ msg.textContent = 'Digite o número do brinco da bezerra para adicioná-la ao rebanho.'; msg.style.color = 'var(--perigo)'; return; }
+      }
+    }
+  }
+
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
 
-  const { error } = await sb.from('eventos_reprodutivos').insert({
-    animal_id: animalId, produtor_id: usuarioAtual.id, tipo, data, observacoes
-  });
+  const { data: eventoSalvo, error } = await sb.from('eventos_reprodutivos').insert(registro).select().single();
 
   if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+
+  // Parto de fêmea que vai ficar no rebanho -> cadastra a bezerra sozinho.
+  if(tipo === 'parto' && sexoBezerra === 'femea' && adicionarRebanho === 'sim' && brincoBezerra){
+    const { data: mae } = await sb.from('animais').select('identificacao').eq('id', animalId).maybeSingle();
+    const statusBezerra = calcularLoteAnimal({ data_nascimento: data }, []);
+
+    const { data: novaBezerra, error: erroBezerra } = await sb.from('animais').insert({
+      produtor_id: usuarioAtual.id,
+      identificacao: brincoBezerra,
+      data_nascimento: data,
+      status: statusBezerra,
+      mae_brinco: mae ? mae.identificacao : null
+    }).select().single();
+
+    if(erroBezerra){
+      alert('O parto foi salvo, mas não foi possível cadastrar a bezerra automaticamente: ' + erroBezerra.message);
+      renderHistoricoReprodutivo(animalId);
+      return;
+    }
+
+    await sb.from('eventos_reprodutivos').update({ bezerra_animal_id: novaBezerra.id }).eq('id', eventoSalvo.id);
+
+    alert('Parto salvo e bezerra Nº '+brincoBezerra+' cadastrada automaticamente no rebanho!');
+  }
 
   renderHistoricoReprodutivo(animalId);
 }
@@ -1944,7 +2049,7 @@ async function gerarPDFProdutor(){
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Eventos reprodutivos no período</h2>';
   conteudo += (eventosRepro&&eventosRepro.length)
-    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Evento</th></tr></thead><tbody>'+eventosRepro.map(ev=>'<tr><td>'+formatarData(ev.data)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+TIPOS_EVENTO[ev.tipo]+'</td></tr>').join('')+'</tbody></table>'
+    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Evento</th></tr></thead><tbody>'+eventosRepro.map(ev=>'<tr><td>'+formatarData(ev.data)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+TIPOS_EVENTO[ev.tipo]+(ev.tipo==='parto' && formatarDetalhesParto(ev) ? ' — '+formatarDetalhesParto(ev) : '')+'</td></tr>').join('')+'</tbody></table>'
     : '<div class="legenda-muted">Nenhum evento no período.</div>';
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Manejo sanitário no período</h2>';
