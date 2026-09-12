@@ -2264,7 +2264,34 @@ const ESTADOS_BR = [
   ['SP','São Paulo'],['SE','Sergipe'],['TO','Tocantins']
 ];
 
-const TIPOS_ALIMENTOS_PROPRIEDADE = ['Silagem','Capim','Feno','Sorgo','Aveia','Azevém','Milheto','Cana-de-açúcar','Milho em grão','Soja','Trigo','Mandioca','Batata-doce','Outros'];
+// Cada tipo de alimento tem um "modo" que define quais caixas extras aparecem quando marcado:
+// - tipo_qtd_unidade_livre: caixa "Tipo" + quantidade + unidade digitada pelo produtor (Silagem).
+// - tipo_qtd_fardos: caixa "Tipo" + quantidade, unidade fixa em fardos (Feno seco/pré-secado).
+// - qtd_hectares: só quantidade, unidade fixa em hectares (capineiras e afins).
+// - qtd_unidade_livre: quantidade + unidade digitada pelo produtor (grãos e raízes/tubérculos).
+// - descricao_livre: caixa de texto única (Outros).
+const TIPOS_ALIMENTOS_PROPRIEDADE = [
+  { chave:'Silagem', modo:'tipo_qtd_unidade_livre', placeholderTipo:'Ex.: Milho, grama, aveia', placeholderUnidade:'Ex.: toneladas, carretões, caminhões' },
+  { chave:'Feno seco', modo:'tipo_qtd_fardos', placeholderTipo:'Ex.: Milho, grama, aveia' },
+  { chave:'Feno pré-secado', modo:'tipo_qtd_fardos', placeholderTipo:'Ex.: Milho, grama, aveia' },
+  { chave:'Capim', modo:'qtd_hectares' },
+  { chave:'Sorgo', modo:'qtd_hectares' },
+  { chave:'Aveia', modo:'qtd_hectares' },
+  { chave:'Azevém', modo:'qtd_hectares' },
+  { chave:'Milheto', modo:'qtd_hectares' },
+  { chave:'Cana-de-açúcar', modo:'qtd_hectares' },
+  { chave:'Milho em grão', modo:'qtd_unidade_livre', placeholderUnidade:'Ex.: sacas, toneladas' },
+  { chave:'Soja', modo:'qtd_unidade_livre', placeholderUnidade:'Ex.: sacas, toneladas' },
+  { chave:'Trigo', modo:'qtd_unidade_livre', placeholderUnidade:'Ex.: sacas, toneladas' },
+  { chave:'Mandioca', modo:'qtd_unidade_livre', placeholderUnidade:'Ex.: kg, toneladas' },
+  { chave:'Batata-doce', modo:'qtd_unidade_livre', placeholderUnidade:'Ex.: kg, toneladas' },
+  { chave:'Outros', modo:'descricao_livre' }
+];
+
+// Gera um identificador simples (sem acentos/espaços) a partir do nome do alimento, para usar em ids de campo.
+function slugAlimento(chave){
+  return chave.normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'-').toLowerCase();
+}
 
 const FONTES_RENDA_PROPRIEDADE = [
   { chave:'graos', label:'Produção de grãos', exemplo:'milho, trigo, soja, feijão, etc.' },
@@ -2288,7 +2315,7 @@ const FONTES_RENDA_PROPRIEDADE = [
 
 function renderPropriedade(){
   const p = meuProdutor || {};
-  const tiposSelecionados = p.tipos_alimentos || [];
+  const alimentosSalvos = p.alimentos_produzidos || [];
   const fontesSalvas = p.outras_fontes_renda || [];
   const fonteSalva = chave => fontesSalvas.find(f => f.chave === chave);
 
@@ -2307,30 +2334,24 @@ function renderPropriedade(){
     + '</div>'
 
     + '<div class="cartao">'
-      + '<div class="rotulo-secao" style="margin-top:0">Área total da propriedade</div>'
-      + '<div class="grupo-campo"><label for="campo-area-total-valor">Área</label><input id="campo-area-total-valor" type="number" step="0.01" min="0" value="'+(p.area_total_valor!=null?p.area_total_valor:'')+'" placeholder="Ex.: 25"></div>'
-      + '<div class="grupo-campo"><label for="campo-area-total-unidade">Unidade</label><select id="campo-area-total-unidade">'
-        + '<option value="hectare" '+(p.area_total_unidade==='hectare'||!p.area_total_unidade?'selected':'')+'>Hectare</option>'
-        + '<option value="alqueire" '+(p.area_total_unidade==='alqueire'?'selected':'')+'>Alqueire</option>'
-      + '</select></div>'
+      + '<div class="rotulo-secao" style="margin-top:0">Área total da propriedade (hectares)</div>'
+      + '<div class="grupo-campo"><label for="campo-area-total-hectares">Área (hectares)</label><input id="campo-area-total-hectares" type="number" step="0.01" min="0" value="'+(p.area_total_hectares!=null?p.area_total_hectares:'')+'" placeholder="Ex.: 25"></div>'
     + '</div>'
 
     + '<div class="cartao">'
-      + '<div class="rotulo-secao" style="margin-top:0">Área destinada à produção de alimentos aos animais</div>'
-      + '<div class="grupo-campo"><label for="campo-area-alimentos-valor">Área</label><input id="campo-area-alimentos-valor" type="number" step="0.01" min="0" value="'+(p.area_alimentos_valor!=null?p.area_alimentos_valor:'')+'" placeholder="Ex.: 8"></div>'
-      + '<div class="grupo-campo"><label for="campo-area-alimentos-unidade">Unidade</label><select id="campo-area-alimentos-unidade">'
-        + '<option value="hectare" '+(p.area_alimentos_unidade==='hectare'||!p.area_alimentos_unidade?'selected':'')+'>Hectare</option>'
-        + '<option value="alqueire" '+(p.area_alimentos_unidade==='alqueire'?'selected':'')+'>Alqueire</option>'
-      + '</select></div>'
+      + '<div class="rotulo-secao" style="margin-top:0">Área destinada à produção de alimentos aos animais (hectares)</div>'
+      + '<div class="grupo-campo"><label for="campo-area-alimentos-hectares">Área (hectares)</label><input id="campo-area-alimentos-hectares" type="number" step="0.01" min="0" value="'+(p.area_alimentos_hectares!=null?p.area_alimentos_hectares:'')+'" placeholder="Ex.: 8"></div>'
     + '</div>'
 
     + '<div class="cartao">'
       + '<div class="rotulo-secao" style="margin-top:0">Tipo de alimentos produzidos</div>'
       + '<div class="legenda-muted" style="margin-bottom:8px">Marque quantos quiser.</div>'
-      + TIPOS_ALIMENTOS_PROPRIEDADE.map(item=>
-          '<label class="item-servico-extra"><input type="checkbox" class="chk-tipo-alimento" value="'+escaparHTML(item)+'" '+(tiposSelecionados.includes(item)?'checked':'')+' onchange="atualizarOutroAlimentoPropriedade()"><span>'+escaparHTML(item)+'</span></label>'
-        ).join('')
-      + '<div id="wrap-outros-alimentos-propriedade"></div>'
+      + TIPOS_ALIMENTOS_PROPRIEDADE.map(item=>{
+          const s = slugAlimento(item.chave);
+          const marcado = alimentosSalvos.some(a=>a.chave===item.chave);
+          return '<label class="item-servico-extra"><input type="checkbox" id="chk-alimento-'+s+'" class="chk-tipo-alimento" '+(marcado?'checked':'')+' onchange="atualizarAlimentoPropriedade(\''+s+'\')"><span>'+escaparHTML(item.chave)+'</span></label>'
+            + '<div id="wrap-alimento-'+s+'"></div>';
+        }).join('')
     + '</div>'
 
     + '<div class="cartao">'
@@ -2346,18 +2367,49 @@ function renderPropriedade(){
     + '<div id="mensagem-propriedade" class="legenda-muted" style="min-height:18px"></div>'
     + '<button class="botao botao-primario botao-bloco" onclick="salvarPropriedade()">Salvar</button>';
 
-  atualizarOutroAlimentoPropriedade();
+  TIPOS_ALIMENTOS_PROPRIEDADE.forEach(item => atualizarAlimentoPropriedade(slugAlimento(item.chave)));
   FONTES_RENDA_PROPRIEDADE.forEach(f => atualizarFonteRendaPropriedade(f.chave, true));
 }
 
-// Mostra/esconde a caixa "Descreva os outros alimentos" conforme o checkbox "Outros".
-function atualizarOutroAlimentoPropriedade(){
-  const p = meuProdutor || {};
-  const marcado = document.querySelector('.chk-tipo-alimento[value="Outros"]').checked;
-  const wrap = document.getElementById('wrap-outros-alimentos-propriedade');
-  wrap.innerHTML = marcado
-    ? '<div class="grupo-campo"><label for="campo-outros-alimentos-propriedade">Descreva os outros alimentos</label><input id="campo-outros-alimentos-propriedade" type="text" value="'+escaparHTML(p.tipos_alimentos_outros||'')+'" placeholder="Ex.: Ureia pecuária"></div>'
-    : '';
+// Monta as caixas extras de um alimento (tipo/quantidade/unidade), já preenchidas com o valor salvo, se houver.
+function camposAlimentoHTML(item, salvo){
+  const s = slugAlimento(item.chave);
+  salvo = salvo || {};
+  if(item.modo === 'tipo_qtd_unidade_livre'){
+    return '<div class="grupo-campo"><label for="campo-alimento-tipo-'+s+'">Tipo</label><input id="campo-alimento-tipo-'+s+'" type="text" value="'+escaparHTML(salvo.tipo||'')+'" placeholder="'+escaparHTML(item.placeholderTipo)+'"></div>'
+      + '<div class="grupo-campo"><label for="campo-alimento-qtd-'+s+'">Quantidade</label><input id="campo-alimento-qtd-'+s+'" type="number" step="0.01" min="0" value="'+(salvo.quantidade!=null?salvo.quantidade:'')+'"></div>'
+      + '<div class="grupo-campo"><label for="campo-alimento-unidade-'+s+'">Unidade</label><input id="campo-alimento-unidade-'+s+'" type="text" value="'+escaparHTML(salvo.unidade||'')+'" placeholder="'+escaparHTML(item.placeholderUnidade)+'"></div>';
+  }
+  if(item.modo === 'tipo_qtd_fardos'){
+    return '<div class="grupo-campo"><label for="campo-alimento-tipo-'+s+'">Tipo</label><input id="campo-alimento-tipo-'+s+'" type="text" value="'+escaparHTML(salvo.tipo||'')+'" placeholder="'+escaparHTML(item.placeholderTipo)+'"></div>'
+      + '<div class="grupo-campo"><label for="campo-alimento-qtd-'+s+'">Quantidade (fardos)</label><input id="campo-alimento-qtd-'+s+'" type="number" step="1" min="0" value="'+(salvo.quantidade!=null?salvo.quantidade:'')+'"></div>';
+  }
+  if(item.modo === 'qtd_hectares'){
+    return '<div class="grupo-campo"><label for="campo-alimento-qtd-'+s+'">Área (hectares)</label><input id="campo-alimento-qtd-'+s+'" type="number" step="0.01" min="0" value="'+(salvo.quantidade!=null?salvo.quantidade:'')+'"></div>';
+  }
+  if(item.modo === 'qtd_unidade_livre'){
+    return '<div class="grupo-campo"><label for="campo-alimento-qtd-'+s+'">Quantidade</label><input id="campo-alimento-qtd-'+s+'" type="number" step="0.01" min="0" value="'+(salvo.quantidade!=null?salvo.quantidade:'')+'"></div>'
+      + '<div class="grupo-campo"><label for="campo-alimento-unidade-'+s+'">Unidade</label><input id="campo-alimento-unidade-'+s+'" type="text" value="'+escaparHTML(salvo.unidade||'')+'" placeholder="'+escaparHTML(item.placeholderUnidade)+'"></div>';
+  }
+  if(item.modo === 'descricao_livre'){
+    return '<div class="grupo-campo"><label for="campo-alimento-descricao-'+s+'">Descreva os outros alimentos</label><input id="campo-alimento-descricao-'+s+'" type="text" value="'+escaparHTML(salvo.descricao||'')+'" placeholder="Ex.: Ureia pecuária"></div>';
+  }
+  return '';
+}
+
+// Mostra/esconde as caixas extras de um alimento quando o checkbox dele é marcado/desmarcado.
+function atualizarAlimentoPropriedade(slug){
+  const item = TIPOS_ALIMENTOS_PROPRIEDADE.find(x => slugAlimento(x.chave) === slug);
+  const chk = document.getElementById('chk-alimento-'+slug);
+  const wrap = document.getElementById('wrap-alimento-'+slug);
+  if(!item || !chk || !wrap) return;
+  if(chk.checked){
+    const p = meuProdutor || {};
+    const salvo = (p.alimentos_produzidos || []).find(a => a.chave === item.chave);
+    wrap.innerHTML = camposAlimentoHTML(item, salvo);
+  } else {
+    wrap.innerHTML = '';
+  }
 }
 
 // Mostra/esconde a caixa de descrição de uma fonte de renda extra quando o checkbox dela é marcado.
@@ -2382,16 +2434,33 @@ async function salvarPropriedade(){
   const cidade = document.getElementById('campo-municipio-propriedade').value.trim();
   const localidade = document.getElementById('campo-localidade-propriedade').value.trim() || null;
   const propriedade = document.getElementById('campo-nome-propriedade').value.trim() || null;
-  const area_total_valor = document.getElementById('campo-area-total-valor').value ? Number(document.getElementById('campo-area-total-valor').value) : null;
-  const area_total_unidade = document.getElementById('campo-area-total-unidade').value;
-  const area_alimentos_valor = document.getElementById('campo-area-alimentos-valor').value ? Number(document.getElementById('campo-area-alimentos-valor').value) : null;
-  const area_alimentos_unidade = document.getElementById('campo-area-alimentos-unidade').value;
+  const area_total_hectares = document.getElementById('campo-area-total-hectares').value ? Number(document.getElementById('campo-area-total-hectares').value) : null;
+  const area_alimentos_hectares = document.getElementById('campo-area-alimentos-hectares').value ? Number(document.getElementById('campo-area-alimentos-hectares').value) : null;
   const msg = document.getElementById('mensagem-propriedade');
 
-  const tipos_alimentos = Array.from(document.querySelectorAll('.chk-tipo-alimento:checked')).map(c=>c.value);
-  const tipos_alimentos_outros = tipos_alimentos.includes('Outros')
-    ? (document.getElementById('campo-outros-alimentos-propriedade').value.trim() || null)
-    : null;
+  const alimentos_produzidos = [];
+  TIPOS_ALIMENTOS_PROPRIEDADE.forEach(item=>{
+    const s = slugAlimento(item.chave);
+    const chk = document.getElementById('chk-alimento-'+s);
+    if(!chk || !chk.checked) return;
+    const entrada = { chave: item.chave };
+    if(item.modo === 'tipo_qtd_unidade_livre' || item.modo === 'tipo_qtd_fardos'){
+      entrada.tipo = document.getElementById('campo-alimento-tipo-'+s).value.trim();
+    }
+    if(item.modo === 'tipo_qtd_unidade_livre' || item.modo === 'tipo_qtd_fardos' || item.modo === 'qtd_hectares' || item.modo === 'qtd_unidade_livre'){
+      const qtdEl = document.getElementById('campo-alimento-qtd-'+s);
+      entrada.quantidade = qtdEl && qtdEl.value ? Number(qtdEl.value) : null;
+    }
+    if(item.modo === 'tipo_qtd_unidade_livre' || item.modo === 'qtd_unidade_livre'){
+      entrada.unidade = document.getElementById('campo-alimento-unidade-'+s).value.trim();
+    }
+    if(item.modo === 'tipo_qtd_fardos') entrada.unidade = 'fardos';
+    if(item.modo === 'qtd_hectares') entrada.unidade = 'hectares';
+    if(item.modo === 'descricao_livre'){
+      entrada.descricao = document.getElementById('campo-alimento-descricao-'+s).value.trim();
+    }
+    alimentos_produzidos.push(entrada);
+  });
 
   const outras_fontes_renda = Array.from(document.querySelectorAll('.chk-fonte-renda:checked')).map(c=>{
     const chave = c.value;
@@ -2405,7 +2474,7 @@ async function salvarPropriedade(){
   msg.style.color = 'var(--tinta-suave)';
 
   const { data, error } = await sb.from('produtores')
-    .update({ estado, cidade, localidade, propriedade, area_total_valor, area_total_unidade, area_alimentos_valor, area_alimentos_unidade, tipos_alimentos, tipos_alimentos_outros, outras_fontes_renda })
+    .update({ estado, cidade, localidade, propriedade, area_total_hectares, area_alimentos_hectares, alimentos_produzidos, outras_fontes_renda })
     .eq('id', usuarioAtual.id)
     .select()
     .maybeSingle();
