@@ -259,6 +259,7 @@
 
     <main class="area-conteudo">
       <section class="painel-tela ativa" id="tela-inicio"></section>
+      <section class="painel-tela" id="tela-propriedade"></section>
       <section class="painel-tela" id="tela-animais"></section>
       <section class="painel-tela" id="tela-perfil"></section>
       <section class="painel-tela" id="tela-producao"></section>
@@ -475,6 +476,7 @@ async function verificarSeSouAdmin(){
 function abasAtivas(){
   const abas = [
     { id:'tela-inicio', rot:'Início', ic:'casa' },
+    { id:'tela-propriedade', rot:'Propriedade', ic:'pino' },
     { id:'tela-animais', rot:'Meus animais', ic:'vaca' },
     { id:'tela-producao', rot:'Produção', ic:'gota' },
     { id:'tela-estoque', rot:'Estoque', ic:'caixa' },
@@ -505,6 +507,7 @@ async function trocarAba(id){
   document.getElementById('aplicativo').querySelector('.area-conteudo').scrollTop = 0;
 
   if(id === 'tela-inicio') renderInicio();
+  if(id === 'tela-propriedade') renderPropriedade();
   if(id === 'tela-animais') renderAnimais();
   if(id === 'tela-producao') renderProducao();
   if(id === 'tela-estoque') renderEstoque();
@@ -2251,6 +2254,169 @@ async function excluirAnimal(id){
   renderAnimais();
 }
 
+/* ======================= PROPRIEDADE ======================= */
+const ESTADOS_BR = [
+  ['AC','Acre'],['AL','Alagoas'],['AP','Amapá'],['AM','Amazonas'],['BA','Bahia'],['CE','Ceará'],
+  ['DF','Distrito Federal'],['ES','Espírito Santo'],['GO','Goiás'],['MA','Maranhão'],['MT','Mato Grosso'],
+  ['MS','Mato Grosso do Sul'],['MG','Minas Gerais'],['PA','Pará'],['PB','Paraíba'],['PR','Paraná'],
+  ['PE','Pernambuco'],['PI','Piauí'],['RJ','Rio de Janeiro'],['RN','Rio Grande do Norte'],
+  ['RS','Rio Grande do Sul'],['RO','Rondônia'],['RR','Roraima'],['SC','Santa Catarina'],
+  ['SP','São Paulo'],['SE','Sergipe'],['TO','Tocantins']
+];
+
+const TIPOS_ALIMENTOS_PROPRIEDADE = ['Silagem','Capim','Feno','Sorgo','Aveia','Azevém','Milheto','Cana-de-açúcar','Milho em grão','Soja','Trigo','Mandioca','Batata-doce','Outros'];
+
+const FONTES_RENDA_PROPRIEDADE = [
+  { chave:'graos', label:'Produção de grãos', exemplo:'milho, trigo, soja, feijão, etc.' },
+  { chave:'animais_corte', label:'Produção de animais de corte', exemplo:'bovinos, suínos, aves, peixes, ovinos, caprinos, etc.' },
+  { chave:'hortalicas', label:'Hortaliças', exemplo:'alface, repolho, beterraba, tomate, etc.' },
+  { chave:'frutas', label:'Frutas', exemplo:'laranja, morango, mamão, banana, etc.' },
+  { chave:'raizes_tuberculos', label:'Raízes e tubérculos', exemplo:'mandioca, batata-doce, batata-inglesa, etc.' },
+  { chave:'apicultura', label:'Apicultura', exemplo:'mel, própolis, cera, etc.' },
+  { chave:'olericultura', label:'Olericultura', exemplo:'folhosas, frutos, raízes, temperos, etc.' },
+  { chave:'plantas_medicinais', label:'Plantas medicinais e aromáticas', exemplo:'camomila, hortelã, alecrim, etc.' },
+  { chave:'silvicultura', label:'Silvicultura', exemplo:'eucalipto, pinus, madeira, etc.' },
+  { chave:'floricultura', label:'Floricultura', exemplo:'flores de corte, plantas ornamentais, etc.' },
+  { chave:'mudas', label:'Produção de mudas', exemplo:'frutíferas, florestais, ornamentais, etc.' },
+  { chave:'agroindustria', label:'Agroindústria', exemplo:'queijos, doces, geleias, conservas, embutidos, etc.' },
+  { chave:'turismo_rural', label:'Turismo rural', exemplo:'hospedagem, alimentação, lazer, etc.' },
+  { chave:'artesanato_rural', label:'Artesanato rural', exemplo:'madeira, fibras, tecidos, etc.' },
+  { chave:'ovos', label:'Produção de ovos', exemplo:'galinhas, codornas, etc.' },
+  { chave:'la_fibras', label:'Produção de lã e fibras', exemplo:'ovinos, algodão, etc.' },
+  { chave:'biomassa', label:'Produção de biomassa', exemplo:'lenha, carvão vegetal, resíduos agrícolas, etc.' }
+];
+
+function renderPropriedade(){
+  const p = meuProdutor || {};
+  const tiposSelecionados = p.tipos_alimentos || [];
+  const fontesSalvas = p.outras_fontes_renda || [];
+  const fonteSalva = chave => fontesSalvas.find(f => f.chave === chave);
+
+  document.getElementById('tela-propriedade').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Propriedade</div>'
+    + '<div class="legenda-muted">Dados gerais da sua propriedade. Preencha o que fizer sentido para você — os campos marcados como opcionais podem ficar em branco.</div>'
+
+    + '<div class="cartao">'
+      + '<div class="grupo-campo"><label for="campo-estado-propriedade">Estado</label><select id="campo-estado-propriedade">'
+        + '<option value="">Selecione</option>'
+        + ESTADOS_BR.map(([sigla,nome])=>'<option value="'+sigla+'" '+(p.estado===sigla?'selected':'')+'>'+nome+'</option>').join('')
+      + '</select></div>'
+      + '<div class="grupo-campo"><label for="campo-municipio-propriedade">Município</label><input id="campo-municipio-propriedade" type="text" value="'+escaparHTML(p.cidade||'')+'" placeholder="Ex.: Santa Rosa"></div>'
+      + '<div class="grupo-campo"><label for="campo-localidade-propriedade">Localidade (opcional)</label><input id="campo-localidade-propriedade" type="text" value="'+escaparHTML(p.localidade||'')+'" placeholder="Ex.: Linha São João"></div>'
+      + '<div class="grupo-campo"><label for="campo-nome-propriedade">Nome da propriedade (opcional)</label><input id="campo-nome-propriedade" type="text" value="'+escaparHTML(p.propriedade||'')+'" placeholder="Ex.: Sítio Santa Rita"></div>'
+    + '</div>'
+
+    + '<div class="cartao">'
+      + '<div class="rotulo-secao" style="margin-top:0">Área total da propriedade</div>'
+      + '<div class="grupo-campo"><label for="campo-area-total-valor">Área</label><input id="campo-area-total-valor" type="number" step="0.01" min="0" value="'+(p.area_total_valor!=null?p.area_total_valor:'')+'" placeholder="Ex.: 25"></div>'
+      + '<div class="grupo-campo"><label for="campo-area-total-unidade">Unidade</label><select id="campo-area-total-unidade">'
+        + '<option value="hectare" '+(p.area_total_unidade==='hectare'||!p.area_total_unidade?'selected':'')+'>Hectare</option>'
+        + '<option value="alqueire" '+(p.area_total_unidade==='alqueire'?'selected':'')+'>Alqueire</option>'
+      + '</select></div>'
+    + '</div>'
+
+    + '<div class="cartao">'
+      + '<div class="rotulo-secao" style="margin-top:0">Área destinada à produção de alimentos aos animais</div>'
+      + '<div class="grupo-campo"><label for="campo-area-alimentos-valor">Área</label><input id="campo-area-alimentos-valor" type="number" step="0.01" min="0" value="'+(p.area_alimentos_valor!=null?p.area_alimentos_valor:'')+'" placeholder="Ex.: 8"></div>'
+      + '<div class="grupo-campo"><label for="campo-area-alimentos-unidade">Unidade</label><select id="campo-area-alimentos-unidade">'
+        + '<option value="hectare" '+(p.area_alimentos_unidade==='hectare'||!p.area_alimentos_unidade?'selected':'')+'>Hectare</option>'
+        + '<option value="alqueire" '+(p.area_alimentos_unidade==='alqueire'?'selected':'')+'>Alqueire</option>'
+      + '</select></div>'
+    + '</div>'
+
+    + '<div class="cartao">'
+      + '<div class="rotulo-secao" style="margin-top:0">Tipo de alimentos produzidos</div>'
+      + '<div class="legenda-muted" style="margin-bottom:8px">Marque quantos quiser.</div>'
+      + TIPOS_ALIMENTOS_PROPRIEDADE.map(item=>
+          '<label class="item-servico-extra"><input type="checkbox" class="chk-tipo-alimento" value="'+escaparHTML(item)+'" '+(tiposSelecionados.includes(item)?'checked':'')+' onchange="atualizarOutroAlimentoPropriedade()"><span>'+escaparHTML(item)+'</span></label>'
+        ).join('')
+      + '<div id="wrap-outros-alimentos-propriedade"></div>'
+    + '</div>'
+
+    + '<div class="cartao">'
+      + '<div class="rotulo-secao" style="margin-top:0">Outras fontes de renda</div>'
+      + '<div class="legenda-muted" style="margin-bottom:8px">Marque quantas se aplicarem e diga o que você produz em cada uma.</div>'
+      + FONTES_RENDA_PROPRIEDADE.map(f=>{
+          const salva = fonteSalva(f.chave);
+          return '<label class="item-servico-extra"><input type="checkbox" class="chk-fonte-renda" value="'+f.chave+'" '+(salva?'checked':'')+' onchange="atualizarFonteRendaPropriedade(\''+f.chave+'\')"><span>'+escaparHTML(f.label)+'</span></label>'
+            + '<div id="wrap-fonte-renda-'+f.chave+'"></div>';
+        }).join('')
+    + '</div>'
+
+    + '<div id="mensagem-propriedade" class="legenda-muted" style="min-height:18px"></div>'
+    + '<button class="botao botao-primario botao-bloco" onclick="salvarPropriedade()">Salvar</button>';
+
+  atualizarOutroAlimentoPropriedade();
+  FONTES_RENDA_PROPRIEDADE.forEach(f => atualizarFonteRendaPropriedade(f.chave, true));
+}
+
+// Mostra/esconde a caixa "Descreva os outros alimentos" conforme o checkbox "Outros".
+function atualizarOutroAlimentoPropriedade(){
+  const p = meuProdutor || {};
+  const marcado = document.querySelector('.chk-tipo-alimento[value="Outros"]').checked;
+  const wrap = document.getElementById('wrap-outros-alimentos-propriedade');
+  wrap.innerHTML = marcado
+    ? '<div class="grupo-campo"><label for="campo-outros-alimentos-propriedade">Descreva os outros alimentos</label><input id="campo-outros-alimentos-propriedade" type="text" value="'+escaparHTML(p.tipos_alimentos_outros||'')+'" placeholder="Ex.: Ureia pecuária"></div>'
+    : '';
+}
+
+// Mostra/esconde a caixa de descrição de uma fonte de renda extra quando o checkbox dela é marcado.
+// manterValorSalvo=true só na primeira montagem da tela, para reaproveitar o texto já salvo.
+function atualizarFonteRendaPropriedade(chave, manterValorSalvo){
+  const f = FONTES_RENDA_PROPRIEDADE.find(x => x.chave === chave);
+  const chk = document.querySelector('.chk-fonte-renda[value="'+chave+'"]');
+  const wrap = document.getElementById('wrap-fonte-renda-'+chave);
+  if(!chk || !wrap) return;
+  if(chk.checked){
+    const p = meuProdutor || {};
+    const salva = (p.outras_fontes_renda || []).find(x => x.chave === chave);
+    const valorInicial = manterValorSalvo && salva ? salva.descricao : '';
+    wrap.innerHTML = '<div class="grupo-campo"><label for="campo-fonte-renda-'+chave+'">O que você produz</label><input id="campo-fonte-renda-'+chave+'" class="campo-fonte-renda" data-chave="'+chave+'" type="text" value="'+escaparHTML(valorInicial)+'" placeholder="Ex.: '+escaparHTML(f.exemplo)+'"></div>';
+  } else {
+    wrap.innerHTML = '';
+  }
+}
+
+async function salvarPropriedade(){
+  const estado = document.getElementById('campo-estado-propriedade').value || null;
+  const cidade = document.getElementById('campo-municipio-propriedade').value.trim();
+  const localidade = document.getElementById('campo-localidade-propriedade').value.trim() || null;
+  const propriedade = document.getElementById('campo-nome-propriedade').value.trim() || null;
+  const area_total_valor = document.getElementById('campo-area-total-valor').value ? Number(document.getElementById('campo-area-total-valor').value) : null;
+  const area_total_unidade = document.getElementById('campo-area-total-unidade').value;
+  const area_alimentos_valor = document.getElementById('campo-area-alimentos-valor').value ? Number(document.getElementById('campo-area-alimentos-valor').value) : null;
+  const area_alimentos_unidade = document.getElementById('campo-area-alimentos-unidade').value;
+  const msg = document.getElementById('mensagem-propriedade');
+
+  const tipos_alimentos = Array.from(document.querySelectorAll('.chk-tipo-alimento:checked')).map(c=>c.value);
+  const tipos_alimentos_outros = tipos_alimentos.includes('Outros')
+    ? (document.getElementById('campo-outros-alimentos-propriedade').value.trim() || null)
+    : null;
+
+  const outras_fontes_renda = Array.from(document.querySelectorAll('.chk-fonte-renda:checked')).map(c=>{
+    const chave = c.value;
+    const campoDescricao = document.getElementById('campo-fonte-renda-'+chave);
+    return { chave, descricao: campoDescricao ? campoDescricao.value.trim() : '' };
+  });
+
+  if(!cidade){ msg.textContent = 'Preencha ao menos o município.'; msg.style.color = 'var(--perigo)'; return; }
+
+  msg.textContent = 'Salvando...';
+  msg.style.color = 'var(--tinta-suave)';
+
+  const { data, error } = await sb.from('produtores')
+    .update({ estado, cidade, localidade, propriedade, area_total_valor, area_total_unidade, area_alimentos_valor, area_alimentos_unidade, tipos_alimentos, tipos_alimentos_outros, outras_fontes_renda })
+    .eq('id', usuarioAtual.id)
+    .select()
+    .maybeSingle();
+
+  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+
+  meuProdutor = data;
+  msg.textContent = 'Salvo com sucesso.';
+  msg.style.color = 'var(--sucesso)';
+}
+
 function renderPerfil(){
   const p = meuProdutor || {};
   document.getElementById('tela-perfil').innerHTML =
@@ -2261,15 +2427,15 @@ function renderPerfil(){
       + (souAdmin ? '<div style="margin-top:8px"><span class="badge-admin">'+iconeInline('check',11)+' Administrador</span></div>' : '')
       + '</div></div></div>'
     + '<div class="cartao" style="padding:4px 16px">'
-      + '<button class="linha-menu" onclick="abrirEdicaoPerfil()"><span class="ic">'+iconeInline('telefone',18)+'</span><span class="txt">Meus dados (nome, propriedade, telefone)</span></button>'
+      + '<button class="linha-menu" onclick="abrirEdicaoPerfil()"><span class="ic">'+iconeInline('telefone',18)+'</span><span class="txt">Meus dados (nome, telefone)</span></button>'
       + '<button class="linha-menu" onclick="abrirTermosDeUso(false)"><span class="ic">'+iconeInline('documento',18)+'</span><span class="txt">Termos de uso e privacidade'+(p.termos_aceitos_em ? '<div class="legenda-muted" style="margin:0; font-size:12px">Aceito em '+formatarData(p.termos_aceitos_em.slice(0,10))+'</div>' : '')+'</span></button>'
       + '<button class="linha-menu" id="btn-notificacoes-push" onclick="alternarNotificacoesPush()"><span class="ic">'+iconeInline('sino',18)+'</span><span class="txt" id="txt-notificacoes-push">Avisos no celular<div class="legenda-muted" style="margin:0; font-size:12px">Verificando...</div></span></button>'
     + '</div>'
     + '<div class="cartao">'
       + '<div class="rotulo-secao" style="margin-top:0">Dados salvos</div>'
-      + '<div class="legenda-muted" style="margin-bottom:6px"><strong style="color:var(--tinta)">Propriedade:</strong> '+(p.propriedade || '—')+'</div>'
-      + '<div class="legenda-muted" style="margin-bottom:6px"><strong style="color:var(--tinta)">Cidade:</strong> '+(p.cidade || '—')+'</div>'
-      + '<div class="legenda-muted" style="margin-bottom:0"><strong style="color:var(--tinta)">Telefone:</strong> '+(p.telefone || '—')+'</div>'
+      + '<div class="legenda-muted" style="margin-bottom:6px"><strong style="color:var(--tinta)">Propriedade:</strong> '+(p.propriedade || '—')+' · <strong style="color:var(--tinta)">Município:</strong> '+(p.cidade || '—')+(p.estado ? '/'+p.estado : '')+'</div>'
+      + '<div class="legenda-muted" style="margin-bottom:6px"><strong style="color:var(--tinta)">Telefone:</strong> '+(p.telefone || '—')+'</div>'
+      + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Para editar os dados da propriedade (estado, município, área, alimentos produzidos, etc.), use a aba "Propriedade".</div>'
     + '</div>'
     + '<div class="rotulo-secao">Compartilhar meus dados</div>'
     + '<div class="legenda-muted">Convide um veterinário ou sócio para ver os dados que você escolher, com a própria conta de login.</div>'
@@ -2351,8 +2517,6 @@ function abrirEdicaoPerfil(){
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Meus dados</div>'
     + '<div class="grupo-campo"><label for="campo-nome">Nome</label><input id="campo-nome" type="text" value="'+(p.nome||'')+'"></div>'
-    + '<div class="grupo-campo"><label for="campo-propriedade">Propriedade</label><input id="campo-propriedade" type="text" value="'+(p.propriedade||'')+'" placeholder="Ex.: Sítio Santa Rita"></div>'
-    + '<div class="grupo-campo"><label for="campo-cidade">Cidade</label><input id="campo-cidade" type="text" value="'+(p.cidade||'')+'"></div>'
     + '<div class="grupo-campo"><label for="campo-telefone">Telefone</label><input id="campo-telefone" type="text" value="'+(p.telefone||'')+'" placeholder="(55) 9 9999-9999"></div>'
     + '<div id="mensagem-perfil" class="legenda-muted" style="min-height:18px"></div>'
     + '<button class="botao botao-primario botao-bloco" onclick="salvarPerfil()">Salvar</button>';
@@ -2361,8 +2525,6 @@ function abrirEdicaoPerfil(){
 
 async function salvarPerfil(){
   const nome = document.getElementById('campo-nome').value.trim();
-  const propriedade = document.getElementById('campo-propriedade').value.trim();
-  const cidade = document.getElementById('campo-cidade').value.trim();
   const telefone = document.getElementById('campo-telefone').value.trim();
   const msg = document.getElementById('mensagem-perfil');
 
@@ -2372,7 +2534,7 @@ async function salvarPerfil(){
   msg.style.color = 'var(--tinta-suave)';
 
   const { data, error } = await sb.from('produtores')
-    .update({ nome, propriedade, cidade, telefone })
+    .update({ nome, telefone })
     .eq('id', usuarioAtual.id)
     .select()
     .maybeSingle();
