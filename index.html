@@ -1223,7 +1223,8 @@ async function renderProducao(){
       const manha = Number(r.litros_manha)||0;
       const tarde = Number(r.litros_tarde)||0;
       const total = manha + tarde;
-      return linhaCompacta('gota', formatarData(r.data), 'Manhã: '+manha+' L · Tarde: '+tarde+' L', total+' L', 'abrirRegistroProducao(\''+r.data+'\')');
+      const temProblema = r.problemas_animais_manha || r.problemas_equipamento_manha || r.problemas_animais_tarde || r.problemas_equipamento_tarde;
+      return linhaCompacta('gota', formatarData(r.data), 'Manhã: '+manha+' L · Tarde: '+tarde+' L', total+' L', 'abrirRegistroProducao(\''+r.data+'\')', temProblema ? 'var(--perigo)' : null);
     }).join('');
   }
 
@@ -1479,33 +1480,83 @@ async function excluirQualidade(id){
   renderProducao();
 }
 
+const TIPOS_ORDENHA = { manual:'Manual', mecanica:'Mecânica', robotica:'Robótica' };
+const HIGIENIZACAO_ORDENHA = { total:'Cumpridos totalmente', parcial:'Cumprido parcialmente', nao_cumprido:'Não cumpridos' };
+
+function camposSessaoOrdenha(sufixo, tituloSessao, registro){
+  const g = campo => (registro && registro[campo] !== null && registro[campo] !== undefined) ? registro[campo] : '';
+  return '<div class="rotulo-secao" style="font-size:14px; margin-top:18px">'+tituloSessao+'</div>'
+    + '<div class="grupo-campo"><label for="campo-litros-'+sufixo+'">Litros ordenhados</label><input id="campo-litros-'+sufixo+'" type="number" step="0.1" min="0" value="'+g('litros_'+sufixo)+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-tipo-ordenha-'+sufixo+'">Tipo de ordenha</label><select id="campo-tipo-ordenha-'+sufixo+'">'
+      + '<option value="">—</option>'
+      + Object.keys(TIPOS_ORDENHA).map(k=>'<option value="'+k+'"'+(g('tipo_ordenha_'+sufixo)===k?' selected':'')+'>'+TIPOS_ORDENHA[k]+'</option>').join('')
+    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-ordenhador-'+sufixo+'">Nome do(a) ordenhador(a)</label><input id="campo-ordenhador-'+sufixo+'" type="text" value="'+escaparHTML(g('ordenhador_'+sufixo))+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-tempo-'+sufixo+'">Tempo decorrido na ordenha (minutos)</label>'
+      + '<input id="campo-tempo-'+sufixo+'" type="number" min="0" step="1" value="'+g('tempo_ordenha_min_'+sufixo)+'" oninput="atualizarTempoOrdenha(\''+sufixo+'\')">'
+      + '<div id="tempo-formatado-'+sufixo+'" class="legenda-muted" style="margin-top:4px"></div>'
+    + '</div>'
+    + '<div class="grupo-campo"><label for="campo-higiene-'+sufixo+'">Processos de higienização da ordenha</label><select id="campo-higiene-'+sufixo+'">'
+      + '<option value="">—</option>'
+      + Object.keys(HIGIENIZACAO_ORDENHA).map(k=>'<option value="'+k+'"'+(g('higienizacao_'+sufixo)===k?' selected':'')+'>'+HIGIENIZACAO_ORDENHA[k]+'</option>').join('')
+    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-prob-animais-'+sufixo+'">Problemas identificados com animais (opcional)</label><input id="campo-prob-animais-'+sufixo+'" type="text" placeholder="ex.: Mastite na vaca 23; Sangue no leite da vaca 12" value="'+escaparHTML(g('problemas_animais_'+sufixo))+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-prob-equip-'+sufixo+'">Problemas identificados com equipamento (opcional)</label><input id="campo-prob-equip-'+sufixo+'" type="text" placeholder="ex.: Entradas de ar e chiados; Barulhos estranhos na bomba de vácuo" value="'+escaparHTML(g('problemas_equipamento_'+sufixo))+'"></div>';
+}
+
+function atualizarTempoOrdenha(sufixo){
+  const el = document.getElementById('campo-tempo-'+sufixo);
+  const saida = document.getElementById('tempo-formatado-'+sufixo);
+  if(!el || !saida) return;
+  const minutosTotal = Number(el.value) || 0;
+  if(minutosTotal <= 0){ saida.textContent = ''; return; }
+  const horas = Math.floor(minutosTotal / 60);
+  const minutos = minutosTotal % 60;
+  const partes = [];
+  if(horas > 0) partes.push(horas+' hora'+(horas!==1?'s':''));
+  partes.push(minutos+' minuto'+(minutos!==1?'s':''));
+  saida.textContent = partes.join(' e ');
+}
+
 function abrirRegistroProducao(dataExistente){
   const registro = dataExistente ? PRODUCAO_LEITE.find(r=>r.data===dataExistente) : null;
   const hoje = new Date().toISOString().slice(0,10);
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">'+(registro ? 'Editar produção do dia' : 'Registrar produção do dia')+'</div>'
     + '<div class="grupo-campo"><label for="campo-data-producao">Data</label><input id="campo-data-producao" type="date" value="'+(registro ? registro.data : hoje)+'" '+(registro ? 'readonly' : '')+'></div>'
-    + '<div class="grupo-campo"><label for="campo-litros-manha">Litros — ordenha da manhã</label><input id="campo-litros-manha" type="number" step="0.1" min="0" value="'+(registro ? registro.litros_manha||'' : '')+'"></div>'
-    + '<div class="grupo-campo"><label for="campo-litros-tarde">Litros — ordenha da tarde</label><input id="campo-litros-tarde" type="number" step="0.1" min="0" value="'+(registro ? registro.litros_tarde||'' : '')+'"></div>'
-    + '<div id="mensagem-producao" class="legenda-muted" style="min-height:18px"></div>'
+    + camposSessaoOrdenha('manha', 'Ordenha da manhã', registro)
+    + camposSessaoOrdenha('tarde', 'Ordenha da tarde', registro)
+    + '<div id="mensagem-producao" class="legenda-muted" style="min-height:18px; margin-top:14px"></div>'
     + '<button class="botao botao-primario botao-bloco" onclick="salvarProducao()">Salvar</button>'
     + (registro ? '<button class="botao botao-secundario botao-bloco" style="margin-top:10px; color:var(--perigo); border-color:var(--perigo)" onclick="excluirProducao(\''+registro.data+'\')">Excluir registro</button>' : '');
   abrirModal();
+  atualizarTempoOrdenha('manha');
+  atualizarTempoOrdenha('tarde');
 }
 
 async function salvarProducao(){
   const data = document.getElementById('campo-data-producao').value;
-  const litros_manha = document.getElementById('campo-litros-manha').value || 0;
-  const litros_tarde = document.getElementById('campo-litros-tarde').value || 0;
   const msg = document.getElementById('mensagem-producao');
 
   if(!data){ msg.textContent = 'Preencha a data.'; msg.style.color = 'var(--perigo)'; return; }
+
+  const lerSessao = sufixo => ({
+    ['litros_'+sufixo]: document.getElementById('campo-litros-'+sufixo).value || 0,
+    ['tipo_ordenha_'+sufixo]: document.getElementById('campo-tipo-ordenha-'+sufixo).value || null,
+    ['ordenhador_'+sufixo]: document.getElementById('campo-ordenhador-'+sufixo).value.trim() || null,
+    ['tempo_ordenha_min_'+sufixo]: document.getElementById('campo-tempo-'+sufixo).value === '' ? null : Number(document.getElementById('campo-tempo-'+sufixo).value),
+    ['higienizacao_'+sufixo]: document.getElementById('campo-higiene-'+sufixo).value || null,
+    ['problemas_animais_'+sufixo]: document.getElementById('campo-prob-animais-'+sufixo).value.trim() || null,
+    ['problemas_equipamento_'+sufixo]: document.getElementById('campo-prob-equip-'+sufixo).value.trim() || null
+  });
+
+  const registro = { produtor_id: usuarioAtual.id, data, ...lerSessao('manha'), ...lerSessao('tarde') };
 
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
 
   const { error } = await sb.from('producao_leite')
-    .upsert({ produtor_id: usuarioAtual.id, data, litros_manha, litros_tarde }, { onConflict: 'produtor_id,data' });
+    .upsert(registro, { onConflict: 'produtor_id,data' });
 
   if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
 
@@ -2031,6 +2082,20 @@ async function gerarPDFProdutor(){
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção de leite</h2>';
   conteudo += '<div class="cartao">Total no período: <strong>'+totalLitros.toFixed(1)+' L</strong> — Registros: '+(producao?producao.length:0)+'</div>';
+
+  const linhasSessaoOrdenha = [];
+  (producao||[]).forEach(r=>{
+    ['manha','tarde'].forEach(sufixo=>{
+      const temDetalhe = r['tipo_ordenha_'+sufixo] || r['ordenhador_'+sufixo] || r['tempo_ordenha_min_'+sufixo] || r['higienizacao_'+sufixo] || r['problemas_animais_'+sufixo] || r['problemas_equipamento_'+sufixo];
+      if(!temDetalhe) return;
+      const problemas = [r['problemas_animais_'+sufixo], r['problemas_equipamento_'+sufixo]].filter(Boolean).join(' · ') || '—';
+      linhasSessaoOrdenha.push('<tr><td>'+formatarData(r.data)+'</td><td>'+(sufixo==='manha'?'Manhã':'Tarde')+'</td><td>'+(TIPOS_ORDENHA[r['tipo_ordenha_'+sufixo]]||'—')+'</td><td>'+escaparHTML(r['ordenhador_'+sufixo]||'—')+'</td><td>'+(r['tempo_ordenha_min_'+sufixo]!=null?r['tempo_ordenha_min_'+sufixo]+' min':'—')+'</td><td>'+(HIGIENIZACAO_ORDENHA[r['higienizacao_'+sufixo]]||'—')+'</td><td>'+escaparHTML(problemas)+'</td></tr>');
+    });
+  });
+  if(linhasSessaoOrdenha.length){
+    conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Detalhes das sessões de ordenha</h2>';
+    conteudo += '<table class="tabela-admin"><thead><tr><th>Data</th><th>Sessão</th><th>Tipo</th><th>Ordenhador(a)</th><th>Tempo</th><th>Higienização</th><th>Problemas</th></tr></thead><tbody>'+linhasSessaoOrdenha.join('')+'</tbody></table>';
+  }
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção individual por vaca (opcional)</h2>';
   conteudo += (producaoIndividual&&producaoIndividual.length)
