@@ -1123,12 +1123,12 @@ const TIPOS_SANITARIO = {
 // - outraOpcao + labelDescricaoOutra: quando a opção "outra" da subcategoria for
 //   escolhida, abre mais uma caixa de texto livre para detalhar.
 const CATEGORIAS_SANITARIO_FORM = [
-  { chave:'vacina_obrigatoria', label:'Vacina obrigatória', descricaoLivre:true, placeholderDescricao:'Ex.: Febre aftosa' },
+  { chave:'vacina_obrigatoria', label:'Vacina obrigatória', descricaoLivre:true, placeholderDescricao:'Ex.: Brucelose' },
   { chave:'vacina_nao_obrigatoria', label:'Vacina não obrigatória', descricaoLivre:true, placeholderDescricao:'Ex.: Vacina contra IBR/BVD' },
-  { chave:'antibiotico', label:'Antibiótico', subcategorias:['Mastite','Metrite','Pneumonia','Infecção de casco','Infecção de feridas','Outras infecções bacterianas'], outraOpcao:'Outras infecções bacterianas', labelDescricaoOutra:'Descrição da infecção' },
-  { chave:'anti_inflamatorio', label:'Anti-inflamatório', subcategorias:['Mastite','Metrite','Problemas de casco','Feridas','Lesões','Traumas','Febre'] },
-  { chave:'antiparasitario', label:'Antiparasitário', subcategorias:['Vermífugo','Carrapaticida','Mosquicida','Bernicida','Outro parasitário'], outraOpcao:'Outro parasitário', labelDescricaoOutra:'Descrição do parasitário' },
-  { chave:'tratamento_veterinario', label:'Tratamento veterinário', subcategorias:['Mastite','Problemas de casco','Problemas reprodutivos','Doenças respiratórias','Doenças digestivas','Doenças metabólicas','Feridas e lesões','Parasitoses','Febre e dor','Problemas no úbere','Problemas no pós-parto','Outros tratamentos'], outraOpcao:'Outros tratamentos', labelDescricaoOutra:'Descrição do tratamento' }
+  { chave:'antibiotico', label:'Antibiótico', subcategorias:['Mastite','Metrite','Pneumonia','Infecção de casco','Infecção de feridas','Outras infecções bacterianas'], outraOpcao:'Outras infecções bacterianas', labelDescricaoOutra:'Descrição da infecção', nomeMedicamento:true },
+  { chave:'anti_inflamatorio', label:'Anti-inflamatório', subcategorias:['Mastite','Metrite','Problemas de casco','Feridas','Lesões','Traumas','Febre'], nomeMedicamento:true },
+  { chave:'antiparasitario', label:'Antiparasitário', subcategorias:['Vermífugo','Carrapaticida','Mosquicida','Bernicida','Outro parasitário'], outraOpcao:'Outro parasitário', labelDescricaoOutra:'Descrição do parasitário', nomeMedicamento:true },
+  { chave:'tratamento_veterinario', label:'Tratamento veterinário', subcategorias:['Mastite','Problemas de casco','Problemas reprodutivos','Doenças respiratórias','Doenças digestivas','Doenças metabólicas','Feridas e lesões','Parasitoses','Febre e dor','Problemas no úbere','Problemas no pós-parto','Outros tratamentos'], outraOpcao:'Outros tratamentos', labelDescricaoOutra:'Descrição do tratamento', nomeMedicamento:true }
 ];
 
 function obterCategoriaSanitarioPorChave(chave){
@@ -1140,6 +1140,7 @@ function obterCategoriaSanitarioPorChave(chave){
 function formatarDetalhesSanitario(ev){
   let texto = TIPOS_SANITARIO[ev.tipo] || ev.tipo;
   if(ev.subcategoria) texto += ' — ' + escaparHTML(ev.subcategoria);
+  if(ev.nome_medicamento) texto += ' — ' + escaparHTML(ev.nome_medicamento);
   if(ev.descricao) texto += ' — ' + escaparHTML(ev.descricao);
   return texto;
 }
@@ -1200,8 +1201,11 @@ function atualizarCamposSanitario(){
   } else if(cat.subcategorias){
     html += '<div class="grupo-campo"><label for="campo-subcategoria-sanitario">Especificação</label><select id="campo-subcategoria-sanitario" onchange="atualizarDescricaoOutraSanitario()">'
       + cat.subcategorias.map(s=>'<option value="'+escaparHTML(s)+'">'+escaparHTML(s)+'</option>').join('')
-      + '</select></div>'
-      + '<div id="campo-descricao-outra-sanitario-wrap"></div>';
+      + '</select></div>';
+    if(cat.nomeMedicamento){
+      html += '<div class="grupo-campo"><label for="campo-nome-medicamento-sanitario">Nome do medicamento</label><input id="campo-nome-medicamento-sanitario" type="text" placeholder="Ex.: Amoxicilina"></div>';
+    }
+    html += '<div id="campo-descricao-outra-sanitario-wrap"></div>';
   }
   alvo.innerHTML = html;
   if(cat.subcategorias) atualizarDescricaoOutraSanitario();
@@ -1226,6 +1230,8 @@ async function salvarEventoSanitario(animalId){
   const cat = obterCategoriaSanitarioPorChave(tipo);
   const subcategoriaEl = document.getElementById('campo-subcategoria-sanitario');
   const subcategoria = subcategoriaEl ? subcategoriaEl.value : null;
+  const nomeMedicamentoEl = document.getElementById('campo-nome-medicamento-sanitario');
+  const nome_medicamento = nomeMedicamentoEl ? (nomeMedicamentoEl.value.trim() || null) : null;
   const descricaoEl = document.getElementById('campo-descricao-sanitario');
   const descricao = descricaoEl ? descricaoEl.value.trim() : '';
   const data_aplicacao = document.getElementById('campo-data-sanitario').value;
@@ -1243,7 +1249,7 @@ async function salvarEventoSanitario(animalId){
   msg.style.color = 'var(--tinta-suave)';
 
   const { error } = await sb.from('eventos_sanitarios').insert({
-    animal_id: animalId, produtor_id: usuarioAtual.id, tipo, subcategoria, descricao, data_aplicacao, dias_carencia, data_fim_carencia, proxima_dose_em
+    animal_id: animalId, produtor_id: usuarioAtual.id, tipo, subcategoria, nome_medicamento, descricao, data_aplicacao, dias_carencia, data_fim_carencia, proxima_dose_em
   });
 
   if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
