@@ -613,7 +613,7 @@ async function abrirVisualizacaoColaborador(colabId){
     const { data: sanit } = await sb.from('eventos_sanitarios').select('*, animais(identificacao)').eq('produtor_id', produtorId).order('data_aplicacao', { ascending:false }).limit(20);
     html += '<div class="rotulo-secao">Manejo sanitário (últimos eventos)</div>';
     html += (sanit && sanit.length)
-      ? sanit.map(ev=>'<div class="cartao"><strong>'+(TIPOS_SANITARIO[ev.tipo]||ev.tipo)+'</strong> — Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+(ev.descricao?' · '+escaparHTML(ev.descricao):'')+'<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Aplicado em '+formatarData(ev.data_aplicacao)+(ev.data_fim_carencia?' · Carência até '+formatarData(ev.data_fim_carencia):'')+'</div></div>').join('')
+      ? sanit.map(ev=>'<div class="cartao"><strong>'+formatarDetalhesSanitario(ev)+'</strong> — Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Aplicado em '+formatarData(ev.data_aplicacao)+(ev.data_fim_carencia?' · Carência até '+formatarData(ev.data_fim_carencia):'')+'</div></div>').join('')
       : '<div class="legenda-muted">Nenhum evento sanitário registrado.</div>';
   }
 
@@ -1107,7 +1107,42 @@ async function excluirEventoReprodutivo(id, animalId){
 }
 
 /* ======================= MANEJO SANITÁRIO ======================= */
-const TIPOS_SANITARIO = { vacina:'Vacina', tratamento:'Tratamento', medicamento:'Medicamento', outro:'Outro' };
+// Tipos antigos (vacina/tratamento/medicamento/outro) ficam aqui só para continuar
+// exibindo corretamente registros já salvos antes desta atualização. O formulário
+// de novos registros usa apenas as chaves de CATEGORIAS_SANITARIO_FORM, abaixo.
+const TIPOS_SANITARIO = {
+  vacina:'Vacina', tratamento:'Tratamento', medicamento:'Medicamento', outro:'Outro',
+  vacina_obrigatoria:'Vacina obrigatória', vacina_nao_obrigatoria:'Vacina não obrigatória',
+  antibiotico:'Antibiótico', anti_inflamatorio:'Anti-inflamatório',
+  antiparasitario:'Antiparasitário', tratamento_veterinario:'Tratamento veterinário'
+};
+
+// Categorias oferecidas no formulário "Adicionar vacina, remédio ou tratamento". Cada uma pode ter:
+// - descricaoLivre: mostra uma caixa de texto direto (usada nas vacinas);
+// - subcategorias: mostra uma segunda caixa de opções;
+// - outraOpcao + labelDescricaoOutra: quando a opção "outra" da subcategoria for
+//   escolhida, abre mais uma caixa de texto livre para detalhar.
+const CATEGORIAS_SANITARIO_FORM = [
+  { chave:'vacina_obrigatoria', label:'Vacina obrigatória', descricaoLivre:true, placeholderDescricao:'Ex.: Febre aftosa' },
+  { chave:'vacina_nao_obrigatoria', label:'Vacina não obrigatória', descricaoLivre:true, placeholderDescricao:'Ex.: Vacina contra IBR/BVD' },
+  { chave:'antibiotico', label:'Antibiótico', subcategorias:['Mastite','Metrite','Pneumonia','Infecção de casco','Infecção de feridas','Outras infecções bacterianas'], outraOpcao:'Outras infecções bacterianas', labelDescricaoOutra:'Descrição da infecção' },
+  { chave:'anti_inflamatorio', label:'Anti-inflamatório', subcategorias:['Mastite','Metrite','Problemas de casco','Feridas','Lesões','Traumas','Febre'] },
+  { chave:'antiparasitario', label:'Antiparasitário', subcategorias:['Vermífugo','Carrapaticida','Mosquicida','Bernicida','Outro parasitário'], outraOpcao:'Outro parasitário', labelDescricaoOutra:'Descrição do parasitário' },
+  { chave:'tratamento_veterinario', label:'Tratamento veterinário', subcategorias:['Mastite','Problemas de casco','Problemas reprodutivos','Doenças respiratórias','Doenças digestivas','Doenças metabólicas','Feridas e lesões','Parasitoses','Febre e dor','Problemas no úbere','Problemas no pós-parto','Outros tratamentos'], outraOpcao:'Outros tratamentos', labelDescricaoOutra:'Descrição do tratamento' }
+];
+
+function obterCategoriaSanitarioPorChave(chave){
+  return CATEGORIAS_SANITARIO_FORM.find(c => c.chave === chave);
+}
+
+// Monta o texto "Categoria — Subcategoria — Descrição" usado em todas as telas
+// que mostram um evento sanitário (ficha do animal, Início, relatório do administrador).
+function formatarDetalhesSanitario(ev){
+  let texto = TIPOS_SANITARIO[ev.tipo] || ev.tipo;
+  if(ev.subcategoria) texto += ' — ' + escaparHTML(ev.subcategoria);
+  if(ev.descricao) texto += ' — ' + escaparHTML(ev.descricao);
+  return texto;
+}
 
 async function renderHistoricoSanitario(animalId){
   const alvo = document.getElementById('secao-sanitario');
@@ -1122,7 +1157,7 @@ async function renderHistoricoSanitario(animalId){
   const lista = data.map(ev=>{
     const emCarencia = ev.data_fim_carencia && ev.data_fim_carencia >= hoje;
     return '<div class="cartao" style="display:flex; align-items:center; gap:12px; margin-bottom:8px'+(emCarencia ? '; border-color:var(--manteiga)' : '')+'">'
-      + '<div style="flex:1"><strong>'+(TIPOS_SANITARIO[ev.tipo]||ev.tipo)+(ev.descricao ? ' — '+escaparHTML(ev.descricao) : '')+'</strong>'
+      + '<div style="flex:1"><strong>'+formatarDetalhesSanitario(ev)+'</strong>'
       + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Aplicado em '+formatarData(ev.data_aplicacao)
       + (ev.data_fim_carencia ? ' · Carência até '+formatarData(ev.data_fim_carencia)+(emCarencia ? ' (em andamento)' : '') : '')
       + (ev.proxima_dose_em ? ' · Próxima dose em '+formatarData(ev.proxima_dose_em) : '')+'</div></div>'
@@ -1131,7 +1166,7 @@ async function renderHistoricoSanitario(animalId){
   }).join('');
 
   alvo.innerHTML = (data.length ? lista : '<div class="legenda-muted">Nenhum evento sanitário registrado ainda.</div>')
-    + '<button class="botao botao-secundario botao-bloco" onclick="abrirFormularioSanitario('+animalId+')">'+iconeInline('seringa',18)+' Adicionar vacina/tratamento</button>';
+    + '<button class="botao botao-secundario botao-bloco" onclick="abrirFormularioSanitario('+animalId+')">'+iconeInline('seringa',18)+' Adicionar vacina, remédio ou tratamento</button>';
 }
 
 function abrirFormularioSanitario(animalId){
@@ -1139,10 +1174,10 @@ function abrirFormularioSanitario(animalId){
   const hoje = new Date().toISOString().slice(0,10);
   alvo.insertAdjacentHTML('beforeend',
     '<div class="cartao" id="form-sanitario">'
-    + '<div class="grupo-campo"><label for="campo-tipo-sanitario">Tipo</label><select id="campo-tipo-sanitario">'
-      + Object.keys(TIPOS_SANITARIO).map(k=>'<option value="'+k+'">'+TIPOS_SANITARIO[k]+'</option>').join('')
+    + '<div class="grupo-campo"><label for="campo-tipo-sanitario">Categoria</label><select id="campo-tipo-sanitario" onchange="atualizarCamposSanitario()">'
+      + CATEGORIAS_SANITARIO_FORM.map(c=>'<option value="'+c.chave+'">'+c.label+'</option>').join('')
     + '</select></div>'
-    + '<div class="grupo-campo"><label for="campo-descricao-sanitario">Descrição</label><input id="campo-descricao-sanitario" type="text" placeholder="Ex.: Vacina aftosa, Antibiótico X"></div>'
+    + '<div id="campos-dinamicos-sanitario"></div>'
     + '<div class="grupo-campo"><label for="campo-data-sanitario">Data da aplicação</label><input id="campo-data-sanitario" type="date" value="'+hoje+'"></div>'
     + '<div class="grupo-campo"><label for="campo-carencia-dias">Dias de carência</label><input id="campo-carencia-dias" type="number" min="0" value="0"></div>'
     + '<div class="grupo-campo"><label for="campo-proxima-dose">Próxima dose prevista (opcional)</label><input id="campo-proxima-dose" type="date"></div>'
@@ -1150,17 +1185,57 @@ function abrirFormularioSanitario(animalId){
     + '<button class="botao botao-primario botao-bloco" onclick="salvarEventoSanitario('+animalId+')">Salvar</button>'
     + '</div>'
   );
+  atualizarCamposSanitario();
+}
+
+// Redesenha a parte do formulário que depende da categoria escolhida:
+// vacinas mostram uma caixa de descrição direto; as demais categorias mostram
+// uma segunda caixa de opções (subcategoria).
+function atualizarCamposSanitario(){
+  const cat = obterCategoriaSanitarioPorChave(document.getElementById('campo-tipo-sanitario').value);
+  const alvo = document.getElementById('campos-dinamicos-sanitario');
+  let html = '';
+  if(cat.descricaoLivre){
+    html += '<div class="grupo-campo"><label for="campo-descricao-sanitario">Descrição</label><input id="campo-descricao-sanitario" type="text" placeholder="'+escaparHTML(cat.placeholderDescricao||'Descrição')+'"></div>';
+  } else if(cat.subcategorias){
+    html += '<div class="grupo-campo"><label for="campo-subcategoria-sanitario">Especificação</label><select id="campo-subcategoria-sanitario" onchange="atualizarDescricaoOutraSanitario()">'
+      + cat.subcategorias.map(s=>'<option value="'+escaparHTML(s)+'">'+escaparHTML(s)+'</option>').join('')
+      + '</select></div>'
+      + '<div id="campo-descricao-outra-sanitario-wrap"></div>';
+  }
+  alvo.innerHTML = html;
+  if(cat.subcategorias) atualizarDescricaoOutraSanitario();
+}
+
+// Quando a subcategoria escolhida for a opção "outra" (ex.: "Outras infecções
+// bacterianas"), abre uma caixa extra para detalhar; caso contrário, esconde.
+function atualizarDescricaoOutraSanitario(){
+  const cat = obterCategoriaSanitarioPorChave(document.getElementById('campo-tipo-sanitario').value);
+  const sub = document.getElementById('campo-subcategoria-sanitario');
+  const wrap = document.getElementById('campo-descricao-outra-sanitario-wrap');
+  if(!sub || !wrap) return;
+  if(cat.outraOpcao && sub.value === cat.outraOpcao){
+    wrap.innerHTML = '<div class="grupo-campo"><label for="campo-descricao-sanitario">'+escaparHTML(cat.labelDescricaoOutra)+'</label><input id="campo-descricao-sanitario" type="text" placeholder="Descreva"></div>';
+  } else {
+    wrap.innerHTML = '';
+  }
 }
 
 async function salvarEventoSanitario(animalId){
   const tipo = document.getElementById('campo-tipo-sanitario').value;
-  const descricao = document.getElementById('campo-descricao-sanitario').value.trim();
+  const cat = obterCategoriaSanitarioPorChave(tipo);
+  const subcategoriaEl = document.getElementById('campo-subcategoria-sanitario');
+  const subcategoria = subcategoriaEl ? subcategoriaEl.value : null;
+  const descricaoEl = document.getElementById('campo-descricao-sanitario');
+  const descricao = descricaoEl ? descricaoEl.value.trim() : '';
   const data_aplicacao = document.getElementById('campo-data-sanitario').value;
   const dias_carencia = Number(document.getElementById('campo-carencia-dias').value) || 0;
   const proxima_dose_em = document.getElementById('campo-proxima-dose').value || null;
   const msg = document.getElementById('mensagem-sanitario');
 
   if(!data_aplicacao){ msg.textContent = 'Preencha a data da aplicação.'; msg.style.color = 'var(--perigo)'; return; }
+  if(cat.descricaoLivre && !descricao){ msg.textContent = 'Preencha a descrição.'; msg.style.color = 'var(--perigo)'; return; }
+  if(cat.outraOpcao && subcategoria === cat.outraOpcao && !descricao){ msg.textContent = 'Preencha "'+cat.labelDescricaoOutra+'".'; msg.style.color = 'var(--perigo)'; return; }
 
   const data_fim_carencia = dias_carencia > 0 ? somarDias(data_aplicacao, dias_carencia) : null;
 
@@ -1168,7 +1243,7 @@ async function salvarEventoSanitario(animalId){
   msg.style.color = 'var(--tinta-suave)';
 
   const { error } = await sb.from('eventos_sanitarios').insert({
-    animal_id: animalId, produtor_id: usuarioAtual.id, tipo, descricao, data_aplicacao, dias_carencia, data_fim_carencia, proxima_dose_em
+    animal_id: animalId, produtor_id: usuarioAtual.id, tipo, subcategoria, descricao, data_aplicacao, dias_carencia, data_fim_carencia, proxima_dose_em
   });
 
   if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
@@ -1604,11 +1679,11 @@ async function buscarAlertasCalendario(){
   });
 
   eventosSan.forEach(ev => {
-    alertas.push({ data: ev.data_fim_carencia, titulo: 'Fim da carência — '+(TIPOS_SANITARIO[ev.tipo]||ev.tipo)+(ev.descricao ? ' ('+ev.descricao+')' : ''), animal: mapaAnimais[ev.animal_id] });
+    alertas.push({ data: ev.data_fim_carencia, titulo: 'Fim da carência — '+formatarDetalhesSanitario(ev), animal: mapaAnimais[ev.animal_id] });
   });
 
   eventosDose.forEach(ev => {
-    alertas.push({ data: ev.proxima_dose_em, titulo: 'Próxima dose — '+(TIPOS_SANITARIO[ev.tipo]||ev.tipo)+(ev.descricao ? ' ('+ev.descricao+')' : ''), animal: mapaAnimais[ev.animal_id] });
+    alertas.push({ data: ev.proxima_dose_em, titulo: 'Próxima dose — '+formatarDetalhesSanitario(ev), animal: mapaAnimais[ev.animal_id] });
   });
 
   alertas.sort((a,b) => a.data.localeCompare(b.data));
@@ -2119,7 +2194,7 @@ async function gerarPDFProdutor(){
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Manejo sanitário no período</h2>';
   conteudo += (eventosSan&&eventosSan.length)
-    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Tipo</th><th>Carência até</th></tr></thead><tbody>'+eventosSan.map(ev=>'<tr><td>'+formatarData(ev.data_aplicacao)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+(TIPOS_SANITARIO[ev.tipo]||ev.tipo)+'</td><td>'+(ev.data_fim_carencia?formatarData(ev.data_fim_carencia):'—')+'</td></tr>').join('')+'</tbody></table>'
+    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Categoria</th><th>Carência até</th></tr></thead><tbody>'+eventosSan.map(ev=>'<tr><td>'+formatarData(ev.data_aplicacao)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+formatarDetalhesSanitario(ev)+'</td><td>'+(ev.data_fim_carencia?formatarData(ev.data_fim_carencia):'—')+'</td></tr>').join('')+'</tbody></table>'
     : '<div class="legenda-muted">Nenhum evento no período.</div>';
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Qualidade do leite no período</h2>';
