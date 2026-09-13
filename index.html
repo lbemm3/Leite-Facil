@@ -640,7 +640,7 @@ async function abrirVisualizacaoColaborador(colabId){
     const { data: lanc } = await sb.from('financeiro_lancamentos').select('*').eq('produtor_id', produtorId).order('data', { ascending:false }).limit(20);
     html += '<div class="rotulo-secao">Financeiro (últimos lançamentos)</div>';
     html += (lanc && lanc.length)
-      ? lanc.map(l=>'<div class="cartao"><strong>'+escaparHTML(l.categoria)+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(l.data)+' · '+(l.tipo==='receita'?'+':'−')+' R$ '+Number(l.valor).toFixed(2)+'</div></div>').join('')
+      ? lanc.map(l=>'<div class="cartao"><strong>'+formatarDetalhesLancamento(l)+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(l.data)+' · '+(l.tipo==='receita'?'+':'−')+' R$ '+Number(l.valor).toFixed(2)+'</div></div>').join('')
       : '<div class="legenda-muted">Nenhum lançamento registrado.</div>';
   }
 
@@ -1855,9 +1855,126 @@ async function excluirItemEstoque(id){
 }
 
 /* ======================= FINANCEIRO (privado do produtor) ======================= */
+/* ======================= FINANCEIRO ======================= */
 const CATEGORIAS_RECEITA = ['Venda de leite','Venda de animais','Outros'];
-const CATEGORIAS_DESPESA = ['Ração','Medicamentos/Veterinário','Sêmen/Reprodução','Combustível','Mão de obra','Manutenção','Outros'];
+
+// Estrutura das despesas: 6 categorias, cada uma com suas subcategorias.
+// "exQtd"/"exUnidade"/"exValorUnit" são só exemplos mostrados como placeholder
+// (dica de preenchimento) — nunca são valores reais.
+const CATEGORIAS_DESPESA_DETALHADA = [
+  { categoria:'Alimentação', subcategorias:[
+    { nome:'Milho/Grãos', exQtd:'40', exUnidade:'sacas de 60kg', exValorUnit:'55,00' },
+    { nome:'Farelos/Proteicos', exQtd:'20', exUnidade:'sacas de 50kg', exValorUnit:'90,00' },
+    { nome:'Minerais e Suplementos', exQtd:'5', exUnidade:'sacos de 25kg', exValorUnit:'120,00' },
+    { nome:'Silagem', exQtd:'10', exUnidade:'toneladas', exValorUnit:'180,00' },
+    { nome:'Feno', exQtd:'50', exUnidade:'fardos', exValorUnit:'25,00' },
+    { nome:'Pastagem/Forragem', exQtd:'2', exUnidade:'hectares', exValorUnit:'800,00' },
+    { nome:'Ração Concentrada', exQtd:'15', exUnidade:'sacos de 40kg', exValorUnit:'75,00' },
+    { nome:'Subprodutos Alimentares', exQtd:'8', exUnidade:'sacas', exValorUnit:'40,00' },
+    { nome:'Outros' }
+  ]},
+  { categoria:'Sanidade', subcategorias:[
+    { nome:'Medicamentos', exQtd:'3', exUnidade:'frascos', exValorUnit:'60,00' },
+    { nome:'Vacinas', exQtd:'20', exUnidade:'doses', exValorUnit:'8,00' },
+    { nome:'Vermífugos/Antiparasitários', exQtd:'2', exUnidade:'frascos', exValorUnit:'70,00' },
+    { nome:'Produtos para controle de mastite', exQtd:'1', exUnidade:'caixa', exValorUnit:'150,00' },
+    { nome:'Produtos para tratamento de casco', exQtd:'1', exUnidade:'litro', exValorUnit:'90,00' },
+    { nome:'Materiais veterinários', exQtd:'50', exUnidade:'unidades', exValorUnit:'2,00' },
+    { nome:'Serviços veterinários', exQtd:'1', exUnidade:'visita', exValorUnit:'250,00' },
+    { nome:'Exames/Laboratório', exQtd:'5', exUnidade:'exames', exValorUnit:'35,00' },
+    { nome:'Outros' }
+  ]},
+  { categoria:'Reprodução', subcategorias:[
+    { nome:'Sêmen', exQtd:'5', exUnidade:'doses', exValorUnit:'45,00' },
+    { nome:'Inseminação Artificial', exQtd:'3', exUnidade:'serviços', exValorUnit:'40,00' },
+    { nome:'Inseminação Artificial em Tempo Fixo (IATF)', exQtd:'5', exUnidade:'protocolos', exValorUnit:'70,00' },
+    { nome:'Diagnóstico de gestação', exQtd:'5', exUnidade:'exames', exValorUnit:'20,00' },
+    { nome:'Serviços reprodutivos', exQtd:'1', exUnidade:'visita', exValorUnit:'200,00' },
+    { nome:'Hormônios/Protocolos reprodutivos', exQtd:'2', exUnidade:'kits', exValorUnit:'80,00' },
+    { nome:'Exames reprodutivos', exQtd:'3', exUnidade:'exames', exValorUnit:'30,00' },
+    { nome:'Outros' }
+  ]},
+  { categoria:'Produção de forragem', subcategorias:[
+    { nome:'Sementes', exQtd:'50', exUnidade:'kg', exValorUnit:'12,00' },
+    { nome:'Fertilizantes', exQtd:'10', exUnidade:'sacos de 50kg', exValorUnit:'110,00' },
+    { nome:'Corretivos de solo', exQtd:'5', exUnidade:'toneladas', exValorUnit:'150,00' },
+    { nome:'Defensivos agrícolas', exQtd:'10', exUnidade:'litros', exValorUnit:'60,00' },
+    { nome:'Herbicidas', exQtd:'20', exUnidade:'litros', exValorUnit:'45,00' },
+    { nome:'Inoculantes', exQtd:'5', exUnidade:'litros', exValorUnit:'25,00' },
+    { nome:'Filmes e materiais para silagem', exQtd:'10', exUnidade:'rolos', exValorUnit:'350,00' },
+    { nome:'Irrigação da forragem', exQtd:'1', exUnidade:'serviço', exValorUnit:'500,00' },
+    { nome:'Serviços agrícolas', exQtd:'5', exUnidade:'horas/máquina', exValorUnit:'180,00' },
+    { nome:'Aluguel de máquinas agrícolas', exQtd:'2', exUnidade:'dias', exValorUnit:'400,00' },
+    { nome:'Outros' }
+  ]},
+  { categoria:'Estrutura', subcategorias:[
+    { nome:'Manutenção de máquinas', exQtd:'1', exUnidade:'serviço', exValorUnit:'300,00' },
+    { nome:'Manutenção de equipamentos', exQtd:'1', exUnidade:'serviço', exValorUnit:'200,00' },
+    { nome:'Manutenção de instalações', exQtd:'1', exUnidade:'serviço', exValorUnit:'500,00' },
+    { nome:'Peças e componentes', exQtd:'3', exUnidade:'peças', exValorUnit:'80,00' },
+    { nome:'Ferramentas', exQtd:'2', exUnidade:'unidades', exValorUnit:'60,00' },
+    { nome:'Equipamentos e utensílios', exQtd:'1', exUnidade:'unidade', exValorUnit:'250,00' },
+    { nome:'Ordenhadeira/Equipamentos de ordenha', exQtd:'1', exUnidade:'peça', exValorUnit:'600,00' },
+    { nome:'Tanque de resfriamento', exQtd:'1', exUnidade:'serviço', exValorUnit:'1500,00' },
+    { nome:'Instalações elétricas', exQtd:'1', exUnidade:'serviço', exValorUnit:'400,00' },
+    { nome:'Instalações hidráulicas', exQtd:'1', exUnidade:'serviço', exValorUnit:'350,00' },
+    { nome:'Construções/Reformas', exQtd:'1', exUnidade:'etapa', exValorUnit:'3000,00' },
+    { nome:'Combustível', exQtd:'100', exUnidade:'litros', exValorUnit:'6,20' },
+    { nome:'Energia elétrica', exQtd:'1', exUnidade:'conta', exValorUnit:'450,00' },
+    { nome:'Água', exQtd:'1', exUnidade:'conta', exValorUnit:'80,00' },
+    { nome:'Outros' }
+  ]},
+  { categoria:'Despesas administrativas', subcategorias:[
+    { nome:'Mão de obra fixa', exQtd:'1', exUnidade:'funcionário/mês', exValorUnit:'1800,00' },
+    { nome:'Mão de obra temporária', exQtd:'5', exUnidade:'diárias', exValorUnit:'120,00' },
+    { nome:'Encargos trabalhistas', exQtd:'1', exUnidade:'mês', exValorUnit:'450,00' },
+    { nome:'Serviços de terceiros', exQtd:'1', exUnidade:'serviço', exValorUnit:'300,00' },
+    { nome:'Transporte/Frete', exQtd:'1', exUnidade:'frete', exValorUnit:'250,00' },
+    { nome:'Impostos', exQtd:'1', exUnidade:'guia', exValorUnit:'180,00' },
+    { nome:'Taxas', exQtd:'1', exUnidade:'taxa', exValorUnit:'50,00' },
+    { nome:'Contabilidade', exQtd:'1', exUnidade:'mês', exValorUnit:'250,00' },
+    { nome:'Telefone/Internet', exQtd:'1', exUnidade:'mês', exValorUnit:'120,00' },
+    { nome:'Material de escritório', exQtd:'1', exUnidade:'compra', exValorUnit:'60,00' },
+    { nome:'Seguros', exQtd:'1', exUnidade:'apólice', exValorUnit:'800,00' },
+    { nome:'Aluguel/Arrendamento', exQtd:'1', exUnidade:'mês', exValorUnit:'1500,00' },
+    { nome:'Financiamentos', exQtd:'1', exUnidade:'parcela', exValorUnit:'900,00' },
+    { nome:'Juros', exQtd:'1', exUnidade:'mês', exValorUnit:'150,00' },
+    { nome:'Taxas bancárias', exQtd:'1', exUnidade:'mês', exValorUnit:'30,00' },
+    { nome:'Despesas administrativas', exQtd:'1', exUnidade:'item', exValorUnit:'100,00' },
+    { nome:'Outros' }
+  ]}
+];
+
 let MEUS_LANCAMENTOS = [];
+
+function obterCategoriaDespesaPorNome(nome){
+  return CATEGORIAS_DESPESA_DETALHADA.find(c => c.categoria === nome);
+}
+function obterSubcategoriaDespesa(categoriaNome, subNome){
+  const cat = obterCategoriaDespesaPorNome(categoriaNome);
+  return cat ? cat.subcategorias.find(s => s.nome === subNome) : null;
+}
+
+// Texto principal mostrado nas listas: "Categoria — Subcategoria" (despesas novas),
+// ou só a categoria (receitas e lançamentos antigos, de antes desta reestruturação).
+function formatarDetalhesLancamento(l){
+  if(l.tipo === 'despesa' && l.subcategoria){
+    let texto = escaparHTML(l.categoria) + ' — ' + escaparHTML(l.subcategoria);
+    if(l.subcategoria === 'Outros' && l.descricao) texto += ' — ' + escaparHTML(l.descricao);
+    return texto;
+  }
+  let texto = escaparHTML(l.categoria || '');
+  if(l.descricao) texto += ' — ' + escaparHTML(l.descricao);
+  return texto;
+}
+
+// Linha secundária com quantidade/unidade/valor unitário, quando existirem.
+function detalheQuantidadeLancamento(l){
+  if(l.quantidade != null && l.unidade){
+    return escaparHTML(String(l.quantidade)) + ' ' + escaparHTML(l.unidade) + ' × R$ ' + Number(l.valor_unitario||0).toFixed(2);
+  }
+  return '';
+}
 
 async function renderFinanceiro(){
   document.getElementById('tela-financeiro').innerHTML = '<div class="legenda-muted">Carregando financeiro...</div>';
@@ -1881,7 +1998,10 @@ async function renderFinanceiro(){
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Financeiro</div>'
     + '<div class="legenda-muted">Este módulo é privado — somente você tem acesso aos seus dados financeiros.</div>'
     + resumo
-    + '<button class="botao botao-primario" style="margin:14px 0 18px" onclick="abrirNovoLancamento()">'+iconeInline('moeda',18)+' Novo lançamento</button>';
+    + '<div style="display:flex; gap:10px; margin:14px 0 18px">'
+      + '<button class="botao botao-primario" style="flex:1" onclick="abrirNovoLancamentoDespesa()">'+iconeInline('moeda',18)+' Lançar uma Despesa/Saída</button>'
+      + '<button class="botao botao-secundario" style="flex:1" onclick="abrirNovoLancamentoReceita()">'+iconeInline('moeda',18)+' Lançar uma Receita/Entrada</button>'
+    + '</div>';
 
   if(data.length === 0){
     document.getElementById('tela-financeiro').innerHTML = cabecalho
@@ -1892,8 +2012,8 @@ async function renderFinanceiro(){
   const linhas = data.map(l=>
     '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirEdicaoLancamento('+l.id+')">'
     + '<div class="avatar" style="background:'+(l.tipo==='receita' ? 'var(--pasto)' : 'var(--perigo)')+'; color:var(--branco)">'+iconeInline('moeda',18)+'</div>'
-    + '<div style="flex:1"><strong>'+escaparHTML(l.categoria)+'</strong>'
-    + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(l.data)+(l.descricao ? ' · '+escaparHTML(l.descricao) : '')+'</div></div>'
+    + '<div style="flex:1"><strong>'+formatarDetalhesLancamento(l)+'</strong>'
+    + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(l.data)+(detalheQuantidadeLancamento(l) ? ' · '+detalheQuantidadeLancamento(l) : '')+'</div></div>'
     + '<span style="font-weight:700; color:'+(l.tipo==='receita' ? 'var(--sucesso)' : 'var(--perigo)')+'">'+(l.tipo==='receita' ? '+' : '−')+' R$ '+Number(l.valor).toFixed(2)+'</span>'
     + '</button>'
   ).join('');
@@ -1901,36 +2021,172 @@ async function renderFinanceiro(){
   document.getElementById('tela-financeiro').innerHTML = cabecalho + linhas;
 }
 
-function opcoesCategoriaFinanceiro(tipo, selecionada){
-  const lista = tipo === 'receita' ? CATEGORIAS_RECEITA : CATEGORIAS_DESPESA;
-  return lista.map(c=>'<option value="'+c+'" '+(c===selecionada?'selected':'')+'>'+c+'</option>').join('');
-}
+/* --- Lançar/editar DESPESA --- */
 
-function atualizarCategoriasFinanceiro(){
-  const tipo = document.getElementById('campo-tipo-lancamento').value;
-  document.getElementById('campo-categoria-lancamento').innerHTML = opcoesCategoriaFinanceiro(tipo);
-}
-
-function abrirNovoLancamento(){
+function abrirNovoLancamentoDespesa(){
   const hoje = new Date().toISOString().slice(0,10);
   document.getElementById('conteudo-modal').innerHTML =
-    '<div class="rotulo-secao" style="margin-top:0">Novo lançamento</div>'
-    + '<div class="grupo-campo"><label for="campo-tipo-lancamento">Tipo</label><select id="campo-tipo-lancamento" onchange="atualizarCategoriasFinanceiro()"><option value="receita">Receita</option><option value="despesa">Despesa</option></select></div>'
-    + '<div class="grupo-campo"><label for="campo-categoria-lancamento">Categoria</label><select id="campo-categoria-lancamento">'+opcoesCategoriaFinanceiro('receita')+'</select></div>'
-    + '<div class="grupo-campo"><label for="campo-valor-lancamento">Valor (R$)</label><input id="campo-valor-lancamento" type="number" step="0.01" min="0"></div>'
+    '<div class="rotulo-secao" style="margin-top:0">Lançar uma despesa/saída</div>'
+    + '<div class="grupo-campo"><label for="campo-categoria-despesa">Categoria</label><select id="campo-categoria-despesa" onchange="atualizarSubcategoriaDespesa()">'
+      + CATEGORIAS_DESPESA_DETALHADA.map(c=>'<option value="'+escaparHTML(c.categoria)+'">'+escaparHTML(c.categoria)+'</option>').join('')
+    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-subcategoria-despesa">Subcategoria</label><select id="campo-subcategoria-despesa" onchange="atualizarCamposDespesa()"></select></div>'
+    + '<div id="campos-despesa-dinamicos"></div>'
     + '<div class="grupo-campo"><label for="campo-data-lancamento">Data</label><input id="campo-data-lancamento" type="date" value="'+hoje+'"></div>'
-    + '<div class="grupo-campo"><label for="campo-descricao-lancamento">Descrição (opcional)</label><input id="campo-descricao-lancamento" type="text"></div>'
     + '<div id="mensagem-lancamento" class="legenda-muted" style="min-height:18px"></div>'
-    + '<button class="botao botao-primario botao-bloco" onclick="salvarNovoLancamento()">Salvar</button>';
+    + '<button class="botao botao-primario botao-bloco" onclick="salvarNovoLancamentoDespesa()">Salvar</button>';
+  abrirModal();
+  atualizarSubcategoriaDespesa();
+}
+
+// Repopula a lista de subcategorias quando a categoria muda.
+function atualizarSubcategoriaDespesa(){
+  const cat = obterCategoriaDespesaPorNome(document.getElementById('campo-categoria-despesa').value);
+  document.getElementById('campo-subcategoria-despesa').innerHTML = cat.subcategorias.map(s=>'<option value="'+escaparHTML(s.nome)+'">'+escaparHTML(s.nome)+'</option>').join('');
+  atualizarCamposDespesa();
+}
+
+// Monta as caixas de Quantidade/Unidade/Valor unitário/Valor total (com exemplos da
+// subcategoria escolhida) e, se for "Outros", a caixa de descrição.
+function atualizarCamposDespesa(){
+  const categoriaNome = document.getElementById('campo-categoria-despesa').value;
+  const subNome = document.getElementById('campo-subcategoria-despesa').value;
+  const sub = obterSubcategoriaDespesa(categoriaNome, subNome) || {};
+  const alvo = document.getElementById('campos-despesa-dinamicos');
+  let html = '';
+  if(subNome === 'Outros'){
+    html += '<div class="grupo-campo"><label for="campo-descricao-lancamento">Descreva a despesa</label><input id="campo-descricao-lancamento" type="text" placeholder="Ex.: Frete de máquina, análise de solo, etc."></div>';
+  }
+  html += '<div class="grupo-campo"><label for="campo-quantidade-lancamento">Quantidade</label><input id="campo-quantidade-lancamento" type="number" step="0.01" min="0" placeholder="Ex.: '+escaparHTML(sub.exQtd||'1')+'" oninput="atualizarValorTotalLancamento()"></div>'
+    + '<div class="grupo-campo"><label for="campo-unidade-lancamento">Unidade</label><input id="campo-unidade-lancamento" type="text" placeholder="Ex.: '+escaparHTML(sub.exUnidade||'unidades')+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-valor-unitario-lancamento">Valor unitário (R$)</label><input id="campo-valor-unitario-lancamento" type="number" step="0.01" min="0" placeholder="Ex.: '+escaparHTML(sub.exValorUnit||'50,00')+'" oninput="atualizarValorTotalLancamento()"></div>'
+    + '<div class="grupo-campo"><label for="campo-valor-total-lancamento">Valor total (R$)</label><input id="campo-valor-total-lancamento" type="text" value="0,00" readonly></div>'
+    + '<div class="legenda-muted" style="margin-bottom:12px; font-size:13px">Não sabe a quantidade e o valor unitário exatos? Lance 1 na Quantidade e o valor total da despesa em "Valor unitário".</div>';
+  alvo.innerHTML = html;
+  atualizarValorTotalLancamento();
+}
+
+// Recalcula o Valor total sempre que Quantidade ou Valor unitário mudam.
+function atualizarValorTotalLancamento(){
+  const qtdEl = document.getElementById('campo-quantidade-lancamento');
+  const vuEl = document.getElementById('campo-valor-unitario-lancamento');
+  const totalEl = document.getElementById('campo-valor-total-lancamento');
+  if(!qtdEl || !vuEl || !totalEl) return;
+  const qtd = Number(qtdEl.value) || 0;
+  const vu = Number(vuEl.value) || 0;
+  totalEl.value = (qtd*vu).toFixed(2).replace('.', ',');
+}
+
+async function salvarNovoLancamentoDespesa(){
+  const categoria = document.getElementById('campo-categoria-despesa').value;
+  const subcategoria = document.getElementById('campo-subcategoria-despesa').value;
+  const quantidade = document.getElementById('campo-quantidade-lancamento').value ? Number(document.getElementById('campo-quantidade-lancamento').value) : null;
+  const unidade = document.getElementById('campo-unidade-lancamento').value.trim() || null;
+  const valor_unitario = document.getElementById('campo-valor-unitario-lancamento').value ? Number(document.getElementById('campo-valor-unitario-lancamento').value) : null;
+  const valor = Number(((quantidade||0)*(valor_unitario||0)).toFixed(2));
+  const data = document.getElementById('campo-data-lancamento').value;
+  const descricaoEl = document.getElementById('campo-descricao-lancamento');
+  const descricao = descricaoEl ? (descricaoEl.value.trim() || null) : null;
+  const msg = document.getElementById('mensagem-lancamento');
+
+  if(!quantidade || quantidade <= 0){ msg.textContent = 'Informe a quantidade.'; msg.style.color = 'var(--perigo)'; return; }
+  if(!valor_unitario || valor_unitario <= 0){ msg.textContent = 'Informe o valor unitário.'; msg.style.color = 'var(--perigo)'; return; }
+  if(!unidade){ msg.textContent = 'Informe a unidade.'; msg.style.color = 'var(--perigo)'; return; }
+  if(!data){ msg.textContent = 'Preencha a data.'; msg.style.color = 'var(--perigo)'; return; }
+  if(subcategoria === 'Outros' && !descricao){ msg.textContent = 'Descreva a despesa.'; msg.style.color = 'var(--perigo)'; return; }
+
+  msg.textContent = 'Salvando...';
+  msg.style.color = 'var(--tinta-suave)';
+
+  const { error } = await sb.from('financeiro_lancamentos').insert({ produtor_id: usuarioAtual.id, tipo:'despesa', categoria, subcategoria, quantidade, unidade, valor_unitario, valor, data, descricao });
+
+  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+
+  fecharModal();
+  renderFinanceiro();
+}
+
+function abrirEdicaoLancamentoDespesa(l){
+  const categoriaValida = obterCategoriaDespesaPorNome(l.categoria) ? l.categoria : CATEGORIAS_DESPESA_DETALHADA[0].categoria;
+  const cat = obterCategoriaDespesaPorNome(categoriaValida);
+  const subcategoriaValida = l.subcategoria && cat.subcategorias.some(s=>s.nome===l.subcategoria) ? l.subcategoria : 'Outros';
+
+  document.getElementById('conteudo-modal').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Editar despesa/saída</div>'
+    + '<div class="grupo-campo"><label for="campo-categoria-despesa">Categoria</label><select id="campo-categoria-despesa" onchange="atualizarSubcategoriaDespesa()">'
+      + CATEGORIAS_DESPESA_DETALHADA.map(c=>'<option value="'+escaparHTML(c.categoria)+'" '+(c.categoria===categoriaValida?'selected':'')+'>'+escaparHTML(c.categoria)+'</option>').join('')
+    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-subcategoria-despesa">Subcategoria</label><select id="campo-subcategoria-despesa" onchange="atualizarCamposDespesa()"></select></div>'
+    + '<div id="campos-despesa-dinamicos"></div>'
+    + '<div class="grupo-campo"><label for="campo-data-lancamento">Data</label><input id="campo-data-lancamento" type="date" value="'+l.data+'"></div>'
+    + '<div id="mensagem-lancamento" class="legenda-muted" style="min-height:18px"></div>'
+    + '<button class="botao botao-primario botao-bloco" onclick="salvarEdicaoLancamentoDespesa('+l.id+')">Salvar alterações</button>'
+    + '<button class="botao botao-secundario botao-bloco" style="margin-top:10px; color:var(--perigo); border-color:var(--perigo)" onclick="excluirLancamento('+l.id+')">Excluir lançamento</button>';
+  abrirModal();
+
+  document.getElementById('campo-subcategoria-despesa').innerHTML = cat.subcategorias.map(s=>'<option value="'+escaparHTML(s.nome)+'" '+(s.nome===subcategoriaValida?'selected':'')+'>'+escaparHTML(s.nome)+'</option>').join('');
+  atualizarCamposDespesa();
+
+  // Sobrescreve com os valores já salvos (a linha acima só preenche os placeholders de exemplo).
+  const campoDescricao = document.getElementById('campo-descricao-lancamento');
+  if(campoDescricao) campoDescricao.value = l.descricao || '';
+  const campoQtd = document.getElementById('campo-quantidade-lancamento');
+  if(campoQtd) campoQtd.value = l.quantidade != null ? l.quantidade : '';
+  const campoUnidade = document.getElementById('campo-unidade-lancamento');
+  if(campoUnidade) campoUnidade.value = l.unidade || '';
+  const campoValorUnit = document.getElementById('campo-valor-unitario-lancamento');
+  if(campoValorUnit) campoValorUnit.value = l.valor_unitario != null ? l.valor_unitario : (l.valor || '');
+  atualizarValorTotalLancamento();
+}
+
+async function salvarEdicaoLancamentoDespesa(id){
+  const categoria = document.getElementById('campo-categoria-despesa').value;
+  const subcategoria = document.getElementById('campo-subcategoria-despesa').value;
+  const quantidade = document.getElementById('campo-quantidade-lancamento').value ? Number(document.getElementById('campo-quantidade-lancamento').value) : null;
+  const unidade = document.getElementById('campo-unidade-lancamento').value.trim() || null;
+  const valor_unitario = document.getElementById('campo-valor-unitario-lancamento').value ? Number(document.getElementById('campo-valor-unitario-lancamento').value) : null;
+  const valor = Number(((quantidade||0)*(valor_unitario||0)).toFixed(2));
+  const data = document.getElementById('campo-data-lancamento').value;
+  const descricaoEl = document.getElementById('campo-descricao-lancamento');
+  const descricao = descricaoEl ? (descricaoEl.value.trim() || null) : null;
+  const msg = document.getElementById('mensagem-lancamento');
+
+  if(!quantidade || quantidade <= 0){ msg.textContent = 'Informe a quantidade.'; msg.style.color = 'var(--perigo)'; return; }
+  if(!valor_unitario || valor_unitario <= 0){ msg.textContent = 'Informe o valor unitário.'; msg.style.color = 'var(--perigo)'; return; }
+  if(!unidade){ msg.textContent = 'Informe a unidade.'; msg.style.color = 'var(--perigo)'; return; }
+  if(subcategoria === 'Outros' && !descricao){ msg.textContent = 'Descreva a despesa.'; msg.style.color = 'var(--perigo)'; return; }
+
+  msg.textContent = 'Salvando...';
+  msg.style.color = 'var(--tinta-suave)';
+
+  const { error } = await sb.from('financeiro_lancamentos').update({ categoria, subcategoria, quantidade, unidade, valor_unitario, valor, data, descricao }).eq('id', id);
+
+  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+
+  fecharModal();
+  renderFinanceiro();
+}
+
+/* --- Lançar/editar RECEITA --- */
+
+function abrirNovoLancamentoReceita(){
+  const hoje = new Date().toISOString().slice(0,10);
+  document.getElementById('conteudo-modal').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Lançar uma receita/entrada</div>'
+    + '<div class="grupo-campo"><label for="campo-categoria-receita">Categoria</label><select id="campo-categoria-receita">'+CATEGORIAS_RECEITA.map(c=>'<option value="'+c+'">'+c+'</option>').join('')+'</select></div>'
+    + '<div class="grupo-campo"><label for="campo-valor-lancamento">Valor (R$)</label><input id="campo-valor-lancamento" type="number" step="0.01" min="0" placeholder="Ex.: 3500,00"></div>'
+    + '<div class="grupo-campo"><label for="campo-data-lancamento">Data</label><input id="campo-data-lancamento" type="date" value="'+hoje+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-descricao-lancamento">Descrição (opcional)</label><input id="campo-descricao-lancamento" type="text" placeholder="Ex.: Venda de leite para o laticínio"></div>'
+    + '<div id="mensagem-lancamento" class="legenda-muted" style="min-height:18px"></div>'
+    + '<button class="botao botao-primario botao-bloco" onclick="salvarNovoLancamentoReceita()">Salvar</button>';
   abrirModal();
 }
 
-async function salvarNovoLancamento(){
-  const tipo = document.getElementById('campo-tipo-lancamento').value;
-  const categoria = document.getElementById('campo-categoria-lancamento').value;
+async function salvarNovoLancamentoReceita(){
+  const categoria = document.getElementById('campo-categoria-receita').value;
   const valor = Number(document.getElementById('campo-valor-lancamento').value);
   const data = document.getElementById('campo-data-lancamento').value;
-  const descricao = document.getElementById('campo-descricao-lancamento').value.trim();
+  const descricao = document.getElementById('campo-descricao-lancamento').value.trim() || null;
   const msg = document.getElementById('mensagem-lancamento');
 
   if(!valor || valor <= 0){ msg.textContent = 'Informe um valor válido.'; msg.style.color = 'var(--perigo)'; return; }
@@ -1939,7 +2195,7 @@ async function salvarNovoLancamento(){
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
 
-  const { error } = await sb.from('financeiro_lancamentos').insert({ produtor_id: usuarioAtual.id, tipo, categoria, valor, data, descricao });
+  const { error } = await sb.from('financeiro_lancamentos').insert({ produtor_id: usuarioAtual.id, tipo:'receita', categoria, valor, data, descricao });
 
   if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
 
@@ -1947,28 +2203,24 @@ async function salvarNovoLancamento(){
   renderFinanceiro();
 }
 
-function abrirEdicaoLancamento(id){
-  const l = MEUS_LANCAMENTOS.find(x=>x.id===id);
-  if(!l) return;
+function abrirEdicaoLancamentoReceita(l){
   document.getElementById('conteudo-modal').innerHTML =
-    '<div class="rotulo-secao" style="margin-top:0">Editar lançamento</div>'
-    + '<div class="grupo-campo"><label for="campo-tipo-lancamento">Tipo</label><select id="campo-tipo-lancamento" onchange="atualizarCategoriasFinanceiro()"><option value="receita" '+(l.tipo==='receita'?'selected':'')+'>Receita</option><option value="despesa" '+(l.tipo==='despesa'?'selected':'')+'>Despesa</option></select></div>'
-    + '<div class="grupo-campo"><label for="campo-categoria-lancamento">Categoria</label><select id="campo-categoria-lancamento">'+opcoesCategoriaFinanceiro(l.tipo, l.categoria)+'</select></div>'
+    '<div class="rotulo-secao" style="margin-top:0">Editar receita/entrada</div>'
+    + '<div class="grupo-campo"><label for="campo-categoria-receita">Categoria</label><select id="campo-categoria-receita">'+CATEGORIAS_RECEITA.map(c=>'<option value="'+c+'" '+(c===l.categoria?'selected':'')+'>'+c+'</option>').join('')+'</select></div>'
     + '<div class="grupo-campo"><label for="campo-valor-lancamento">Valor (R$)</label><input id="campo-valor-lancamento" type="number" step="0.01" min="0" value="'+l.valor+'"></div>'
     + '<div class="grupo-campo"><label for="campo-data-lancamento">Data</label><input id="campo-data-lancamento" type="date" value="'+l.data+'"></div>'
     + '<div class="grupo-campo"><label for="campo-descricao-lancamento">Descrição (opcional)</label><input id="campo-descricao-lancamento" type="text" value="'+escaparHTML(l.descricao||'')+'"></div>'
     + '<div id="mensagem-lancamento" class="legenda-muted" style="min-height:18px"></div>'
-    + '<button class="botao botao-primario botao-bloco" onclick="salvarEdicaoLancamento('+l.id+')">Salvar alterações</button>'
+    + '<button class="botao botao-primario botao-bloco" onclick="salvarEdicaoLancamentoReceita('+l.id+')">Salvar alterações</button>'
     + '<button class="botao botao-secundario botao-bloco" style="margin-top:10px; color:var(--perigo); border-color:var(--perigo)" onclick="excluirLancamento('+l.id+')">Excluir lançamento</button>';
   abrirModal();
 }
 
-async function salvarEdicaoLancamento(id){
-  const tipo = document.getElementById('campo-tipo-lancamento').value;
-  const categoria = document.getElementById('campo-categoria-lancamento').value;
+async function salvarEdicaoLancamentoReceita(id){
+  const categoria = document.getElementById('campo-categoria-receita').value;
   const valor = Number(document.getElementById('campo-valor-lancamento').value);
   const data = document.getElementById('campo-data-lancamento').value;
-  const descricao = document.getElementById('campo-descricao-lancamento').value.trim();
+  const descricao = document.getElementById('campo-descricao-lancamento').value.trim() || null;
   const msg = document.getElementById('mensagem-lancamento');
 
   if(!valor || valor <= 0){ msg.textContent = 'Informe um valor válido.'; msg.style.color = 'var(--perigo)'; return; }
@@ -1976,12 +2228,21 @@ async function salvarEdicaoLancamento(id){
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
 
-  const { error } = await sb.from('financeiro_lancamentos').update({ tipo, categoria, valor, data, descricao }).eq('id', id);
+  const { error } = await sb.from('financeiro_lancamentos').update({ categoria, valor, data, descricao }).eq('id', id);
 
   if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
 
   fecharModal();
   renderFinanceiro();
+}
+
+/* --- Comuns (roteamento de edição e exclusão) --- */
+
+function abrirEdicaoLancamento(id){
+  const l = MEUS_LANCAMENTOS.find(x=>x.id===id);
+  if(!l) return;
+  if(l.tipo === 'despesa') abrirEdicaoLancamentoDespesa(l);
+  else abrirEdicaoLancamentoReceita(l);
 }
 
 async function excluirLancamento(id){
