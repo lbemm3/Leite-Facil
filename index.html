@@ -332,6 +332,28 @@ function mensagemErroAmigavel(error, oQueFalhou){
   return (oQueFalhou ? 'Não foi possível ' + oQueFalhou + '. ' : 'Não foi possível concluir a ação. ') + dica;
 }
 
+// Detecta se um nome de subcategoria/item é o "catch-all" tipo "Outro(s)/Outra(s)"
+// — usado em Sanitário, Financeiro (despesas) e Estoque para decidir quando abrir
+// uma caixa de descrição livre. Antes cada módulo tinha sua própria checagem;
+// centralizada aqui para não reimplementar (e não desalinhar) a mesma regra três vezes.
+function ehOpcaoOutro(nome){
+  const n = (nome||'').toLowerCase();
+  return n.startsWith('outro') || n.startsWith('outra');
+}
+
+// Preenche um <select> a partir de uma lista de opções. Cada opção pode ser uma
+// string simples (valor = rótulo, caso mais comum) ou um objeto {valor, rotulo}
+// quando os dois precisam ser diferentes (ex.: uma chave curta com um texto de
+// exibição). "selecionado" marca qual opção já vem marcada — usado nas telas de
+// edição, onde o valor já salvo precisa aparecer pré-selecionado.
+function preencherSelect(select, opcoes, selecionado){
+  select.innerHTML = opcoes.map(o=>{
+    const valor = (o && typeof o === 'object') ? o.valor : o;
+    const rotulo = (o && typeof o === 'object') ? o.rotulo : o;
+    return '<option value="'+escaparHTML(valor)+'" '+(valor===selecionado?'selected':'')+'>'+escaparHTML(rotulo)+'</option>';
+  }).join('');
+}
+
 function baixarCSV(nomeArquivo, colunas, linhas){
   const cabecalho = colunas.join(';');
   const corpo = linhas.map(l => colunas.map(c => {
@@ -1138,15 +1160,16 @@ const TIPOS_SANITARIO = {
 // Categorias oferecidas no formulário "Adicionar vacina, remédio ou tratamento". Cada uma pode ter:
 // - descricaoLivre: mostra uma caixa de texto direto (usada nas vacinas);
 // - subcategorias: mostra uma segunda caixa de opções;
-// - outraOpcao + labelDescricaoOutra: quando a opção "outra" da subcategoria for
-//   escolhida, abre mais uma caixa de texto livre para detalhar.
+// - a opção "Outra(s)..." é detectada automaticamente pela função ehOpcaoOutro
+//   (baseada no nome começar com "Outro"/"Outra"), e não precisa ser configurada
+//   aqui; "labelDescricaoOutra" é só o texto da caixa que abre nesse caso.
 const CATEGORIAS_SANITARIO_FORM = [
   { chave:'vacina_obrigatoria', label:'Vacina obrigatória', descricaoLivre:true, placeholderDescricao:'Ex.: Brucelose' },
   { chave:'vacina_nao_obrigatoria', label:'Vacina não obrigatória', descricaoLivre:true, placeholderDescricao:'Ex.: Vacina contra IBR/BVD' },
-  { chave:'antibiotico', label:'Antibiótico', subcategorias:['Mastite','Metrite','Pneumonia','Infecção de casco','Infecção de feridas','Outras infecções bacterianas'], outraOpcao:'Outras infecções bacterianas', labelDescricaoOutra:'Descrição da infecção', nomeMedicamento:true },
+  { chave:'antibiotico', label:'Antibiótico', subcategorias:['Mastite','Metrite','Pneumonia','Infecção de casco','Infecção de feridas','Outras infecções bacterianas'], labelDescricaoOutra:'Descrição da infecção', nomeMedicamento:true },
   { chave:'anti_inflamatorio', label:'Anti-inflamatório', subcategorias:['Mastite','Metrite','Problemas de casco','Feridas','Lesões','Traumas','Febre'], nomeMedicamento:true },
-  { chave:'antiparasitario', label:'Antiparasitário', subcategorias:['Vermífugo','Carrapaticida','Mosquicida','Bernicida','Outro parasitário'], outraOpcao:'Outro parasitário', labelDescricaoOutra:'Descrição do parasitário', nomeMedicamento:true },
-  { chave:'tratamento_veterinario', label:'Tratamento veterinário', subcategorias:['Mastite','Problemas de casco','Problemas reprodutivos','Doenças respiratórias','Doenças digestivas','Doenças metabólicas','Feridas e lesões','Parasitoses','Febre e dor','Problemas no úbere','Problemas no pós-parto','Outros tratamentos'], outraOpcao:'Outros tratamentos', labelDescricaoOutra:'Descrição do tratamento', nomeMedicamento:true }
+  { chave:'antiparasitario', label:'Antiparasitário', subcategorias:['Vermífugo','Carrapaticida','Mosquicida','Bernicida','Outro parasitário'], labelDescricaoOutra:'Descrição do parasitário', nomeMedicamento:true },
+  { chave:'tratamento_veterinario', label:'Tratamento veterinário', subcategorias:['Mastite','Problemas de casco','Problemas reprodutivos','Doenças respiratórias','Doenças digestivas','Doenças metabólicas','Feridas e lesões','Parasitoses','Febre e dor','Problemas no úbere','Problemas no pós-parto','Outros tratamentos'], labelDescricaoOutra:'Descrição do tratamento', nomeMedicamento:true }
 ];
 
 function obterCategoriaSanitarioPorChave(chave){
@@ -1193,9 +1216,7 @@ function abrirFormularioSanitario(animalId){
   const hoje = new Date().toISOString().slice(0,10);
   alvo.insertAdjacentHTML('beforeend',
     '<div class="cartao" id="form-sanitario">'
-    + '<div class="grupo-campo"><label for="campo-tipo-sanitario">Categoria</label><select id="campo-tipo-sanitario" onchange="atualizarCamposSanitario()">'
-      + CATEGORIAS_SANITARIO_FORM.map(c=>'<option value="'+c.chave+'">'+c.label+'</option>').join('')
-    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-tipo-sanitario">Categoria</label><select id="campo-tipo-sanitario" onchange="atualizarCamposSanitario()"></select></div>'
     + '<div id="campos-dinamicos-sanitario"></div>'
     + '<div class="grupo-campo"><label for="campo-data-sanitario">Data da aplicação</label><input id="campo-data-sanitario" type="date" value="'+hoje+'"></div>'
     + '<div class="grupo-campo"><label for="campo-carencia-dias">Dias de carência</label><input id="campo-carencia-dias" type="number" min="0" value="0"></div>'
@@ -1204,6 +1225,7 @@ function abrirFormularioSanitario(animalId){
     + '<button class="botao botao-primario botao-bloco" onclick="salvarEventoSanitario('+animalId+')">Salvar</button>'
     + '</div>'
   );
+  preencherSelect(document.getElementById('campo-tipo-sanitario'), CATEGORIAS_SANITARIO_FORM.map(c=>({valor:c.chave, rotulo:c.label})));
   atualizarCamposSanitario();
 }
 
@@ -1217,27 +1239,28 @@ function atualizarCamposSanitario(){
   if(cat.descricaoLivre){
     html += '<div class="grupo-campo"><label for="campo-descricao-sanitario">Descrição</label><input id="campo-descricao-sanitario" type="text" placeholder="'+escaparHTML(cat.placeholderDescricao||'Descrição')+'"></div>';
   } else if(cat.subcategorias){
-    html += '<div class="grupo-campo"><label for="campo-subcategoria-sanitario">Especificação</label><select id="campo-subcategoria-sanitario" onchange="atualizarDescricaoOutraSanitario()">'
-      + cat.subcategorias.map(s=>'<option value="'+escaparHTML(s)+'">'+escaparHTML(s)+'</option>').join('')
-      + '</select></div>';
+    html += '<div class="grupo-campo"><label for="campo-subcategoria-sanitario">Especificação</label><select id="campo-subcategoria-sanitario" onchange="atualizarDescricaoOutraSanitario()"></select></div>';
     if(cat.nomeMedicamento){
       html += '<div class="grupo-campo"><label for="campo-nome-medicamento-sanitario">Nome do medicamento</label><input id="campo-nome-medicamento-sanitario" type="text" placeholder="Ex.: Amoxicilina"></div>';
     }
     html += '<div id="campo-descricao-outra-sanitario-wrap"></div>';
   }
   alvo.innerHTML = html;
-  if(cat.subcategorias) atualizarDescricaoOutraSanitario();
+  if(cat.subcategorias){
+    preencherSelect(document.getElementById('campo-subcategoria-sanitario'), cat.subcategorias);
+    atualizarDescricaoOutraSanitario();
+  }
 }
 
-// Quando a subcategoria escolhida for a opção "outra" (ex.: "Outras infecções
-// bacterianas"), abre uma caixa extra para detalhar; caso contrário, esconde.
+// Quando a subcategoria escolhida for uma opção "Outra(s)..." (detectada por
+// ehOpcaoOutro), abre uma caixa extra para detalhar; caso contrário, esconde.
 function atualizarDescricaoOutraSanitario(){
   const cat = obterCategoriaSanitarioPorChave(document.getElementById('campo-tipo-sanitario').value);
   const sub = document.getElementById('campo-subcategoria-sanitario');
   const wrap = document.getElementById('campo-descricao-outra-sanitario-wrap');
   if(!sub || !wrap) return;
-  if(cat.outraOpcao && sub.value === cat.outraOpcao){
-    wrap.innerHTML = '<div class="grupo-campo"><label for="campo-descricao-sanitario">'+escaparHTML(cat.labelDescricaoOutra)+'</label><input id="campo-descricao-sanitario" type="text" placeholder="Descreva"></div>';
+  if(ehOpcaoOutro(sub.value)){
+    wrap.innerHTML = '<div class="grupo-campo"><label for="campo-descricao-sanitario">'+escaparHTML(cat.labelDescricaoOutra||'Descreva')+'</label><input id="campo-descricao-sanitario" type="text" placeholder="Descreva"></div>';
   } else {
     wrap.innerHTML = '';
   }
@@ -1259,7 +1282,7 @@ async function salvarEventoSanitario(animalId){
 
   if(!data_aplicacao){ msg.textContent = 'Preencha a data da aplicação.'; msg.style.color = 'var(--perigo)'; return; }
   if(cat.descricaoLivre && !descricao){ msg.textContent = 'Preencha a descrição.'; msg.style.color = 'var(--perigo)'; return; }
-  if(cat.outraOpcao && subcategoria === cat.outraOpcao && !descricao){ msg.textContent = 'Preencha "'+cat.labelDescricaoOutra+'".'; msg.style.color = 'var(--perigo)'; return; }
+  if(ehOpcaoOutro(subcategoria) && !descricao){ msg.textContent = 'Preencha "'+(cat.labelDescricaoOutra||'Descreva')+'".'; msg.style.color = 'var(--perigo)'; return; }
 
   const data_fim_carencia = dias_carencia > 0 ? somarDias(data_aplicacao, dias_carencia) : null;
 
@@ -1719,7 +1742,7 @@ async function buscarAlertasCalendario(){
 // Mesma estrutura de 7 categorias do Financeiro, mas aqui cada categoria tem
 // "grupos" (a subcategoria) e cada grupo tem uma lista de itens específicos.
 // Itens que começam com "Outro"/"Outra" abrem uma caixa para descrever
-// (ver itemEstoqueEhOutro). "exUnidade" é só o exemplo mostrado no placeholder.
+// (ver ehOpcaoOutro). "exUnidade" é só o exemplo mostrado no placeholder.
 const CATEGORIAS_ESTOQUE_DETALHADA = [
   { categoria:'Alimentação', grupos:[
     { grupo:'Rações e concentrados', exUnidade:'sacos de 40kg', itens:['Ração concentrada','Ração para bezerras','Ração para novilhas','Ração para vacas em lactação','Ração para vacas secas','Ração para touros','Núcleo para ração','Premix','Aditivos para ração'] },
@@ -1778,11 +1801,8 @@ function obterGrupoEstoque(categoriaNome, grupoNome){
   const cat = obterCategoriaEstoquePorNome(categoriaNome);
   return cat ? cat.grupos.find(g => g.grupo === grupoNome) : null;
 }
-// Itens genéricos tipo "Outros grãos"/"Outra sementes" abrem uma caixa para descrever o item específico.
-function itemEstoqueEhOutro(nomeItem){
-  const n = (nomeItem||'').toLowerCase();
-  return n.startsWith('outro') || n.startsWith('outra');
-}
+// Itens genéricos tipo "Outros grãos"/"Outra sementes" abrem uma caixa para descrever
+// o item específico — detectado por ehOpcaoOutro (função compartilhada com os outros módulos).
 
 let CONTEXTO_CATEGORIA_ESTOQUE = null;
 
@@ -1857,9 +1877,7 @@ function abrirCadastroItemEstoque(categoriaPreSelecionada){
     ? '<div class="legenda-muted" style="margin-top:-6px; margin-bottom:12px">Categoria: <strong style="color:var(--tinta)">'+escaparHTML(categoriaPreSelecionada)+'</strong></div>'
       + '<input type="hidden" id="campo-categoria-item" value="'+escaparHTML(categoriaPreSelecionada)+'">'
     // Caso de segurança: se por algum motivo a função for chamada sem categoria (não deveria acontecer no fluxo atual), ainda mostra a lista para escolher.
-    : '<div class="grupo-campo"><label for="campo-categoria-item">Categoria</label><select id="campo-categoria-item" onchange="atualizarGrupoEstoque()">'
-      + CATEGORIAS_ESTOQUE_DETALHADA.map(c=>'<option value="'+escaparHTML(c.categoria)+'">'+escaparHTML(c.categoria)+'</option>').join('')
-      + '</select></div>';
+    : '<div class="grupo-campo"><label for="campo-categoria-item">Categoria</label><select id="campo-categoria-item" onchange="atualizarGrupoEstoque()"></select></div>';
 
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Adicionar item ao estoque</div>'
@@ -1872,13 +1890,14 @@ function abrirCadastroItemEstoque(categoriaPreSelecionada){
     + '<div id="mensagem-item" class="legenda-muted" style="min-height:18px"></div>'
     + '<button class="botao botao-primario botao-bloco" onclick="salvarNovoItemEstoque()">Salvar</button>';
   abrirModal();
+  if(!categoriaPreSelecionada) preencherSelect(document.getElementById('campo-categoria-item'), CATEGORIAS_ESTOQUE_DETALHADA.map(c=>c.categoria));
   atualizarGrupoEstoque();
 }
 
 // Repopula a lista de subcategorias (grupos) quando a categoria muda.
 function atualizarGrupoEstoque(){
   const cat = obterCategoriaEstoquePorNome(document.getElementById('campo-categoria-item').value);
-  document.getElementById('campo-subcategoria-item').innerHTML = cat.grupos.map(g=>'<option value="'+escaparHTML(g.grupo)+'">'+escaparHTML(g.grupo)+'</option>').join('');
+  preencherSelect(document.getElementById('campo-subcategoria-item'), cat.grupos.map(g=>g.grupo));
   atualizarItemEstoque();
 }
 
@@ -1887,7 +1906,7 @@ function atualizarItemEstoque(){
   const categoriaNome = document.getElementById('campo-categoria-item').value;
   const grupoNome = document.getElementById('campo-subcategoria-item').value;
   const grupo = obterGrupoEstoque(categoriaNome, grupoNome);
-  document.getElementById('campo-item-estoque').innerHTML = grupo.itens.map(i=>'<option value="'+escaparHTML(i)+'">'+escaparHTML(i)+'</option>').join('');
+  preencherSelect(document.getElementById('campo-item-estoque'), grupo.itens);
   const campoUnidade = document.getElementById('campo-unidade-item');
   if(campoUnidade) campoUnidade.placeholder = 'Ex.: ' + (grupo.exUnidade || 'kg');
   atualizarDescricaoItemEstoque();
@@ -1897,7 +1916,7 @@ function atualizarItemEstoque(){
 function atualizarDescricaoItemEstoque(){
   const itemNome = document.getElementById('campo-item-estoque').value;
   const wrap = document.getElementById('wrap-descricao-item-estoque');
-  wrap.innerHTML = itemEstoqueEhOutro(itemNome)
+  wrap.innerHTML = ehOpcaoOutro(itemNome)
     ? '<div class="grupo-campo"><label for="campo-descricao-item-estoque">Descreva o item</label><input id="campo-descricao-item-estoque" type="text" placeholder="Ex.: Cobre injetável"></div>'
     : '';
 }
@@ -1907,13 +1926,13 @@ async function salvarNovoItemEstoque(){
   const subcategoria = document.getElementById('campo-subcategoria-item').value;
   const itemSelecionado = document.getElementById('campo-item-estoque').value;
   const descricaoEl = document.getElementById('campo-descricao-item-estoque');
-  const nome = (itemEstoqueEhOutro(itemSelecionado) && descricaoEl && descricaoEl.value.trim()) ? descricaoEl.value.trim() : itemSelecionado;
+  const nome = (ehOpcaoOutro(itemSelecionado) && descricaoEl && descricaoEl.value.trim()) ? descricaoEl.value.trim() : itemSelecionado;
   const unidade = document.getElementById('campo-unidade-item').value.trim();
   const quantidade_atual = Number(document.getElementById('campo-quantidade-inicial').value) || 0;
   const msg = document.getElementById('mensagem-item');
 
   if(!unidade){ msg.textContent = 'Preencha a unidade.'; msg.style.color = 'var(--perigo)'; return; }
-  if(itemEstoqueEhOutro(itemSelecionado) && (!descricaoEl || !descricaoEl.value.trim())){ msg.textContent = 'Descreva o item.'; msg.style.color = 'var(--perigo)'; return; }
+  if(ehOpcaoOutro(itemSelecionado) && (!descricaoEl || !descricaoEl.value.trim())){ msg.textContent = 'Descreva o item.'; msg.style.color = 'var(--perigo)'; return; }
 
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
@@ -2130,7 +2149,7 @@ function obterSubcategoriaDespesa(categoriaNome, subNome){
 function formatarDetalhesLancamento(l){
   if(l.tipo === 'despesa' && l.subcategoria){
     let texto = escaparHTML(l.categoria) + ' — ' + escaparHTML(l.subcategoria);
-    if(l.subcategoria === 'Outros' && l.descricao) texto += ' — ' + escaparHTML(l.descricao);
+    if(ehOpcaoOutro(l.subcategoria) && l.descricao) texto += ' — ' + escaparHTML(l.descricao);
     return texto;
   }
   let texto = escaparHTML(l.categoria || '');
@@ -2197,22 +2216,21 @@ function abrirNovoLancamentoDespesa(){
   const hoje = new Date().toISOString().slice(0,10);
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Lançar uma despesa/saída</div>'
-    + '<div class="grupo-campo"><label for="campo-categoria-despesa">Categoria</label><select id="campo-categoria-despesa" onchange="atualizarSubcategoriaDespesa()">'
-      + CATEGORIAS_DESPESA_DETALHADA.map(c=>'<option value="'+escaparHTML(c.categoria)+'">'+escaparHTML(c.categoria)+'</option>').join('')
-    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-categoria-despesa">Categoria</label><select id="campo-categoria-despesa" onchange="atualizarSubcategoriaDespesa()"></select></div>'
     + '<div class="grupo-campo"><label for="campo-subcategoria-despesa">Subcategoria</label><select id="campo-subcategoria-despesa" onchange="atualizarCamposDespesa()"></select></div>'
     + '<div id="campos-despesa-dinamicos"></div>'
     + '<div class="grupo-campo"><label for="campo-data-lancamento">Data</label><input id="campo-data-lancamento" type="date" value="'+hoje+'"></div>'
     + '<div id="mensagem-lancamento" class="legenda-muted" style="min-height:18px"></div>'
     + '<button class="botao botao-primario botao-bloco" onclick="salvarNovoLancamentoDespesa()">Salvar</button>';
   abrirModal();
+  preencherSelect(document.getElementById('campo-categoria-despesa'), CATEGORIAS_DESPESA_DETALHADA.map(c=>c.categoria));
   atualizarSubcategoriaDespesa();
 }
 
 // Repopula a lista de subcategorias quando a categoria muda.
 function atualizarSubcategoriaDespesa(){
   const cat = obterCategoriaDespesaPorNome(document.getElementById('campo-categoria-despesa').value);
-  document.getElementById('campo-subcategoria-despesa').innerHTML = cat.subcategorias.map(s=>'<option value="'+escaparHTML(s.nome)+'">'+escaparHTML(s.nome)+'</option>').join('');
+  preencherSelect(document.getElementById('campo-subcategoria-despesa'), cat.subcategorias.map(s=>s.nome));
   atualizarCamposDespesa();
 }
 
@@ -2224,7 +2242,7 @@ function atualizarCamposDespesa(){
   const sub = obterSubcategoriaDespesa(categoriaNome, subNome) || {};
   const alvo = document.getElementById('campos-despesa-dinamicos');
   let html = '';
-  if(subNome === 'Outros'){
+  if(ehOpcaoOutro(subNome)){
     html += '<div class="grupo-campo"><label for="campo-descricao-lancamento">Descreva a despesa</label><input id="campo-descricao-lancamento" type="text" placeholder="Ex.: Frete de máquina, análise de solo, etc."></div>';
   }
   html += '<div class="grupo-campo"><label for="campo-quantidade-lancamento">Quantidade</label><input id="campo-quantidade-lancamento" type="number" step="0.01" min="0" placeholder="Ex.: '+escaparHTML(sub.exQtd||'1')+'" oninput="atualizarValorTotalLancamento()"></div>'
@@ -2263,7 +2281,7 @@ async function salvarNovoLancamentoDespesa(){
   if(!valor_unitario || valor_unitario <= 0){ msg.textContent = 'Informe o valor unitário.'; msg.style.color = 'var(--perigo)'; return; }
   if(!unidade){ msg.textContent = 'Informe a unidade.'; msg.style.color = 'var(--perigo)'; return; }
   if(!data){ msg.textContent = 'Preencha a data.'; msg.style.color = 'var(--perigo)'; return; }
-  if(subcategoria === 'Outros' && !descricao){ msg.textContent = 'Descreva a despesa.'; msg.style.color = 'var(--perigo)'; return; }
+  if(ehOpcaoOutro(subcategoria) && !descricao){ msg.textContent = 'Descreva a despesa.'; msg.style.color = 'var(--perigo)'; return; }
 
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
@@ -2283,9 +2301,7 @@ function abrirEdicaoLancamentoDespesa(l){
 
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Editar despesa/saída</div>'
-    + '<div class="grupo-campo"><label for="campo-categoria-despesa">Categoria</label><select id="campo-categoria-despesa" onchange="atualizarSubcategoriaDespesa()">'
-      + CATEGORIAS_DESPESA_DETALHADA.map(c=>'<option value="'+escaparHTML(c.categoria)+'" '+(c.categoria===categoriaValida?'selected':'')+'>'+escaparHTML(c.categoria)+'</option>').join('')
-    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-categoria-despesa">Categoria</label><select id="campo-categoria-despesa" onchange="atualizarSubcategoriaDespesa()"></select></div>'
     + '<div class="grupo-campo"><label for="campo-subcategoria-despesa">Subcategoria</label><select id="campo-subcategoria-despesa" onchange="atualizarCamposDespesa()"></select></div>'
     + '<div id="campos-despesa-dinamicos"></div>'
     + '<div class="grupo-campo"><label for="campo-data-lancamento">Data</label><input id="campo-data-lancamento" type="date" value="'+l.data+'"></div>'
@@ -2294,7 +2310,8 @@ function abrirEdicaoLancamentoDespesa(l){
     + '<button class="botao botao-secundario botao-bloco" style="margin-top:10px; color:var(--perigo); border-color:var(--perigo)" onclick="excluirLancamento('+l.id+')">Excluir lançamento</button>';
   abrirModal();
 
-  document.getElementById('campo-subcategoria-despesa').innerHTML = cat.subcategorias.map(s=>'<option value="'+escaparHTML(s.nome)+'" '+(s.nome===subcategoriaValida?'selected':'')+'>'+escaparHTML(s.nome)+'</option>').join('');
+  preencherSelect(document.getElementById('campo-categoria-despesa'), CATEGORIAS_DESPESA_DETALHADA.map(c=>c.categoria), categoriaValida);
+  preencherSelect(document.getElementById('campo-subcategoria-despesa'), cat.subcategorias.map(s=>s.nome), subcategoriaValida);
   atualizarCamposDespesa();
 
   // Sobrescreve com os valores já salvos (a linha acima só preenche os placeholders de exemplo).
@@ -2324,7 +2341,7 @@ async function salvarEdicaoLancamentoDespesa(id){
   if(!quantidade || quantidade <= 0){ msg.textContent = 'Informe a quantidade.'; msg.style.color = 'var(--perigo)'; return; }
   if(!valor_unitario || valor_unitario <= 0){ msg.textContent = 'Informe o valor unitário.'; msg.style.color = 'var(--perigo)'; return; }
   if(!unidade){ msg.textContent = 'Informe a unidade.'; msg.style.color = 'var(--perigo)'; return; }
-  if(subcategoria === 'Outros' && !descricao){ msg.textContent = 'Descreva a despesa.'; msg.style.color = 'var(--perigo)'; return; }
+  if(ehOpcaoOutro(subcategoria) && !descricao){ msg.textContent = 'Descreva a despesa.'; msg.style.color = 'var(--perigo)'; return; }
 
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
@@ -2343,13 +2360,14 @@ function abrirNovoLancamentoReceita(){
   const hoje = new Date().toISOString().slice(0,10);
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Lançar uma receita/entrada</div>'
-    + '<div class="grupo-campo"><label for="campo-categoria-receita">Categoria</label><select id="campo-categoria-receita">'+CATEGORIAS_RECEITA.map(c=>'<option value="'+c+'">'+c+'</option>').join('')+'</select></div>'
+    + '<div class="grupo-campo"><label for="campo-categoria-receita">Categoria</label><select id="campo-categoria-receita"></select></div>'
     + '<div class="grupo-campo"><label for="campo-valor-lancamento">Valor (R$)</label><input id="campo-valor-lancamento" type="number" step="0.01" min="0" placeholder="Ex.: 3500,00"></div>'
     + '<div class="grupo-campo"><label for="campo-data-lancamento">Data</label><input id="campo-data-lancamento" type="date" value="'+hoje+'"></div>'
     + '<div class="grupo-campo"><label for="campo-descricao-lancamento">Descrição (opcional)</label><input id="campo-descricao-lancamento" type="text" placeholder="Ex.: Venda de leite para o laticínio"></div>'
     + '<div id="mensagem-lancamento" class="legenda-muted" style="min-height:18px"></div>'
     + '<button class="botao botao-primario botao-bloco" onclick="salvarNovoLancamentoReceita()">Salvar</button>';
   abrirModal();
+  preencherSelect(document.getElementById('campo-categoria-receita'), CATEGORIAS_RECEITA);
 }
 
 async function salvarNovoLancamentoReceita(){
@@ -2376,7 +2394,7 @@ async function salvarNovoLancamentoReceita(){
 function abrirEdicaoLancamentoReceita(l){
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Editar receita/entrada</div>'
-    + '<div class="grupo-campo"><label for="campo-categoria-receita">Categoria</label><select id="campo-categoria-receita">'+CATEGORIAS_RECEITA.map(c=>'<option value="'+c+'" '+(c===l.categoria?'selected':'')+'>'+c+'</option>').join('')+'</select></div>'
+    + '<div class="grupo-campo"><label for="campo-categoria-receita">Categoria</label><select id="campo-categoria-receita"></select></div>'
     + '<div class="grupo-campo"><label for="campo-valor-lancamento">Valor (R$)</label><input id="campo-valor-lancamento" type="number" step="0.01" min="0" value="'+l.valor+'"></div>'
     + '<div class="grupo-campo"><label for="campo-data-lancamento">Data</label><input id="campo-data-lancamento" type="date" value="'+l.data+'"></div>'
     + '<div class="grupo-campo"><label for="campo-descricao-lancamento">Descrição (opcional)</label><input id="campo-descricao-lancamento" type="text" value="'+escaparHTML(l.descricao||'')+'"></div>'
@@ -2384,6 +2402,7 @@ function abrirEdicaoLancamentoReceita(l){
     + '<button class="botao botao-primario botao-bloco" onclick="salvarEdicaoLancamentoReceita('+l.id+')">Salvar alterações</button>'
     + '<button class="botao botao-secundario botao-bloco" style="margin-top:10px; color:var(--perigo); border-color:var(--perigo)" onclick="excluirLancamento('+l.id+')">Excluir lançamento</button>';
   abrirModal();
+  preencherSelect(document.getElementById('campo-categoria-receita'), CATEGORIAS_RECEITA, l.categoria);
 }
 
 async function salvarEdicaoLancamentoReceita(id){
