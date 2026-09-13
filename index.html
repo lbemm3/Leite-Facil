@@ -1769,6 +1769,8 @@ function itemEstoqueEhOutro(nomeItem){
   return n.startsWith('outro') || n.startsWith('outra');
 }
 
+let CONTEXTO_CATEGORIA_ESTOQUE = null;
+
 async function renderEstoque(){
   document.getElementById('tela-estoque').innerHTML = '<div class="legenda-muted">Carregando estoque...</div>';
   const { data, error } = await sb.from('estoque_itens').select('*').eq('produtor_id', usuarioAtual.id).order('nome', { ascending:true });
@@ -1782,14 +1784,37 @@ async function renderEstoque(){
     + '<div class="legenda-muted">Aqui o número é físico (kg, litros, doses, etc.) — diferente do Financeiro, que registra o valor em R$ gasto na compra.</div>'
     + '<button class="botao botao-primario" style="margin:14px 0 18px" onclick="abrirCadastroItemEstoque()">'+iconeInline('caixa',18)+' Adicionar item</button>';
 
-  if(MEU_ESTOQUE.length === 0){
-    document.getElementById('tela-estoque').innerHTML = cabecalho
-      + '<div class="estado-vazio"><div class="ic">'+iconeInline('caixa',28)+'</div><p>Nenhum item cadastrado ainda. Adicione os itens que você quer controlar (ração, medicamentos, sêmen, materiais de ordenha etc.) para começar a registrar entradas e consumo.</p></div>';
-    return;
+  const cartaoCategoria = (nome, qtd) =>
+    '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirCategoriaEstoque(\''+nome.replace(/'/g,"\\'")+'\')">'
+    + '<div class="avatar">'+iconeInline('caixa',20)+'</div>'
+    + '<div style="flex:1"><strong>'+escaparHTML(nome)+'</strong>'
+    + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+(qtd ? qtd+' item(ns) cadastrado(s)' : 'Nenhum item cadastrado ainda')+'</div></div>'
+    + '<span class="legenda-muted" style="font-size:20px">›</span>'
+    + '</button>';
+
+  let corpo = CATEGORIAS_ESTOQUE_DETALHADA.map(c =>
+    cartaoCategoria(c.categoria, MEU_ESTOQUE.filter(i => i.categoria === c.categoria).length)
+  ).join('');
+
+  // Itens cadastrados antes desta atualização (categoria antiga, que não bate com a lista nova).
+  const itensLegado = MEU_ESTOQUE.filter(i => !CATEGORIAS_ESTOQUE_DETALHADA.some(c => c.categoria === i.categoria));
+  if(itensLegado.length){
+    corpo += cartaoCategoria('__legado__', itensLegado.length).replace('__legado__', 'Outros itens');
   }
 
+  document.getElementById('tela-estoque').innerHTML = cabecalho + corpo;
+}
+
+// Lista, dentro de um modal, os itens de uma categoria (ou os itens "legado" quando nome === '__legado__').
+function abrirCategoriaEstoque(nomeCategoria){
+  const ehLegado = nomeCategoria === '__legado__' || nomeCategoria === 'Outros itens';
+  const chaveReal = ehLegado ? '__legado__' : nomeCategoria;
+  const itensCategoria = ehLegado
+    ? MEU_ESTOQUE.filter(i => !CATEGORIAS_ESTOQUE_DETALHADA.some(c => c.categoria === i.categoria))
+    : MEU_ESTOQUE.filter(i => i.categoria === nomeCategoria);
+
   const cartaoItem = i =>
-    '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirDetalheItemEstoque('+i.id+')">'
+    '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirDetalheItemEstoque('+i.id+',\''+chaveReal.replace(/'/g,"\\'")+'\')">'
     + '<div class="avatar">'+iconeInline('caixa',20)+'</div>'
     + '<div style="flex:1"><strong>'+escaparHTML(i.nome)+'</strong>'
     + (i.subcategoria ? '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+escaparHTML(i.subcategoria)+'</div>' : '')
@@ -1797,29 +1822,21 @@ async function renderEstoque(){
     + '<span style="font-family:var(--fonte-dados); font-weight:600; font-size:15px; color:var(--azul)">'+i.quantidade_atual+' '+escaparHTML(i.unidade||'')+'</span>'
     + '</button>';
 
-  let corpo = '';
-  CATEGORIAS_ESTOQUE_DETALHADA.forEach(c => {
-    const itensCategoria = MEU_ESTOQUE.filter(i => i.categoria === c.categoria);
-    if(itensCategoria.length === 0) return;
-    corpo += '<div class="rotulo-secao">'+escaparHTML(c.categoria)+'</div>';
-    corpo += itensCategoria.map(cartaoItem).join('');
-  });
-
-  // Itens cadastrados antes desta atualização (categoria antiga, que não bate com a lista nova).
-  const itensLegado = MEU_ESTOQUE.filter(i => !CATEGORIAS_ESTOQUE_DETALHADA.some(c => c.categoria === i.categoria));
-  if(itensLegado.length){
-    corpo += '<div class="rotulo-secao">Outros itens</div>';
-    corpo += itensLegado.map(cartaoItem).join('');
-  }
-
-  document.getElementById('tela-estoque').innerHTML = cabecalho + corpo;
+  document.getElementById('conteudo-modal').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">'+escaparHTML(ehLegado ? 'Outros itens' : nomeCategoria)+'</div>'
+    + (ehLegado ? '' : '<button class="botao botao-primario botao-bloco" style="margin-bottom:14px" onclick="abrirCadastroItemEstoque(\''+nomeCategoria.replace(/'/g,"\\'")+'\')">'+iconeInline('caixa',16)+' Adicionar item nesta categoria</button>')
+    + (itensCategoria.length
+        ? itensCategoria.map(cartaoItem).join('')
+        : '<div class="legenda-muted">Nenhum item cadastrado nesta categoria ainda.</div>');
+  abrirModal();
 }
 
-function abrirCadastroItemEstoque(){
+function abrirCadastroItemEstoque(categoriaPreSelecionada){
+  CONTEXTO_CATEGORIA_ESTOQUE = categoriaPreSelecionada || null;
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Adicionar item ao estoque</div>'
     + '<div class="grupo-campo"><label for="campo-categoria-item">Categoria</label><select id="campo-categoria-item" onchange="atualizarGrupoEstoque()">'
-      + CATEGORIAS_ESTOQUE_DETALHADA.map(c=>'<option value="'+escaparHTML(c.categoria)+'">'+escaparHTML(c.categoria)+'</option>').join('')
+      + CATEGORIAS_ESTOQUE_DETALHADA.map(c=>'<option value="'+escaparHTML(c.categoria)+'" '+(c.categoria===categoriaPreSelecionada?'selected':'')+'>'+escaparHTML(c.categoria)+'</option>').join('')
     + '</select></div>'
     + '<div class="grupo-campo"><label for="campo-subcategoria-item">Subcategoria</label><select id="campo-subcategoria-item" onchange="atualizarItemEstoque()"></select></div>'
     + '<div class="grupo-campo"><label for="campo-item-estoque">Item</label><select id="campo-item-estoque" onchange="atualizarDescricaoItemEstoque()"></select></div>'
@@ -1879,25 +1896,30 @@ async function salvarNovoItemEstoque(){
 
   if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
 
-  fecharModal();
-  renderEstoque();
+  await renderEstoque();
+  if(CONTEXTO_CATEGORIA_ESTOQUE){
+    abrirCategoriaEstoque(CONTEXTO_CATEGORIA_ESTOQUE);
+  } else {
+    fecharModal();
+  }
 }
 
-async function abrirDetalheItemEstoque(id){
+async function abrirDetalheItemEstoque(id, categoriaOrigem){
   const item = MEU_ESTOQUE.find(i=>i.id===id);
   if(!item) return;
   document.getElementById('conteudo-modal').innerHTML =
-    '<div class="rotulo-secao" style="margin-top:0">'+escaparHTML(item.nome)+'</div>'
+    (categoriaOrigem ? '<button onclick="abrirCategoriaEstoque(\''+categoriaOrigem.replace(/'/g,"\\'")+'\')" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar</button>' : '')
+    + '<div class="rotulo-secao" style="margin-top:0">'+escaparHTML(item.nome)+'</div>'
     + (item.subcategoria ? '<div class="legenda-muted" style="margin-top:-10px; margin-bottom:12px">'+escaparHTML(item.categoria||'')+' — '+escaparHTML(item.subcategoria)+'</div>' : '')
     + '<div class="cartao" style="text-align:center"><div class="legenda-muted" style="margin-bottom:4px">Estoque disponível</div>'
     + '<div style="font-family:var(--fonte-dados); font-weight:600; font-size:26px; color:var(--azul)">'+item.quantidade_atual+' '+escaparHTML(item.unidade||'')+'</div></div>'
     + '<div style="display:flex; gap:10px; margin-bottom:10px">'
-      + '<button class="botao botao-primario" style="flex:1" onclick="abrirFormularioMovimento('+id+',\'entrada\')">'+iconeInline('caixa',16)+' Entrada</button>'
-      + '<button class="botao botao-secundario" style="flex:1; color:var(--perigo); border-color:var(--perigo)" onclick="abrirFormularioMovimento('+id+',\'saida\')">'+iconeInline('caixa',16)+' Consumo</button>'
+      + '<button class="botao botao-primario" style="flex:1" onclick="abrirFormularioMovimento('+id+',\'entrada\',\''+(categoriaOrigem||'').replace(/'/g,"\\'")+'\')">'+iconeInline('caixa',16)+' Entrada</button>'
+      + '<button class="botao botao-secundario" style="flex:1; color:var(--perigo); border-color:var(--perigo)" onclick="abrirFormularioMovimento('+id+',\'saida\',\''+(categoriaOrigem||'').replace(/'/g,"\\'")+'\')">'+iconeInline('caixa',16)+' Consumo</button>'
     + '</div>'
     + '<div id="secao-movimentos"><div class="legenda-muted">Carregando histórico...</div></div>'
     + '<div class="linha-tracejada"></div>'
-    + '<button class="botao-perigo-fino" onclick="excluirItemEstoque('+id+')">'+iconeInline('lixo',15)+' Excluir item</button>';
+    + '<button class="botao-perigo-fino" onclick="excluirItemEstoque('+id+',\''+(categoriaOrigem||'').replace(/'/g,"\\'")+'\')">'+iconeInline('lixo',15)+' Excluir item</button>';
   abrirModal();
   renderMovimentosEstoque(id);
 }
@@ -1917,7 +1939,7 @@ async function renderMovimentosEstoque(itemId){
   ).join('');
 }
 
-function abrirFormularioMovimento(itemId, tipo){
+function abrirFormularioMovimento(itemId, tipo, categoriaOrigem){
   const alvo = document.getElementById('secao-movimentos');
   const hoje = new Date().toISOString().slice(0,10);
   alvo.insertAdjacentHTML('afterbegin',
@@ -1927,12 +1949,12 @@ function abrirFormularioMovimento(itemId, tipo){
     + '<div class="grupo-campo"><label for="campo-data-mov">Data</label><input id="campo-data-mov" type="date" value="'+hoje+'"></div>'
     + '<div class="grupo-campo"><label for="campo-obs-mov">Observações (opcional)</label><input id="campo-obs-mov" type="text"></div>'
     + '<div id="mensagem-mov" class="legenda-muted" style="min-height:18px"></div>'
-    + '<button class="botao botao-primario botao-bloco" onclick="salvarMovimentoEstoque('+itemId+',\''+tipo+'\')">Salvar</button>'
+    + '<button class="botao botao-primario botao-bloco" onclick="salvarMovimentoEstoque('+itemId+',\''+tipo+'\',\''+(categoriaOrigem||'').replace(/'/g,"\\'")+'\')">Salvar</button>'
     + '</div>'
   );
 }
 
-async function salvarMovimentoEstoque(itemId, tipo){
+async function salvarMovimentoEstoque(itemId, tipo, categoriaOrigem){
   const quantidade = Number(document.getElementById('campo-quantidade-mov').value);
   const data = document.getElementById('campo-data-mov').value;
   const observacoes = document.getElementById('campo-obs-mov').value.trim();
@@ -1955,15 +1977,19 @@ async function salvarMovimentoEstoque(itemId, tipo){
   if(erroItem){ msg.textContent = 'Movimento salvo, mas não foi possível atualizar o saldo: ' + erroItem.message; msg.style.color = 'var(--perigo)'; return; }
 
   item.quantidade_atual = novoSaldo;
-  abrirDetalheItemEstoque(itemId);
+  abrirDetalheItemEstoque(itemId, categoriaOrigem);
 }
 
-async function excluirItemEstoque(id){
+async function excluirItemEstoque(id, categoriaOrigem){
   if(!confirm('Excluir este item e todo o histórico de movimentações dele?')) return;
   const { error } = await sb.from('estoque_itens').delete().eq('id', id);
   if(error){ alert('Não foi possível excluir: ' + error.message); return; }
-  fecharModal();
-  renderEstoque();
+  await renderEstoque();
+  if(categoriaOrigem){
+    abrirCategoriaEstoque(categoriaOrigem);
+  } else {
+    fecharModal();
+  }
 }
 
 /* ======================= FINANCEIRO (privado do produtor) ======================= */
