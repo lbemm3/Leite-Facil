@@ -1781,7 +1781,12 @@ async function renderEstoque(){
   MEU_ESTOQUE = data;
 
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Estoque</div>'
-    + '<div class="legenda-muted">Aqui o número é físico (kg, litros, doses, etc.) — diferente do Financeiro, que registra o valor em R$ gasto na compra.</div>'
+    + '<div class="cartao" style="background:var(--fundo-suave, #f2f6f0)">'
+      + '<div style="font-weight:700; margin-bottom:6px">Como funciona o Estoque</div>'
+      + '<div class="legenda-muted" style="margin-bottom:8px">Aqui você controla a quantidade física guardada na propriedade (kg, litros, doses, etc.) — é diferente do Financeiro, que registra o valor em R$ gasto na compra. Uma coisa é quanto você <em>comprou</em>; outra é quanto ainda <em>tem guardado</em> e quanto já <em>usou</em>.</div>'
+      + '<div class="legenda-muted" style="margin-bottom:8px">Para cada item, você cadastra um <strong>Estoque inicial</strong> (o que já tinha guardado ao começar a usar o app). Depois, sempre que comprar mais, registra uma <strong>Entrada</strong>; sempre que usar, registra um <strong>Consumo</strong>. O <strong>Estoque disponível</strong> é calculado sozinho: Estoque inicial + Entradas − Consumo.</div>'
+      + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px"><strong>Exemplo:</strong> você tinha 500kg de ração guardados. Comprou mais 200kg (Entrada) e usou 150kg durante a semana (Consumo). Seu Estoque disponível passa a ser 550kg — não importa quanto isso custou em R$, esse valor fica registrado à parte, no Financeiro.</div>'
+    + '</div>'
     + '<button class="botao botao-primario" style="margin:14px 0 18px" onclick="abrirCadastroItemEstoque()">'+iconeInline('caixa',18)+' Adicionar item</button>';
 
   const cartaoCategoria = (nome, qtd) =>
