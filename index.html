@@ -632,7 +632,7 @@ async function abrirVisualizacaoColaborador(colabId){
     const { data: itens } = await sb.from('estoque_itens').select('*').eq('produtor_id', produtorId).order('nome', { ascending:true });
     html += '<div class="rotulo-secao">Estoque</div>';
     html += (itens && itens.length)
-      ? itens.map(i=>'<div class="cartao"><strong>'+escaparHTML(i.nome)+'</strong> ('+(CATEGORIAS_ESTOQUE[i.categoria]||i.categoria)+')<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Saldo: '+i.quantidade_atual+' '+escaparHTML(i.unidade||'')+'</div></div>').join('')
+      ? itens.map(i=>'<div class="cartao"><strong>'+escaparHTML(i.nome)+'</strong> ('+escaparHTML(i.categoria||'')+(i.subcategoria?' — '+escaparHTML(i.subcategoria):'')+')<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Saldo: '+i.quantidade_atual+' '+escaparHTML(i.unidade||'')+'</div></div>').join('')
       : '<div class="legenda-muted">Nenhum item cadastrado.</div>';
   }
 
@@ -1700,8 +1700,74 @@ async function buscarAlertasCalendario(){
 }
 
 /* ======================= ESTOQUE (por categoria) ======================= */
-const CATEGORIAS_ESTOQUE = { racao:'Ração', medicamentos:'Medicamentos', semen:'Sêmen', materiais:'Materiais', outro:'Outro' };
+/* ======================= ESTOQUE ======================= */
+// Mesma estrutura de 7 categorias do Financeiro, mas aqui cada categoria tem
+// "grupos" (a subcategoria) e cada grupo tem uma lista de itens específicos.
+// Itens que começam com "Outro"/"Outra" abrem uma caixa para descrever
+// (ver itemEstoqueEhOutro). "exUnidade" é só o exemplo mostrado no placeholder.
+const CATEGORIAS_ESTOQUE_DETALHADA = [
+  { categoria:'Alimentação', grupos:[
+    { grupo:'Rações e concentrados', exUnidade:'sacos de 40kg', itens:['Ração concentrada','Ração para bezerras','Ração para novilhas','Ração para vacas em lactação','Ração para vacas secas','Ração para touros','Núcleo para ração','Premix','Aditivos para ração'] },
+    { grupo:'Grãos e ingredientes energéticos', exUnidade:'sacas de 60kg', itens:['Milho em grão','Milho moído','Quirera de milho','Sorgo','Aveia','Trigo','Farelo de trigo','Outros grãos'] },
+    { grupo:'Ingredientes proteicos', exUnidade:'sacas de 50kg', itens:['Farelo de soja','Farelo de algodão','Farelo de girassol','Farelo de canola','Outros farelos proteicos'] },
+    { grupo:'Minerais e suplementos', exUnidade:'sacos de 25kg', itens:['Sal mineral','Sal comum','Cálcio','Fósforo','Magnésio','Suplementos vitamínicos','Suplementos minerais','Leveduras','Tamponantes','Outros suplementos'] },
+    { grupo:'Alimentos conservados e adquiridos', exUnidade:'toneladas', itens:['Silagem de milho','Silagem de sorgo','Silagem de capim','Feno','Pré-secado','Forragem verde adquirida','Polpa cítrica','Caroço de algodão','Casquinha de soja','Outros subprodutos alimentares'] }
+  ]},
+  { categoria:'Sanidade', grupos:[
+    { grupo:'Medicamentos', exUnidade:'frascos', itens:['Antibióticos','Anti-inflamatórios','Analgésicos','Antipiréticos','Antialérgicos','Medicamentos para problemas respiratórios','Medicamentos para problemas digestivos','Outros medicamentos'] },
+    { grupo:'Controle de parasitas', exUnidade:'frascos', itens:['Vermífugos','Carrapaticidas','Mosquicidas','Ectoparasiticidas','Antiparasitários','Produtos para controle de bernes','Outros produtos antiparasitários'] },
+    { grupo:'Vacinas e prevenção', exUnidade:'doses', itens:['Vacinas','Imunizantes','Suplementos de suporte','Produtos preventivos','Outros'] },
+    { grupo:'Materiais veterinários', exUnidade:'unidades', itens:['Seringas','Agulhas','Luvas descartáveis','Cateteres','Gazes','Algodão','Ataduras','Esparadrapos','Materiais para curativos','Outros materiais veterinários'] },
+    { grupo:'Tratamentos específicos', exUnidade:'unidades', itens:['Produtos para mastite','Tubos intramamários','Produtos para tratamento de casco','Antissépticos','Desinfetantes para ferimentos','Outros produtos terapêuticos'] }
+  ]},
+  { categoria:'Reprodução', grupos:[
+    { grupo:'Material genético', exUnidade:'doses', itens:['Sêmen convencional','Sêmen sexado','Sêmen de diferentes raças','Palhetas de sêmen','Outros materiais genéticos'] },
+    { grupo:'Inseminação', exUnidade:'unidades', itens:['Bainhas sanitárias','Aplicadores de sêmen','Pinças','Luvas para inseminação','Camisas sanitárias','Papel/panos para higienização','Lubrificantes','Outros materiais para inseminação'] },
+    { grupo:'Protocolos reprodutivos', exUnidade:'doses', itens:['Hormônios','Prostaglandinas','GnRH','Progesterona','Dispositivos intravaginais','Outros produtos hormonais'] },
+    { grupo:'Diagnóstico reprodutivo', exUnidade:'unidades', itens:['Testes de gestação','Materiais para diagnóstico','Luvas para exame','Gel para ultrassonografia','Outros materiais'] }
+  ]},
+  { categoria:'Produção de forragem', grupos:[
+    { grupo:'Sementes', exUnidade:'kg', itens:['Sementes de milho','Sementes de sorgo','Sementes de aveia','Sementes de azevém','Sementes de capim','Sementes de braquiária','Sementes de outras forrageiras','Outras sementes'] },
+    { grupo:'Fertilizantes', exUnidade:'sacos de 50kg', itens:['Ureia','Nitrogenados','Fosfatados','Potássicos','Adubos formulados','Adubos orgânicos','Fertilizantes foliares','Micronutrientes','Outros fertilizantes'] },
+    { grupo:'Corretivos', exUnidade:'toneladas', itens:['Calcário','Gesso agrícola','Corretivos de acidez','Outros corretivos'] },
+    { grupo:'Defensivos', exUnidade:'litros', itens:['Herbicidas','Inseticidas','Fungicidas','Adjuvantes','Outros defensivos agrícolas'] },
+    { grupo:'Produção e conservação de silagem', exUnidade:'unidades', itens:['Inoculantes para silagem','Lona para silagem','Filme plástico stretch','Plástico para cobertura','Sacarias','Cordas','Outros materiais para silagem'] }
+  ]},
+  { categoria:'Estrutura', grupos:[
+    { grupo:'Manutenção de máquinas e equipamentos', exUnidade:'unidades', itens:['Óleos lubrificantes','Graxa','Filtros de óleo','Filtros de ar','Filtros de combustível','Correias','Rolamentos','Correntes','Engrenagens','Parafusos e porcas','Peças de reposição','Outras peças'] },
+    { grupo:'Ferramentas', exUnidade:'unidades', itens:['Martelos','Alicates','Chaves','Enxadas','Pás','Foices','Facões','Tesouras','Carrinhos de mão','Furadeiras','Esmerilhadeiras','Outras ferramentas'] },
+    { grupo:'Materiais elétricos', exUnidade:'unidades', itens:['Fios e cabos','Disjuntores','Fusíveis','Tomadas','Interruptores','Lâmpadas','Luminárias','Conectores','Extensões','Outros materiais elétricos'] },
+    { grupo:'Materiais hidráulicos', exUnidade:'unidades', itens:['Tubos','Mangueiras','Conexões','Registros','Torneiras','Válvulas','Bombas','Vedantes','Fitas de vedação','Outros materiais hidráulicos'] },
+    { grupo:'Construção e manutenção das instalações', exUnidade:'unidades', itens:['Cimento','Areia','Brita','Tijolos','Blocos','Madeira','Pregos','Parafusos','Arame','Telas','Tintas','Impermeabilizantes','Materiais para cercas','Materiais para currais','Outros materiais de construção'] },
+    { grupo:'Combustíveis', exUnidade:'litros', itens:['Diesel','Gasolina','Etanol','Óleo combustível','Outros combustíveis'] },
+    { grupo:'Equipamentos e utensílios', exUnidade:'unidades', itens:['Baldes','Bombonas','Caixas','Carrinhos','Balanças','Utensílios diversos','Outros equipamentos'] }
+  ]},
+  { categoria:'Despesas administrativas', grupos:[
+    { grupo:'Material de escritório', exUnidade:'unidades', itens:['Papel','Canetas','Lápis','Borracha','Marcadores','Cadernos','Pastas','Envelopes','Clipes','Grampeadores','Grampos','Fitas adesivas','Etiquetas','Outros materiais de escritório'] },
+    { grupo:'Material para registros e identificação', exUnidade:'unidades', itens:['Etiquetas','Cartões','Fichas','Cadernetas','Formulários impressos','Materiais para identificação de animais','Outros materiais'] },
+    { grupo:'Embalagens e materiais diversos', exUnidade:'unidades', itens:['Sacarias','Sacos plásticos','Recipientes','Caixas','Etiquetas de produtos','Outros materiais administrativos'] }
+  ]},
+  { categoria:'Materiais de Ordenha e Sanitizantes', grupos:[
+    { grupo:'Materiais de ordenha', exUnidade:'unidades', itens:['Filtros de leite','Papel/filtro para leite','Mangueiras de leite','Mangueiras de vácuo','Mangueiras de água','Borrachas e juntas de vedação','Liners/insufladores','Conjuntos de teteiras','Coletores de leite','Tampas e conexões','Abraçadeiras','Anéis de vedação','Membranas de pulsador','Peças de reposição da ordenhadeira','Peças de reposição do sistema de vácuo','Utensílios para ordenha manual','Baldes e recipientes para leite','Latões/recipientes para leite','Panos e materiais para secagem','Papel-toalha para secagem dos tetos','Luvas descartáveis'] },
+    { grupo:'Higienização e sanitização', exUnidade:'litros', itens:['Detergente alcalino','Detergente ácido','Detergentes para equipamentos de ordenha','Sanitizantes','Cloro/hipoclorito','Produtos à base de iodo','Ácido peracético','Desinfetantes','Produtos para pré-dipping','Produtos para pós-dipping','Sabonetes/limpadores para mãos','Escovas de limpeza','Esponjas','Panos de limpeza','Baldes para higienização','Pulverizadores/aplicadores','Outros materiais de limpeza da ordenhadeira'] },
+    { grupo:'Controle de qualidade do leite', exUnidade:'unidades', itens:['Reagente para CMT','Álcool/alizarol para testes','Frascos para coleta de amostras','Tubos/recipientes para amostras','Etiquetas de identificação','Termômetros','Materiais para controle de temperatura','Outros materiais para análise e controle'] }
+  ]}
+];
+
 let MEU_ESTOQUE = [];
+
+function obterCategoriaEstoquePorNome(nome){
+  return CATEGORIAS_ESTOQUE_DETALHADA.find(c => c.categoria === nome);
+}
+function obterGrupoEstoque(categoriaNome, grupoNome){
+  const cat = obterCategoriaEstoquePorNome(categoriaNome);
+  return cat ? cat.grupos.find(g => g.grupo === grupoNome) : null;
+}
+// Itens genéricos tipo "Outros grãos"/"Outra sementes" abrem uma caixa para descrever o item específico.
+function itemEstoqueEhOutro(nomeItem){
+  const n = (nomeItem||'').toLowerCase();
+  return n.startsWith('outro') || n.startsWith('outra');
+}
 
 async function renderEstoque(){
   document.getElementById('tela-estoque').innerHTML = '<div class="legenda-muted">Carregando estoque...</div>';
@@ -1713,27 +1779,38 @@ async function renderEstoque(){
   MEU_ESTOQUE = data;
 
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Estoque</div>'
-    + '<button class="botao botao-primario" style="margin-bottom:18px" onclick="abrirCadastroItemEstoque()">'+iconeInline('caixa',18)+' Adicionar item</button>';
+    + '<div class="legenda-muted">Aqui o número é físico (kg, litros, doses, etc.) — diferente do Financeiro, que registra o valor em R$ gasto na compra.</div>'
+    + '<button class="botao botao-primario" style="margin:14px 0 18px" onclick="abrirCadastroItemEstoque()">'+iconeInline('caixa',18)+' Adicionar item</button>';
 
   if(MEU_ESTOQUE.length === 0){
     document.getElementById('tela-estoque').innerHTML = cabecalho
-      + '<div class="estado-vazio"><div class="ic">'+iconeInline('caixa',28)+'</div><p>Nenhum item cadastrado ainda. Adicione ração, medicamentos, sêmen ou materiais para começar a controlar entradas e saídas.</p></div>';
+      + '<div class="estado-vazio"><div class="ic">'+iconeInline('caixa',28)+'</div><p>Nenhum item cadastrado ainda. Adicione os itens que você quer controlar (ração, medicamentos, sêmen, materiais de ordenha etc.) para começar a registrar entradas e consumo.</p></div>';
     return;
   }
 
+  const cartaoItem = i =>
+    '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirDetalheItemEstoque('+i.id+')">'
+    + '<div class="avatar">'+iconeInline('caixa',20)+'</div>'
+    + '<div style="flex:1"><strong>'+escaparHTML(i.nome)+'</strong>'
+    + (i.subcategoria ? '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+escaparHTML(i.subcategoria)+'</div>' : '')
+    + '</div>'
+    + '<span style="font-family:var(--fonte-dados); font-weight:600; font-size:15px; color:var(--azul)">'+i.quantidade_atual+' '+escaparHTML(i.unidade||'')+'</span>'
+    + '</button>';
+
   let corpo = '';
-  Object.keys(CATEGORIAS_ESTOQUE).forEach(cat=>{
-    const itens = MEU_ESTOQUE.filter(i=>i.categoria===cat);
-    if(itens.length === 0) return;
-    corpo += '<div class="rotulo-secao">'+CATEGORIAS_ESTOQUE[cat]+'</div>';
-    corpo += itens.map(i=>
-      '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirDetalheItemEstoque('+i.id+')">'
-      + '<div class="avatar">'+iconeInline('caixa',20)+'</div>'
-      + '<div style="flex:1"><strong>'+escaparHTML(i.nome)+'</strong></div>'
-      + '<span style="font-family:var(--fonte-dados); font-weight:600; font-size:15px; color:var(--azul)">'+i.quantidade_atual+' '+escaparHTML(i.unidade||'')+'</span>'
-      + '</button>'
-    ).join('');
+  CATEGORIAS_ESTOQUE_DETALHADA.forEach(c => {
+    const itensCategoria = MEU_ESTOQUE.filter(i => i.categoria === c.categoria);
+    if(itensCategoria.length === 0) return;
+    corpo += '<div class="rotulo-secao">'+escaparHTML(c.categoria)+'</div>';
+    corpo += itensCategoria.map(cartaoItem).join('');
   });
+
+  // Itens cadastrados antes desta atualização (categoria antiga, que não bate com a lista nova).
+  const itensLegado = MEU_ESTOQUE.filter(i => !CATEGORIAS_ESTOQUE_DETALHADA.some(c => c.categoria === i.categoria));
+  if(itensLegado.length){
+    corpo += '<div class="rotulo-secao">Outros itens</div>';
+    corpo += itensLegado.map(cartaoItem).join('');
+  }
 
   document.getElementById('tela-estoque').innerHTML = cabecalho + corpo;
 }
@@ -1741,30 +1818,64 @@ async function renderEstoque(){
 function abrirCadastroItemEstoque(){
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Adicionar item ao estoque</div>'
-    + '<div class="grupo-campo"><label for="campo-categoria-item">Categoria</label><select id="campo-categoria-item">'
-      + Object.keys(CATEGORIAS_ESTOQUE).map(k=>'<option value="'+k+'">'+CATEGORIAS_ESTOQUE[k]+'</option>').join('')
+    + '<div class="grupo-campo"><label for="campo-categoria-item">Categoria</label><select id="campo-categoria-item" onchange="atualizarGrupoEstoque()">'
+      + CATEGORIAS_ESTOQUE_DETALHADA.map(c=>'<option value="'+escaparHTML(c.categoria)+'">'+escaparHTML(c.categoria)+'</option>').join('')
     + '</select></div>'
-    + '<div class="grupo-campo"><label for="campo-nome-item">Nome do item</label><input id="campo-nome-item" type="text" placeholder="Ex.: Ração para lactação"></div>'
-    + '<div class="grupo-campo"><label for="campo-unidade-item">Unidade</label><input id="campo-unidade-item" type="text" placeholder="Ex.: kg, L, doses, un"></div>'
-    + '<div class="grupo-campo"><label for="campo-quantidade-inicial">Quantidade inicial</label><input id="campo-quantidade-inicial" type="number" step="0.01" value="0"></div>'
+    + '<div class="grupo-campo"><label for="campo-subcategoria-item">Subcategoria</label><select id="campo-subcategoria-item" onchange="atualizarItemEstoque()"></select></div>'
+    + '<div class="grupo-campo"><label for="campo-item-estoque">Item</label><select id="campo-item-estoque" onchange="atualizarDescricaoItemEstoque()"></select></div>'
+    + '<div id="wrap-descricao-item-estoque"></div>'
+    + '<div class="grupo-campo"><label for="campo-unidade-item">Unidade</label><input id="campo-unidade-item" type="text"></div>'
+    + '<div class="grupo-campo"><label for="campo-quantidade-inicial">Estoque inicial</label><input id="campo-quantidade-inicial" type="number" step="0.01" value="0"></div>'
     + '<div id="mensagem-item" class="legenda-muted" style="min-height:18px"></div>'
     + '<button class="botao botao-primario botao-bloco" onclick="salvarNovoItemEstoque()">Salvar</button>';
   abrirModal();
+  atualizarGrupoEstoque();
+}
+
+// Repopula a lista de subcategorias (grupos) quando a categoria muda.
+function atualizarGrupoEstoque(){
+  const cat = obterCategoriaEstoquePorNome(document.getElementById('campo-categoria-item').value);
+  document.getElementById('campo-subcategoria-item').innerHTML = cat.grupos.map(g=>'<option value="'+escaparHTML(g.grupo)+'">'+escaparHTML(g.grupo)+'</option>').join('');
+  atualizarItemEstoque();
+}
+
+// Repopula a lista de itens quando a subcategoria muda, e sugere a unidade típica do grupo.
+function atualizarItemEstoque(){
+  const categoriaNome = document.getElementById('campo-categoria-item').value;
+  const grupoNome = document.getElementById('campo-subcategoria-item').value;
+  const grupo = obterGrupoEstoque(categoriaNome, grupoNome);
+  document.getElementById('campo-item-estoque').innerHTML = grupo.itens.map(i=>'<option value="'+escaparHTML(i)+'">'+escaparHTML(i)+'</option>').join('');
+  const campoUnidade = document.getElementById('campo-unidade-item');
+  if(campoUnidade) campoUnidade.placeholder = 'Ex.: ' + (grupo.exUnidade || 'kg');
+  atualizarDescricaoItemEstoque();
+}
+
+// Mostra a caixa "Descreva o item" quando o item escolhido é um "Outro(s)/Outra(s)".
+function atualizarDescricaoItemEstoque(){
+  const itemNome = document.getElementById('campo-item-estoque').value;
+  const wrap = document.getElementById('wrap-descricao-item-estoque');
+  wrap.innerHTML = itemEstoqueEhOutro(itemNome)
+    ? '<div class="grupo-campo"><label for="campo-descricao-item-estoque">Descreva o item</label><input id="campo-descricao-item-estoque" type="text" placeholder="Ex.: Cobre injetável"></div>'
+    : '';
 }
 
 async function salvarNovoItemEstoque(){
   const categoria = document.getElementById('campo-categoria-item').value;
-  const nome = document.getElementById('campo-nome-item').value.trim();
+  const subcategoria = document.getElementById('campo-subcategoria-item').value;
+  const itemSelecionado = document.getElementById('campo-item-estoque').value;
+  const descricaoEl = document.getElementById('campo-descricao-item-estoque');
+  const nome = (itemEstoqueEhOutro(itemSelecionado) && descricaoEl && descricaoEl.value.trim()) ? descricaoEl.value.trim() : itemSelecionado;
   const unidade = document.getElementById('campo-unidade-item').value.trim();
   const quantidade_atual = Number(document.getElementById('campo-quantidade-inicial').value) || 0;
   const msg = document.getElementById('mensagem-item');
 
-  if(!nome){ msg.textContent = 'Preencha o nome do item.'; msg.style.color = 'var(--perigo)'; return; }
+  if(!unidade){ msg.textContent = 'Preencha a unidade.'; msg.style.color = 'var(--perigo)'; return; }
+  if(itemEstoqueEhOutro(itemSelecionado) && (!descricaoEl || !descricaoEl.value.trim())){ msg.textContent = 'Descreva o item.'; msg.style.color = 'var(--perigo)'; return; }
 
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
 
-  const { error } = await sb.from('estoque_itens').insert({ produtor_id: usuarioAtual.id, categoria, nome, unidade, quantidade_atual });
+  const { error } = await sb.from('estoque_itens').insert({ produtor_id: usuarioAtual.id, categoria, subcategoria, nome, unidade, quantidade_atual });
 
   if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
 
@@ -1777,11 +1888,12 @@ async function abrirDetalheItemEstoque(id){
   if(!item) return;
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">'+escaparHTML(item.nome)+'</div>'
-    + '<div class="cartao" style="text-align:center"><div class="legenda-muted" style="margin-bottom:4px">Saldo atual</div>'
+    + (item.subcategoria ? '<div class="legenda-muted" style="margin-top:-10px; margin-bottom:12px">'+escaparHTML(item.categoria||'')+' — '+escaparHTML(item.subcategoria)+'</div>' : '')
+    + '<div class="cartao" style="text-align:center"><div class="legenda-muted" style="margin-bottom:4px">Estoque disponível</div>'
     + '<div style="font-family:var(--fonte-dados); font-weight:600; font-size:26px; color:var(--azul)">'+item.quantidade_atual+' '+escaparHTML(item.unidade||'')+'</div></div>'
     + '<div style="display:flex; gap:10px; margin-bottom:10px">'
       + '<button class="botao botao-primario" style="flex:1" onclick="abrirFormularioMovimento('+id+',\'entrada\')">'+iconeInline('caixa',16)+' Entrada</button>'
-      + '<button class="botao botao-secundario" style="flex:1; color:var(--perigo); border-color:var(--perigo)" onclick="abrirFormularioMovimento('+id+',\'saida\')">'+iconeInline('caixa',16)+' Saída</button>'
+      + '<button class="botao botao-secundario" style="flex:1; color:var(--perigo); border-color:var(--perigo)" onclick="abrirFormularioMovimento('+id+',\'saida\')">'+iconeInline('caixa',16)+' Consumo</button>'
     + '</div>'
     + '<div id="secao-movimentos"><div class="legenda-muted">Carregando histórico...</div></div>'
     + '<div class="linha-tracejada"></div>'
@@ -1798,7 +1910,7 @@ async function renderMovimentosEstoque(itemId){
   if(data.length === 0){ alvo.innerHTML = '<div class="legenda-muted">Nenhuma movimentação registrada ainda.</div>'; return; }
   alvo.innerHTML = data.map(m=>
     '<div class="cartao" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">'
-    + '<div><strong>'+(m.tipo==='entrada' ? 'Entrada' : 'Saída')+'</strong>'
+    + '<div><strong>'+(m.tipo==='entrada' ? 'Entrada' : 'Consumo')+'</strong>'
     + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(m.data)+(m.observacoes ? ' · '+escaparHTML(m.observacoes) : '')+'</div></div>'
     + '<span style="font-weight:700; color:'+(m.tipo==='entrada' ? 'var(--sucesso)' : 'var(--perigo)')+'">'+(m.tipo==='entrada' ? '+' : '−')+m.quantidade+'</span>'
     + '</div>'
@@ -1810,7 +1922,7 @@ function abrirFormularioMovimento(itemId, tipo){
   const hoje = new Date().toISOString().slice(0,10);
   alvo.insertAdjacentHTML('afterbegin',
     '<div class="cartao" id="form-movimento">'
-    + '<div class="rotulo-secao" style="margin-top:0">'+(tipo==='entrada' ? 'Registrar entrada' : 'Registrar saída')+'</div>'
+    + '<div class="rotulo-secao" style="margin-top:0">'+(tipo==='entrada' ? 'Registrar entrada' : 'Registrar consumo')+'</div>'
     + '<div class="grupo-campo"><label for="campo-quantidade-mov">Quantidade</label><input id="campo-quantidade-mov" type="number" step="0.01" min="0"></div>'
     + '<div class="grupo-campo"><label for="campo-data-mov">Data</label><input id="campo-data-mov" type="date" value="'+hoje+'"></div>'
     + '<div class="grupo-campo"><label for="campo-obs-mov">Observações (opcional)</label><input id="campo-obs-mov" type="text"></div>'
