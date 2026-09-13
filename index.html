@@ -317,6 +317,21 @@ function iconeInline(nome, tamanho){ return ic(ICONES[nome] || '', tamanho); }
 function iniciais(nome){ return (nome||'').split(' ').filter(Boolean).slice(0,2).map(p=>p[0]).join('').toUpperCase(); }
 function escaparHTML(str){ return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 
+// Traduz um erro técnico do Supabase/Postgres numa mensagem que o produtor entende.
+// O erro original sempre vai pro console (F12), pra investigação futura, mas a
+// pessoa não precisa ver "duplicate key value violates unique constraint" na tela.
+function mensagemErroAmigavel(error, oQueFalhou){
+  console.error('[LeiteFácil]', oQueFalhou || '', error);
+  const tecnica = (error && error.message) || '';
+  let dica = 'Tente novamente em instantes. Se continuar, tire um print desta tela e avise o suporte.';
+  if(/duplicate key|already exists/i.test(tecnica)) dica = 'Parece que esse registro já existe.';
+  else if(/violates foreign key/i.test(tecnica)) dica = 'Esse item está sendo usado em outro lugar do app e não pode ser alterado assim.';
+  else if(/permission denied|row-level security/i.test(tecnica)) dica = 'Você não tem permissão para fazer isso.';
+  else if(/Failed to fetch|network|NetworkError|fetch/i.test(tecnica)) dica = 'Parece que a internet caiu. Confira sua conexão e tente de novo.';
+  else if(/JWT|token|session/i.test(tecnica)) dica = 'Sua sessão expirou. Saia do app e entre novamente.';
+  return (oQueFalhou ? 'Não foi possível ' + oQueFalhou + '. ' : 'Não foi possível concluir a ação. ') + dica;
+}
+
 function baixarCSV(nomeArquivo, colunas, linhas){
   const cabecalho = colunas.join(';');
   const corpo = linhas.map(l => colunas.map(c => {
@@ -730,7 +745,7 @@ async function renderAnimais(){
     sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id)
   ]);
   if(error){
-    document.getElementById('tela-animais').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Meus animais</div><div class="legenda-muted">Não foi possível carregar seus animais: '+error.message+'</div>';
+    document.getElementById('tela-animais').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Meus animais</div><div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar seus animais')+'</div>';
     return;
   }
 
@@ -830,7 +845,7 @@ async function salvarNovoAnimal(){
     mae_nome, mae_brinco, pai_nome, avo_nome, avo_macho_nome
   });
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   fecharModal();
   renderAnimais();
@@ -928,7 +943,7 @@ async function renderHistoricoReprodutivo(animalId){
   if(!alvo) return;
   const { data, error } = await sb.from('eventos_reprodutivos').select('*').eq('animal_id', animalId).order('data', { ascending:false });
   if(error){
-    alvo.innerHTML = '<div class="legenda-muted">Não foi possível carregar o histórico: '+error.message+'</div>';
+    alvo.innerHTML = '<div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar o histórico')+'</div>';
     return;
   }
 
@@ -1073,7 +1088,7 @@ async function salvarEventoReprodutivo(animalId){
 
   const { data: eventoSalvo, error } = await sb.from('eventos_reprodutivos').insert(registro).select().single();
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   // Parto de fêmea que vai ficar no rebanho -> cadastra a bezerra sozinho.
   if(tipo === 'parto' && sexoBezerra === 'femea' && adicionarRebanho === 'sim' && brincoBezerra){
@@ -1105,7 +1120,7 @@ async function salvarEventoReprodutivo(animalId){
 async function excluirEventoReprodutivo(id, animalId){
   if(!confirm('Excluir este evento reprodutivo?')) return;
   const { error } = await sb.from('eventos_reprodutivos').delete().eq('id', id);
-  if(error){ alert('Não foi possível excluir: ' + error.message); return; }
+  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
   renderHistoricoReprodutivo(animalId);
 }
 
@@ -1153,7 +1168,7 @@ async function renderHistoricoSanitario(animalId){
   if(!alvo) return;
   const { data, error } = await sb.from('eventos_sanitarios').select('*').eq('animal_id', animalId).order('data_aplicacao', { ascending:false });
   if(error){
-    alvo.innerHTML = '<div class="legenda-muted">Não foi possível carregar o histórico: '+error.message+'</div>';
+    alvo.innerHTML = '<div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar o histórico')+'</div>';
     return;
   }
 
@@ -1255,7 +1270,7 @@ async function salvarEventoSanitario(animalId){
     animal_id: animalId, produtor_id: usuarioAtual.id, tipo, subcategoria, nome_medicamento, descricao, data_aplicacao, dias_carencia, data_fim_carencia, proxima_dose_em
   });
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   renderHistoricoSanitario(animalId);
 }
@@ -1263,7 +1278,7 @@ async function salvarEventoSanitario(animalId){
 async function excluirEventoSanitario(id, animalId){
   if(!confirm('Excluir este evento sanitário?')) return;
   const { error } = await sb.from('eventos_sanitarios').delete().eq('id', id);
-  if(error){ alert('Não foi possível excluir: ' + error.message); return; }
+  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
   renderHistoricoSanitario(animalId);
 }
 
@@ -1288,7 +1303,7 @@ async function renderProducao(){
     sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false })
   ]);
   if(error){
-    document.getElementById('tela-producao').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Produção de leite</div><div class="legenda-muted">Não foi possível carregar: '+error.message+'</div>';
+    document.getElementById('tela-producao').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Produção de leite</div><div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar a produção')+'</div>';
     return;
   }
   PRODUCAO_LEITE = data;
@@ -1550,7 +1565,7 @@ async function salvarQualidade(id){
     ? await sb.from('qualidade_leite').update(payload).eq('id', id)
     : await sb.from('qualidade_leite').insert(payload);
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   fecharModal();
   renderProducao();
@@ -1559,7 +1574,7 @@ async function salvarQualidade(id){
 async function excluirQualidade(id){
   if(!confirm('Excluir este registro de qualidade?')) return;
   const { error } = await sb.from('qualidade_leite').delete().eq('id', id);
-  if(error){ alert('Não foi possível excluir: ' + error.message); return; }
+  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
   fecharModal();
   renderProducao();
 }
@@ -1642,7 +1657,7 @@ async function salvarProducao(){
   const { error } = await sb.from('producao_leite')
     .upsert(registro, { onConflict: 'produtor_id,data' });
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   fecharModal();
   renderProducao();
@@ -1651,7 +1666,7 @@ async function salvarProducao(){
 async function excluirProducao(data){
   if(!confirm('Excluir o registro de produção deste dia?')) return;
   const { error } = await sb.from('producao_leite').delete().eq('produtor_id', usuarioAtual.id).eq('data', data);
-  if(error){ alert('Não foi possível excluir: ' + error.message); return; }
+  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
   fecharModal();
   renderProducao();
 }
@@ -1775,7 +1790,7 @@ async function renderEstoque(){
   document.getElementById('tela-estoque').innerHTML = '<div class="legenda-muted">Carregando estoque...</div>';
   const { data, error } = await sb.from('estoque_itens').select('*').eq('produtor_id', usuarioAtual.id).order('nome', { ascending:true });
   if(error){
-    document.getElementById('tela-estoque').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Estoque</div><div class="legenda-muted">Não foi possível carregar: '+error.message+'</div>';
+    document.getElementById('tela-estoque').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Estoque</div><div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar o estoque')+'</div>';
     return;
   }
   MEU_ESTOQUE = data;
@@ -1787,7 +1802,7 @@ async function renderEstoque(){
       + '<div class="legenda-muted" style="margin-bottom:8px">Para cada item, você cadastra um <strong>Estoque inicial</strong> (o que já tinha guardado ao começar a usar o app). Depois, sempre que comprar mais, registra uma <strong>Entrada</strong>; sempre que usar, registra um <strong>Consumo</strong>. O <strong>Estoque disponível</strong> é calculado sozinho: Estoque inicial + Entradas − Consumo.</div>'
       + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px"><strong>Exemplo:</strong> você tinha 500kg de ração guardados. Comprou mais 200kg (Entrada) e usou 150kg durante a semana (Consumo). Seu Estoque disponível passa a ser 550kg — não importa quanto isso custou em R$, esse valor fica registrado à parte, no Financeiro.</div>'
     + '</div>'
-    + '<button class="botao botao-primario" style="margin:14px 0 18px" onclick="abrirCadastroItemEstoque()">'+iconeInline('caixa',18)+' Adicionar item</button>';
+    + '<div class="legenda-muted" style="margin:14px 0 10px">Toque numa categoria para ver ou adicionar itens.</div>';
 
   const cartaoCategoria = (nome, qtd) =>
     '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirCategoriaEstoque(\''+nome.replace(/'/g,"\\'")+'\')">'
@@ -1838,11 +1853,17 @@ function abrirCategoriaEstoque(nomeCategoria){
 
 function abrirCadastroItemEstoque(categoriaPreSelecionada){
   CONTEXTO_CATEGORIA_ESTOQUE = categoriaPreSelecionada || null;
+  const campoCategoria = categoriaPreSelecionada
+    ? '<div class="legenda-muted" style="margin-top:-6px; margin-bottom:12px">Categoria: <strong style="color:var(--tinta)">'+escaparHTML(categoriaPreSelecionada)+'</strong></div>'
+      + '<input type="hidden" id="campo-categoria-item" value="'+escaparHTML(categoriaPreSelecionada)+'">'
+    // Caso de segurança: se por algum motivo a função for chamada sem categoria (não deveria acontecer no fluxo atual), ainda mostra a lista para escolher.
+    : '<div class="grupo-campo"><label for="campo-categoria-item">Categoria</label><select id="campo-categoria-item" onchange="atualizarGrupoEstoque()">'
+      + CATEGORIAS_ESTOQUE_DETALHADA.map(c=>'<option value="'+escaparHTML(c.categoria)+'">'+escaparHTML(c.categoria)+'</option>').join('')
+      + '</select></div>';
+
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Adicionar item ao estoque</div>'
-    + '<div class="grupo-campo"><label for="campo-categoria-item">Categoria</label><select id="campo-categoria-item" onchange="atualizarGrupoEstoque()">'
-      + CATEGORIAS_ESTOQUE_DETALHADA.map(c=>'<option value="'+escaparHTML(c.categoria)+'" '+(c.categoria===categoriaPreSelecionada?'selected':'')+'>'+escaparHTML(c.categoria)+'</option>').join('')
-    + '</select></div>'
+    + campoCategoria
     + '<div class="grupo-campo"><label for="campo-subcategoria-item">Subcategoria</label><select id="campo-subcategoria-item" onchange="atualizarItemEstoque()"></select></div>'
     + '<div class="grupo-campo"><label for="campo-item-estoque">Item</label><select id="campo-item-estoque" onchange="atualizarDescricaoItemEstoque()"></select></div>'
     + '<div id="wrap-descricao-item-estoque"></div>'
@@ -1899,7 +1920,7 @@ async function salvarNovoItemEstoque(){
 
   const { error } = await sb.from('estoque_itens').insert({ produtor_id: usuarioAtual.id, categoria, subcategoria, nome, unidade, quantidade_atual });
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   await renderEstoque();
   if(CONTEXTO_CATEGORIA_ESTOQUE){
@@ -1988,7 +2009,7 @@ async function salvarMovimentoEstoque(itemId, tipo, categoriaOrigem){
 async function excluirItemEstoque(id, categoriaOrigem){
   if(!confirm('Excluir este item e todo o histórico de movimentações dele?')) return;
   const { error } = await sb.from('estoque_itens').delete().eq('id', id);
-  if(error){ alert('Não foi possível excluir: ' + error.message); return; }
+  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
   await renderEstoque();
   if(categoriaOrigem){
     abrirCategoriaEstoque(categoriaOrigem);
@@ -2129,7 +2150,7 @@ async function renderFinanceiro(){
   document.getElementById('tela-financeiro').innerHTML = '<div class="legenda-muted">Carregando financeiro...</div>';
   const { data, error } = await sb.from('financeiro_lancamentos').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false });
   if(error){
-    document.getElementById('tela-financeiro').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Financeiro</div><div class="legenda-muted">Não foi possível carregar: '+error.message+'</div>';
+    document.getElementById('tela-financeiro').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Financeiro</div><div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar o financeiro')+'</div>';
     return;
   }
   MEUS_LANCAMENTOS = data;
@@ -2249,7 +2270,7 @@ async function salvarNovoLancamentoDespesa(){
 
   const { error } = await sb.from('financeiro_lancamentos').insert({ produtor_id: usuarioAtual.id, tipo:'despesa', categoria, subcategoria, quantidade, unidade, valor_unitario, valor, data, descricao });
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   fecharModal();
   renderFinanceiro();
@@ -2310,7 +2331,7 @@ async function salvarEdicaoLancamentoDespesa(id){
 
   const { error } = await sb.from('financeiro_lancamentos').update({ categoria, subcategoria, quantidade, unidade, valor_unitario, valor, data, descricao }).eq('id', id);
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   fecharModal();
   renderFinanceiro();
@@ -2346,7 +2367,7 @@ async function salvarNovoLancamentoReceita(){
 
   const { error } = await sb.from('financeiro_lancamentos').insert({ produtor_id: usuarioAtual.id, tipo:'receita', categoria, valor, data, descricao });
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   fecharModal();
   renderFinanceiro();
@@ -2379,7 +2400,7 @@ async function salvarEdicaoLancamentoReceita(id){
 
   const { error } = await sb.from('financeiro_lancamentos').update({ categoria, valor, data, descricao }).eq('id', id);
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   fecharModal();
   renderFinanceiro();
@@ -2397,7 +2418,7 @@ function abrirEdicaoLancamento(id){
 async function excluirLancamento(id){
   if(!confirm('Excluir este lançamento?')) return;
   const { error } = await sb.from('financeiro_lancamentos').delete().eq('id', id);
-  if(error){ alert('Não foi possível excluir: ' + error.message); return; }
+  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
   fecharModal();
   renderFinanceiro();
 }
@@ -2542,7 +2563,7 @@ async function exportarCSVProdutor(){
   const inicio = document.getElementById('campo-relatorio-inicio').value;
   const fim = document.getElementById('campo-relatorio-fim').value;
   const { data, error } = await sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true });
-  if(error){ alert('Não foi possível gerar o CSV: ' + error.message); return; }
+  if(error){ alert(mensagemErroAmigavel(error, 'gerar o CSV')); return; }
   const linhas = data.map(r=>({ data:r.data, litros_manha:r.litros_manha||0, litros_tarde:r.litros_tarde||0, total:(Number(r.litros_manha||0)+Number(r.litros_tarde||0)) }));
   baixarCSV('leitefacil_producao_'+inicio+'_a_'+fim+'.csv', ['data','litros_manha','litros_tarde','total'], linhas);
 }
@@ -2650,7 +2671,7 @@ async function salvarEdicaoAnimal(id){
     .update({ identificacao, grau_sangue, data_nascimento, status, mae_nome, mae_brinco, pai_nome, avo_nome, avo_macho_nome })
     .eq('id', id);
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   fecharModal();
   renderAnimais();
@@ -2659,7 +2680,7 @@ async function salvarEdicaoAnimal(id){
 async function excluirAnimal(id){
   if(!confirm('Tem certeza que deseja excluir este animal? Essa ação não pode ser desfeita.')) return;
   const { error } = await sb.from('animais').delete().eq('id', id);
-  if(error){ alert('Não foi possível excluir: ' + error.message); return; }
+  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
   fecharModal();
   renderAnimais();
 }
@@ -2889,7 +2910,7 @@ async function salvarPropriedade(){
     .select()
     .maybeSingle();
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   meuProdutor = data;
   msg.textContent = 'Salvo com sucesso.';
@@ -2972,7 +2993,7 @@ async function salvarConviteColaborador(){
 
   const { error } = await sb.from('colaboradores').insert({ produtor_id: usuarioAtual.id, email, ...permissoes, status:'pendente' });
 
-  if(error){ msg.textContent = 'Não foi possível enviar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'enviar'); msg.style.color = 'var(--perigo)'; return; }
 
   fecharModal();
   renderListaColaboradores();
@@ -2981,13 +3002,13 @@ async function salvarConviteColaborador(){
 async function revogarColaborador(id){
   if(!confirm('Revogar o acesso desta pessoa?')) return;
   const { error } = await sb.from('colaboradores').update({ status:'revogado' }).eq('id', id);
-  if(error){ alert('Não foi possível revogar: ' + error.message); return; }
+  if(error){ alert(mensagemErroAmigavel(error, 'revogar o acesso')); return; }
   renderListaColaboradores();
 }
 
 async function reativarColaborador(id){
   const { error } = await sb.from('colaboradores').update({ status:'ativo' }).eq('id', id);
-  if(error){ alert('Não foi possível reativar: ' + error.message); return; }
+  if(error){ alert(mensagemErroAmigavel(error, 'reativar o acesso')); return; }
   renderListaColaboradores();
 }
 
@@ -3018,7 +3039,7 @@ async function salvarPerfil(){
     .select()
     .maybeSingle();
 
-  if(error){ msg.textContent = 'Não foi possível salvar: ' + error.message; msg.style.color = 'var(--perigo)'; return; }
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   meuProdutor = data;
   fecharModal();
@@ -3044,7 +3065,7 @@ async function renderAdmin(){
     sb.from('qualidade_leite').select('produtor_id, data, ccs, cbt, gordura, proteina').gte('data', somarDias(hoje, -90))
   ]);
   if(error){
-    document.getElementById('tela-admin').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Painel administrativo</div><div class="legenda-muted">Não foi possível carregar os produtores: '+error.message+'</div>';
+    document.getElementById('tela-admin').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Painel administrativo</div><div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar os produtores')+'</div>';
     return;
   }
   const contagemAnimais = {};
