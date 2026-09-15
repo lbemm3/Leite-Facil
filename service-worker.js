@@ -10,7 +10,7 @@
   celulares dos produtores substituam o cache antigo automaticamente.
 */
 
-const CACHE_NAME = 'leitefacil-v3';
+const CACHE_NAME = 'leitefacil-v4';
 
 const ARQUIVOS_ESSENCIAIS = [
   './',
