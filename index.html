@@ -208,6 +208,10 @@
     .modal{ max-width:100%; border-radius: 26px 26px 0 0; max-height:92vh; animation: subir 0.25s ease; }
   }
   @keyframes subir{ from{ transform: translateY(26px); opacity:0.4; } to{ transform: translateY(0); opacity:1; } }
+
+  #camada-confirmacao{ position:fixed; inset:0; z-index:80; display:none; align-items:center; justify-content:center; padding:22px; background: rgba(20,26,34,0.6); }
+  #camada-confirmacao.ativo{ display:flex; }
+  .caixa-confirmacao{ background: var(--branco); width:100%; max-width:360px; border-radius: var(--raio-lg); box-shadow: var(--sombra); padding:22px 20px; text-align:left; }
 </style>
 </head>
 <body>
@@ -278,6 +282,10 @@
     <button class="fechar-modal" onclick="fecharModal()" id="icone-fechar-modal"></button>
     <div id="conteudo-modal"></div>
   </div>
+</div>
+
+<div id="camada-confirmacao">
+  <div class="caixa-confirmacao" id="caixa-confirmacao"></div>
 </div>
 
 <div id="area-impressao"></div>
@@ -1126,24 +1134,25 @@ async function salvarEventoReprodutivo(animalId){
     }).select().single();
 
     if(erroBezerra){
-      alert('O parto foi salvo, mas não foi possível cadastrar a bezerra automaticamente: ' + erroBezerra.message);
+      avisar('O parto foi salvo, mas não foi possível cadastrar a bezerra automaticamente: ' + erroBezerra.message);
       renderHistoricoReprodutivo(animalId);
       return;
     }
 
     await sb.from('eventos_reprodutivos').update({ bezerra_animal_id: novaBezerra.id }).eq('id', eventoSalvo.id);
 
-    alert('Parto salvo e bezerra Nº '+brincoBezerra+' cadastrada automaticamente no rebanho!');
+    avisar('Parto salvo e bezerra Nº '+brincoBezerra+' cadastrada automaticamente no rebanho!');
   }
 
   renderHistoricoReprodutivo(animalId);
 }
 
-async function excluirEventoReprodutivo(id, animalId){
-  if(!confirm('Excluir este evento reprodutivo?')) return;
-  const { error } = await sb.from('eventos_reprodutivos').delete().eq('id', id);
-  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
-  renderHistoricoReprodutivo(animalId);
+function excluirEventoReprodutivo(id, animalId){
+  confirmarAcao('Excluir este evento reprodutivo?', async () => {
+    const { error } = await sb.from('eventos_reprodutivos').delete().eq('id', id);
+    if(error){ avisar(mensagemErroAmigavel(error, 'excluir')); return; }
+    renderHistoricoReprodutivo(animalId);
+  }, { textoConfirmar:'Excluir' });
 }
 
 /* ======================= MANEJO SANITÁRIO ======================= */
@@ -1298,11 +1307,12 @@ async function salvarEventoSanitario(animalId){
   renderHistoricoSanitario(animalId);
 }
 
-async function excluirEventoSanitario(id, animalId){
-  if(!confirm('Excluir este evento sanitário?')) return;
-  const { error } = await sb.from('eventos_sanitarios').delete().eq('id', id);
-  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
-  renderHistoricoSanitario(animalId);
+function excluirEventoSanitario(id, animalId){
+  confirmarAcao('Excluir este evento sanitário?', async () => {
+    const { error } = await sb.from('eventos_sanitarios').delete().eq('id', id);
+    if(error){ avisar(mensagemErroAmigavel(error, 'excluir')); return; }
+    renderHistoricoSanitario(animalId);
+  }, { textoConfirmar:'Excluir' });
 }
 
 /* ======================= PRODUÇÃO DE LEITE (por rebanho, manhã/tarde) ======================= */
@@ -1594,12 +1604,13 @@ async function salvarQualidade(id){
   renderProducao();
 }
 
-async function excluirQualidade(id){
-  if(!confirm('Excluir este registro de qualidade?')) return;
-  const { error } = await sb.from('qualidade_leite').delete().eq('id', id);
-  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
-  fecharModal();
-  renderProducao();
+function excluirQualidade(id){
+  confirmarAcao('Excluir este registro de qualidade?', async () => {
+    const { error } = await sb.from('qualidade_leite').delete().eq('id', id);
+    if(error){ avisar(mensagemErroAmigavel(error, 'excluir')); return; }
+    fecharModal();
+    renderProducao();
+  }, { textoConfirmar:'Excluir' });
 }
 
 const TIPOS_ORDENHA = { manual:'Manual', mecanica:'Mecânica', robotica:'Robótica' };
@@ -1686,12 +1697,13 @@ async function salvarProducao(){
   renderProducao();
 }
 
-async function excluirProducao(data){
-  if(!confirm('Excluir o registro de produção deste dia?')) return;
-  const { error } = await sb.from('producao_leite').delete().eq('produtor_id', usuarioAtual.id).eq('data', data);
-  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
-  fecharModal();
-  renderProducao();
+function excluirProducao(data){
+  confirmarAcao('Excluir o registro de produção deste dia?', async () => {
+    const { error } = await sb.from('producao_leite').delete().eq('produtor_id', usuarioAtual.id).eq('data', data);
+    if(error){ avisar(mensagemErroAmigavel(error, 'excluir')); return; }
+    fecharModal();
+    renderProducao();
+  }, { textoConfirmar:'Excluir' });
 }
 
 /* ======================= CALENDÁRIO DE ATIVIDADES (exibido na tela de Início) ======================= */
@@ -2025,16 +2037,17 @@ async function salvarMovimentoEstoque(itemId, tipo, categoriaOrigem){
   abrirDetalheItemEstoque(itemId, categoriaOrigem);
 }
 
-async function excluirItemEstoque(id, categoriaOrigem){
-  if(!confirm('Excluir este item e todo o histórico de movimentações dele?')) return;
-  const { error } = await sb.from('estoque_itens').delete().eq('id', id);
-  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
-  await renderEstoque();
-  if(categoriaOrigem){
-    abrirCategoriaEstoque(categoriaOrigem);
-  } else {
-    fecharModal();
-  }
+function excluirItemEstoque(id, categoriaOrigem){
+  confirmarAcao('Excluir este item e todo o histórico de movimentações dele?', async () => {
+    const { error } = await sb.from('estoque_itens').delete().eq('id', id);
+    if(error){ avisar(mensagemErroAmigavel(error, 'excluir')); return; }
+    await renderEstoque();
+    if(categoriaOrigem){
+      abrirCategoriaEstoque(categoriaOrigem);
+    } else {
+      fecharModal();
+    }
+  }, { textoConfirmar:'Excluir' });
 }
 
 /* ======================= FINANCEIRO (privado do produtor) ======================= */
@@ -2434,12 +2447,13 @@ function abrirEdicaoLancamento(id){
   else abrirEdicaoLancamentoReceita(l);
 }
 
-async function excluirLancamento(id){
-  if(!confirm('Excluir este lançamento?')) return;
-  const { error } = await sb.from('financeiro_lancamentos').delete().eq('id', id);
-  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
-  fecharModal();
-  renderFinanceiro();
+function excluirLancamento(id){
+  confirmarAcao('Excluir este lançamento?', async () => {
+    const { error } = await sb.from('financeiro_lancamentos').delete().eq('id', id);
+    if(error){ avisar(mensagemErroAmigavel(error, 'excluir')); return; }
+    fecharModal();
+    renderFinanceiro();
+  }, { textoConfirmar:'Excluir' });
 }
 
 /* ======================= INDICADORES (produtor) ======================= */
@@ -2582,7 +2596,7 @@ async function exportarCSVProdutor(){
   const inicio = document.getElementById('campo-relatorio-inicio').value;
   const fim = document.getElementById('campo-relatorio-fim').value;
   const { data, error } = await sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true });
-  if(error){ alert(mensagemErroAmigavel(error, 'gerar o CSV')); return; }
+  if(error){ avisar(mensagemErroAmigavel(error, 'gerar o CSV')); return; }
   const linhas = data.map(r=>({ data:r.data, litros_manha:r.litros_manha||0, litros_tarde:r.litros_tarde||0, total:(Number(r.litros_manha||0)+Number(r.litros_tarde||0)) }));
   baixarCSV('leitefacil_producao_'+inicio+'_a_'+fim+'.csv', ['data','litros_manha','litros_tarde','total'], linhas);
 }
@@ -2696,12 +2710,13 @@ async function salvarEdicaoAnimal(id){
   renderAnimais();
 }
 
-async function excluirAnimal(id){
-  if(!confirm('Tem certeza que deseja excluir este animal? Essa ação não pode ser desfeita.')) return;
-  const { error } = await sb.from('animais').delete().eq('id', id);
-  if(error){ alert(mensagemErroAmigavel(error, 'excluir')); return; }
-  fecharModal();
-  renderAnimais();
+function excluirAnimal(id){
+  confirmarAcao('Tem certeza que deseja excluir este animal? Essa ação não pode ser desfeita.', async () => {
+    const { error } = await sb.from('animais').delete().eq('id', id);
+    if(error){ avisar(mensagemErroAmigavel(error, 'excluir')); return; }
+    fecharModal();
+    renderAnimais();
+  }, { textoConfirmar:'Excluir' });
 }
 
 /* ======================= PROPRIEDADE ======================= */
@@ -3018,16 +3033,17 @@ async function salvarConviteColaborador(){
   renderListaColaboradores();
 }
 
-async function revogarColaborador(id){
-  if(!confirm('Revogar o acesso desta pessoa?')) return;
-  const { error } = await sb.from('colaboradores').update({ status:'revogado' }).eq('id', id);
-  if(error){ alert(mensagemErroAmigavel(error, 'revogar o acesso')); return; }
-  renderListaColaboradores();
+function revogarColaborador(id){
+  confirmarAcao('Revogar o acesso desta pessoa?', async () => {
+    const { error } = await sb.from('colaboradores').update({ status:'revogado' }).eq('id', id);
+    if(error){ avisar(mensagemErroAmigavel(error, 'revogar o acesso')); return; }
+    renderListaColaboradores();
+  }, { textoConfirmar:'Revogar' });
 }
 
 async function reativarColaborador(id){
   const { error } = await sb.from('colaboradores').update({ status:'ativo' }).eq('id', id);
-  if(error){ alert(mensagemErroAmigavel(error, 'reativar o acesso')); return; }
+  if(error){ avisar(mensagemErroAmigavel(error, 'reativar o acesso')); return; }
   renderListaColaboradores();
 }
 
@@ -3174,6 +3190,42 @@ function fecharModal(){
   document.getElementById('camada-modal').classList.remove('ativo');
 }
 
+// Substitui o confirm() nativo do navegador por uma caixa com a cara do app.
+// "aoConfirmar" só é chamado se a pessoa tocar no botão de confirmação.
+// opcoes: { titulo, textoConfirmar, perigo } — perigo (padrão true) deixa o
+// botão de confirmação vermelho, para ações como excluir/revogar.
+function confirmarAcao(mensagem, aoConfirmar, opcoes){
+  opcoes = opcoes || {};
+  const titulo = opcoes.titulo || 'Confirmar ação';
+  const textoConfirmar = opcoes.textoConfirmar || 'Confirmar';
+  const perigo = opcoes.perigo !== false;
+  document.getElementById('caixa-confirmacao').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">'+escaparHTML(titulo)+'</div>'
+    + '<div class="legenda-muted" style="margin-bottom:18px">'+escaparHTML(mensagem)+'</div>'
+    + '<div style="display:flex; gap:10px">'
+      + '<button class="botao botao-secundario" style="flex:1" onclick="fecharConfirmacao()">Cancelar</button>'
+      + '<button class="botao botao-primario" style="flex:1'+(perigo ? '; background:var(--perigo); border-color:var(--perigo)' : '')+'" id="botao-confirmar-acao">'+escaparHTML(textoConfirmar)+'</button>'
+    + '</div>';
+  document.getElementById('botao-confirmar-acao').onclick = function(){
+    fecharConfirmacao();
+    aoConfirmar();
+  };
+  document.getElementById('camada-confirmacao').classList.add('ativo');
+}
+
+// Substitui o alert() nativo do navegador por uma caixa com a cara do app.
+function avisar(mensagem, titulo){
+  document.getElementById('caixa-confirmacao').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">'+escaparHTML(titulo || 'Aviso')+'</div>'
+    + '<div class="legenda-muted" style="margin-bottom:18px">'+escaparHTML(mensagem)+'</div>'
+    + '<button class="botao botao-primario botao-bloco" onclick="fecharConfirmacao()">OK</button>';
+  document.getElementById('camada-confirmacao').classList.add('ativo');
+}
+
+function fecharConfirmacao(){
+  document.getElementById('camada-confirmacao').classList.remove('ativo');
+}
+
 function abrirTermosDeUso(bloqueado){
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Termo de uso e privacidade</div>'
@@ -3187,7 +3239,7 @@ function abrirTermosDeUso(bloqueado){
 async function aceitarTermosDeUso(){
   const agora = new Date().toISOString();
   const { error } = await sb.from('produtores').update({ termos_aceitos_em: agora }).eq('id', usuarioAtual.id);
-  if(error){ alert('Não foi possível salvar seu aceite. Tente novamente.'); return; }
+  if(error){ avisar('Não foi possível salvar seu aceite. Tente novamente.'); return; }
   meuProdutor.termos_aceitos_em = agora;
   MODAL_BLOQUEADO = false;
   fecharModal();
@@ -3252,7 +3304,7 @@ async function atualizarStatusNotificacoesPush(){
 
 async function alternarNotificacoesPush(){
   if(!suportaNotificacoesPush()){
-    alert('Este navegador não aceita notificações. No iPhone, é preciso ter instalado o LeiteFácil na tela inicial (Adicionar à Tela de Início) para os avisos funcionarem.');
+    avisar('Este navegador não aceita notificações. No iPhone, é preciso ter instalado o LeiteFácil na tela inicial (Adicionar à Tela de Início) para os avisos funcionarem.');
     return;
   }
 
@@ -3278,7 +3330,7 @@ async function alternarNotificacoesPush(){
   if(!inscricaoNavegador){
     const permissao = await Notification.requestPermission();
     if(permissao !== 'granted'){
-      alert('Sem a permissão de notificações, não é possível ativar os avisos no celular.');
+      avisar('Sem a permissão de notificações, não é possível ativar os avisos no celular.');
       await atualizarStatusNotificacoesPush();
       return;
     }
@@ -3288,7 +3340,7 @@ async function alternarNotificacoesPush(){
         applicationServerKey: base64UrlParaUint8Array(VAPID_CHAVE_PUBLICA)
       });
     }catch(e){
-      alert('Não foi possível ativar os avisos no celular agora. Tente novamente em instantes.');
+      avisar('Não foi possível ativar os avisos no celular agora. Tente novamente em instantes.');
       await atualizarStatusNotificacoesPush();
       return;
     }
@@ -3305,9 +3357,9 @@ async function alternarNotificacoesPush(){
       p256dh: dados.keys.p256dh,
       auth: dados.keys.auth
     }, { onConflict: 'produtor_id,endpoint' });
-    if(error){ alert('Não foi possível salvar sua inscrição de avisos. Tente novamente.'); }
+    if(error){ avisar('Não foi possível salvar sua inscrição de avisos. Tente novamente.'); }
   }catch(e){
-    alert('Não foi possível ativar os avisos no celular agora. Tente novamente em instantes.');
+    avisar('Não foi possível ativar os avisos no celular agora. Tente novamente em instantes.');
   }
   await atualizarStatusNotificacoesPush();
 }
