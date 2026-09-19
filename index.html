@@ -1590,12 +1590,12 @@ async function abrirFormularioProducaoIndividual(data){
   document.getElementById('conteudo-modal').innerHTML =
     '<button onclick="abrirRegistroProducao(\''+data+'\')" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar</button>'
     + '<div class="rotulo-secao" style="margin-top:0">Produção por vaca — '+formatarData(data)+'</div>'
-    + '<div class="legenda-muted" style="margin-bottom:10px">Digite o volume de cada vaca lactante. O total da sessão é somado automaticamente logo acima.</div>'
+    + '<div class="legenda-muted" style="margin-bottom:10px">Digite o volume de cada vaca lactante. O total de cada sessão é somado automaticamente logo abaixo da tabela.</div>'
     + '<input type="hidden" id="campo-data-producao" value="'+data+'">'
+    + '<div id="aviso-vacas-faltando" class="legenda-muted" style="margin-bottom:8px"></div>'
+    + '<div id="tabela-ordenha-individual-modal"><div class="legenda-muted">Carregando vacas...</div></div>'
     + camposSessaoOrdenha('manha', 'Ordenha da manhã', registro, true)
     + camposSessaoOrdenha('tarde', 'Ordenha da tarde', registro, true)
-    + '<div id="aviso-vacas-faltando" class="legenda-muted" style="margin:8px 0 4px"></div>'
-    + '<div id="tabela-ordenha-individual-modal"><div class="legenda-muted">Carregando vacas...</div></div>'
     + '<div id="mensagem-producao" class="legenda-muted" style="min-height:18px; margin-top:14px"></div>'
     + '<button class="botao botao-primario botao-bloco" onclick="salvarProducao()">Salvar</button>'
     + (registro ? '<button class="botao botao-secundario botao-bloco" style="margin-top:10px; color:var(--perigo); border-color:var(--perigo)" onclick="excluirProducao(\''+data+'\')">Excluir registro</button>' : '');
@@ -1641,15 +1641,33 @@ async function renderTabelaOrdenhaIndividualModal(data){
 
   const linhas = lactantes.map(a => {
     const r = registroPorAnimal[a.id] || {};
+    const statusInfo = statusOrdenhaIndividual(r);
     return '<tr data-linha-animal="'+a.id+'">'
       + '<td style="font-weight:700">Nº '+escaparHTML(a.identificacao)+'</td>'
       + '<td><input type="number" min="0" step="0.1" inputmode="decimal" value="'+(r.litros_manha ?? '')+'" style="width:70px" onchange="salvarOrdenhaIndividualModal(\''+data+'\', '+a.id+', this)"></td>'
       + '<td><input type="number" min="0" step="0.1" inputmode="decimal" value="'+(r.litros_tarde ?? '')+'" style="width:70px" onchange="salvarOrdenhaIndividualModal(\''+data+'\', '+a.id+', this)"></td>'
+      + '<td id="total-ordenha-'+a.id+'" style="font-weight:700">'+totalOrdenhaIndividual(r)+'</td>'
+      + '<td id="status-ordenha-'+a.id+'"><span style="color:'+statusInfo.cor+'; font-weight:700; font-size:12.5px">'+statusInfo.texto+'</span></td>'
       + '</tr>';
   }).join('');
 
-  container.innerHTML = '<div style="overflow-x:auto"><table class="tabela-admin"><thead><tr><th>Vaca</th><th>Manhã (L)</th><th>Tarde (L)</th></tr></thead><tbody>'+linhas+'</tbody></table></div>';
+  container.innerHTML = '<div style="overflow-x:auto"><table class="tabela-admin"><thead><tr><th>Vaca</th><th>Manhã (L)</th><th>Tarde (L)</th><th>Total (L)</th><th>Situação</th></tr></thead><tbody>'+linhas+'</tbody></table></div>';
   atualizarTotaisOrdenhaIndividualModal();
+}
+
+function totalOrdenhaIndividual(r){
+  const temManha = r.litros_manha !== null && r.litros_manha !== undefined && r.litros_manha !== '';
+  const temTarde = r.litros_tarde !== null && r.litros_tarde !== undefined && r.litros_tarde !== '';
+  if(!temManha && !temTarde) return '—';
+  return (Number(r.litros_manha||0) + Number(r.litros_tarde||0)).toFixed(1);
+}
+
+function statusOrdenhaIndividual(r){
+  const temManha = r.litros_manha !== null && r.litros_manha !== undefined && r.litros_manha !== '';
+  const temTarde = r.litros_tarde !== null && r.litros_tarde !== undefined && r.litros_tarde !== '';
+  if(temManha && temTarde) return { cor:'var(--pasto)', texto:'Dia completo' };
+  if(temManha || temTarde) return { cor:'var(--manteiga-escura)', texto:'Falta uma ordenha' };
+  return { cor:'var(--zinco)', texto:'Nada lançado' };
 }
 
 // Soma os campos da tabela (sem precisar buscar nada de novo) e atualiza os campos
@@ -1686,6 +1704,13 @@ async function salvarOrdenhaIndividualModal(data, animalId, inputAlterado){
   }, { onConflict: 'animal_id,data' });
 
   if(error){ avisar(mensagemErroAmigavel(error, 'salvar')); return; }
+
+  const statusInfo = statusOrdenhaIndividual({ litros_manha, litros_tarde });
+  const totalEl = document.getElementById('total-ordenha-'+animalId);
+  const statusEl = document.getElementById('status-ordenha-'+animalId);
+  if(totalEl) totalEl.textContent = totalOrdenhaIndividual({ litros_manha, litros_tarde });
+  if(statusEl) statusEl.innerHTML = '<span style="color:'+statusInfo.cor+'; font-weight:700; font-size:12.5px">'+statusInfo.texto+'</span>';
+
   atualizarTotaisOrdenhaIndividualModal();
 }
 
@@ -3161,7 +3186,7 @@ async function renderAdmin(){
     + '</div>';
 
   const linhas = data.map(p=>
-    '<tr style="cursor:pointer" onclick="abrirFichaProdutorAdmin('+p.id+')"><td>'+escaparHTML(p.nome||'—')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+(contagemAnimais[p.id]||0)+'</td></tr>'
+    '<tr style="cursor:pointer" onclick="abrirFichaProdutorAdmin(\''+p.id+'\')"><td>'+escaparHTML(p.nome||'—')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+(contagemAnimais[p.id]||0)+'</td></tr>'
   ).join('');
   document.getElementById('tela-admin').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Painel administrativo</div>'
