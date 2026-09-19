@@ -3216,12 +3216,214 @@ async function abrirFichaProdutorAdmin(produtorId){
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">'+escaparHTML(nomeProdutor)+'</div>'
     + '<div class="legenda-muted" style="margin-top:-8px; margin-bottom:12px">Visão do administrador — dados financeiros não são exibidos aqui.</div>'
+    + '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px">'
+      + '<button class="botao botao-secundario" onclick="exportarCSVFichaProdutorAdmin(\''+produtorId+'\')">Baixar CSV (produção completa)</button>'
+      + '<button class="botao botao-primario" onclick="gerarPDFFichaProdutorAdmin(\''+produtorId+'\')">Gerar relatório PDF completo</button>'
+    + '</div>'
     + '<div id="secao-ficha-admin"><div class="legenda-muted">Carregando dados...</div></div>';
   abrirModal();
 
+  const blocoPerfilPropriedade = montarBlocoPerfilPropriedadeAdmin(p);
+  const blocoIndicadores = '<div class="rotulo-secao">Indicadores</div>' + await montarBlocoIndicadoresAdmin(produtorId);
   const permissoesAdmin = { ve_animais:true, ve_reprodutivo:true, ve_sanitario:true, ve_producao:true, ve_estoque:true, ve_financeiro:false };
-  const html = await montarFichaProdutorHTML(produtorId, permissoesAdmin);
-  document.getElementById('secao-ficha-admin').innerHTML = html;
+  const htmlModulos = await montarFichaProdutorHTML(produtorId, permissoesAdmin);
+  document.getElementById('secao-ficha-admin').innerHTML = blocoPerfilPropriedade + blocoIndicadores + htmlModulos;
+}
+
+// Texto de um item de "alimentos produzidos" (Propriedade), independente do tipo dele.
+function formatarItemAlimentoProduzido(item){
+  let texto = escaparHTML(item.chave);
+  const partes = [];
+  if(item.tipo) partes.push(escaparHTML(item.tipo));
+  if(item.quantidade!=null) partes.push(item.quantidade+(item.unidade?' '+escaparHTML(item.unidade):''));
+  if(item.descricao) partes.push(escaparHTML(item.descricao));
+  if(partes.length) texto += ' — '+partes.join(' · ');
+  return texto;
+}
+
+// Texto de um item de "outras fontes de renda" (Propriedade).
+function formatarFonteRendaExibicao(item){
+  const cfg = FONTES_RENDA_PROPRIEDADE.find(f=>f.chave===item.chave);
+  const label = cfg ? cfg.label : item.chave;
+  return escaparHTML(label) + (item.descricao ? ' — '+escaparHTML(item.descricao) : '');
+}
+
+// Monta os blocos de Perfil e Propriedade a partir da linha já carregada de "produtores".
+function montarBlocoPerfilPropriedadeAdmin(p){
+  if(!p) return '';
+  const estadoNome = (ESTADOS_BR.find(e=>e[0]===p.estado)||[])[1] || p.estado || '—';
+  const alimentos = p.alimentos_produzidos || [];
+  const fontes = p.outras_fontes_renda || [];
+
+  return '<div class="rotulo-secao" style="margin-top:0">Perfil</div>'
+    + '<div class="cartao">'
+      + '<div class="legenda-muted" style="margin-bottom:4px"><strong style="color:var(--tinta)">Nome:</strong> '+escaparHTML(p.nome||'—')+'</div>'
+      + '<div class="legenda-muted" style="margin-bottom:0"><strong style="color:var(--tinta)">Telefone:</strong> '+escaparHTML(p.telefone||'—')+'</div>'
+    + '</div>'
+    + '<div class="rotulo-secao">Propriedade</div>'
+    + '<div class="cartao">'
+      + '<div class="legenda-muted" style="margin-bottom:4px"><strong style="color:var(--tinta)">Nome da propriedade:</strong> '+escaparHTML(p.propriedade||'—')+'</div>'
+      + '<div class="legenda-muted" style="margin-bottom:4px"><strong style="color:var(--tinta)">Local:</strong> '+escaparHTML(p.localidade||'—')+(p.localidade?', ':'')+escaparHTML(p.cidade||'—')+'/'+escaparHTML(estadoNome)+'</div>'
+      + '<div class="legenda-muted" style="margin-bottom:0"><strong style="color:var(--tinta)">Área total:</strong> '+(p.area_total_hectares!=null ? p.area_total_hectares+' ha' : '—')+' · <strong style="color:var(--tinta)">Área p/ alimentação animal:</strong> '+(p.area_alimentos_hectares!=null ? p.area_alimentos_hectares+' ha' : '—')+'</div>'
+    + '</div>'
+    + '<div class="rotulo-secao">Alimentos produzidos</div>'
+    + (alimentos.length ? '<div class="cartao">'+alimentos.map(formatarItemAlimentoProduzido).join('<br>')+'</div>' : '<div class="legenda-muted">Nenhum informado.</div>')
+    + '<div class="rotulo-secao">Outras fontes de renda</div>'
+    + (fontes.length ? '<div class="cartao">'+fontes.map(formatarFonteRendaExibicao).join('<br>')+'</div>' : '<div class="legenda-muted">Nenhuma informada.</div>');
+}
+
+// Indicadores (produção, DEL/IEP e qualidade) de um produtor específico — mesma
+// lógica de renderIndicadores, mas sem o bloco de custo por litro (é financeiro).
+async function montarBlocoIndicadoresAdmin(produtorId){
+  const hoje = new Date().toISOString().slice(0,10);
+  const [{ data: producao, error: erroProducao }, { data: animais, error: erroAnimais }, { data: eventos, error: erroEventos }, { data: qualidade, error: erroQualidade }] = await Promise.all([
+    sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:false }),
+    sb.from('animais').select('id, identificacao').eq('produtor_id', produtorId),
+    sb.from('eventos_reprodutivos').select('*').eq('produtor_id', produtorId).order('data', { ascending:true }),
+    sb.from('qualidade_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:false })
+  ]);
+  if(erroProducao || erroAnimais || erroEventos || erroQualidade){
+    return '<div class="legenda-muted">Não foi possível calcular os indicadores.</div>';
+  }
+
+  const totalDia = r => Number(r.litros_manha||0) + Number(r.litros_tarde||0);
+  const ultimos7 = producao.slice(0,7);
+  const ultimos30 = producao.slice(0,30);
+  const media7 = ultimos7.length ? (ultimos7.reduce((s,r)=>s+totalDia(r),0)/ultimos7.length) : 0;
+  const media30 = ultimos30.length ? (ultimos30.reduce((s,r)=>s+totalDia(r),0)/ultimos30.length) : 0;
+
+  const blocoProducao = '<div class="cartao" style="display:flex; justify-content:space-around; text-align:center">'
+    + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Média (7 dias)</div><div style="font-weight:700">'+media7.toFixed(1)+' L</div></div>'
+    + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Média (30 dias)</div><div style="font-weight:700">'+media30.toFixed(1)+' L</div></div>'
+    + '</div>';
+
+  const eventosPorAnimal = {};
+  eventos.forEach(ev=>{ (eventosPorAnimal[ev.animal_id] = eventosPorAnimal[ev.animal_id] || []).push(ev); });
+  const linhasReprodutivo = animais.map(a=>{
+    const evs = eventosPorAnimal[a.id] || [];
+    const partos = evs.filter(e=>e.tipo==='parto').sort((x,y)=>x.data.localeCompare(y.data));
+    const secagens = evs.filter(e=>e.tipo==='secagem').sort((x,y)=>x.data.localeCompare(y.data));
+    let del = '—';
+    if(partos.length){
+      const ultimoParto = partos[partos.length-1];
+      const secagemDepois = secagens.find(s=>s.data > ultimoParto.data);
+      if(!secagemDepois) del = diasEntre(ultimoParto.data, hoje) + ' dias';
+    }
+    let iep = '—';
+    if(partos.length >= 2){
+      const p1 = partos[partos.length-2], p2 = partos[partos.length-1];
+      iep = diasEntre(p1.data, p2.data) + ' dias';
+    }
+    if(partos.length === 0 && del === '—' && iep === '—') return null;
+    return '<tr><td>Nº '+escaparHTML(a.identificacao)+'</td><td>'+del+'</td><td>'+iep+'</td></tr>';
+  }).filter(Boolean).join('');
+
+  const blocoReprodutivo = '<div class="legenda-muted" style="margin:10px 0 4px; font-weight:700">Reprodutivo (DEL/IEP por animal)</div>'
+    + (linhasReprodutivo
+      ? '<div class="cartao"><table class="tabela-admin"><thead><tr><th>Animal</th><th>DEL</th><th>IEP</th></tr></thead><tbody>'+linhasReprodutivo+'</tbody></table></div>'
+      : '<div class="legenda-muted">Nenhum animal com parto registrado ainda.</div>');
+
+  const statusQual = calcularStatusQualidade(qualidade||[], hoje);
+  const corQual = statusQual.nivel==='alerta' ? 'var(--perigo)' : (statusQual.nivel==='atencao' ? 'var(--manteiga-escura)' : 'var(--sucesso)');
+  const textoQual = statusQual.nivel==='alerta' ? 'Fora do limite' : (statusQual.nivel==='atencao' ? 'Próximo do limite' : (statusQual.registros ? 'Dentro do limite' : 'Sem resultados'));
+  const blocoQualidade = '<div class="legenda-muted" style="margin:10px 0 4px; font-weight:700">Qualidade do leite</div>'
+    + '<div class="cartao" style="border-color:'+corQual+'">'
+      + '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(100px,1fr)); gap:10px; text-align:center; margin-bottom:8px">'
+        + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">CCS (méd. geom. 90d)</div><div style="font-weight:700">'+(statusQual.mediaCCS!==null ? formatarNumero(Math.round(statusQual.mediaCCS)) : '—')+'</div></div>'
+        + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">CBT (méd. geom. 90d)</div><div style="font-weight:700">'+(statusQual.mediaCBT!==null ? formatarNumero(Math.round(statusQual.mediaCBT)) : '—')+'</div></div>'
+        + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Gordura (méd. 90d)</div><div style="font-weight:700">'+formatarPercentual(statusQual.mediaGordura)+'</div></div>'
+        + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Proteína (méd. 90d)</div><div style="font-weight:700">'+formatarPercentual(statusQual.mediaProteina)+'</div></div>'
+      + '</div>'
+      + '<div style="text-align:center; font-weight:700; color:'+corQual+'">'+textoQual+'</div>'
+    + '</div>';
+
+  return blocoProducao + blocoReprodutivo + blocoQualidade;
+}
+
+// CSV de produção completa (todo o histórico, sem filtro de data) de um produtor — pro admin.
+async function exportarCSVFichaProdutorAdmin(produtorId){
+  const p = ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores.find(x=>x.id===produtorId);
+  const { data, error } = await sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
+  if(error){ avisar(mensagemErroAmigavel(error, 'gerar o CSV')); return; }
+  const linhas = (data||[]).map(r=>({ data:r.data, litros_manha:r.litros_manha||0, litros_tarde:r.litros_tarde||0, total:(Number(r.litros_manha||0)+Number(r.litros_tarde||0)), metodo:r.metodo_registro||'rebanho' }));
+  const nomeArquivo = 'leitefacil_producao_'+((p&&p.nome)||'produtor').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_')+'.csv';
+  baixarCSV(nomeArquivo, ['data','litros_manha','litros_tarde','total','metodo'], linhas);
+}
+
+// PDF completo (todo o histórico, sem filtro de data, todos os módulos exceto Financeiro)
+// de um produtor específico — visão do administrador.
+async function gerarPDFFichaProdutorAdmin(produtorId){
+  const p = ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores.find(x=>x.id===produtorId);
+  const nomeProdutor = (p && p.nome) || 'Produtor';
+  const estadoNome = (ESTADOS_BR.find(e=>e[0]===(p&&p.estado))||[])[1] || (p&&p.estado) || '—';
+
+  const [{ data: animais }, { data: eventosRepro }, { data: eventosSan }, { data: producao }, { data: producaoIndividual }, { data: qualidade }, { data: itensEstoque }] = await Promise.all([
+    sb.from('animais').select('*').eq('produtor_id', produtorId),
+    sb.from('eventos_reprodutivos').select('*, animais(identificacao)').eq('produtor_id', produtorId).order('data', { ascending:true }),
+    sb.from('eventos_sanitarios').select('*, animais(identificacao)').eq('produtor_id', produtorId).order('data_aplicacao', { ascending:true }),
+    sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true }),
+    sb.from('producao_leite_individual').select('*, animais(identificacao)').eq('produtor_id', produtorId).order('data', { ascending:true }),
+    sb.from('qualidade_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true }),
+    sb.from('estoque_itens').select('*').eq('produtor_id', produtorId).order('nome', { ascending:true })
+  ]);
+
+  const eventosPorAnimalRelatorio = {};
+  (eventosRepro||[]).forEach(ev => { (eventosPorAnimalRelatorio[ev.animal_id] = eventosPorAnimalRelatorio[ev.animal_id]||[]).push(ev); });
+
+  const alimentos = (p && p.alimentos_produzidos) || [];
+  const fontes = (p && p.outras_fontes_renda) || [];
+  const totalLitros = (producao||[]).reduce((s,r)=>s+Number(r.litros_manha||0)+Number(r.litros_tarde||0),0);
+
+  let conteudo = '<div class="cartao"><strong>Produtor:</strong> '+escaparHTML(nomeProdutor)+' · <strong>Telefone:</strong> '+escaparHTML((p&&p.telefone)||'—')+'<br><strong>Propriedade:</strong> '+escaparHTML((p&&p.propriedade)||'—')+' · <strong>Local:</strong> '+escaparHTML((p&&p.localidade)||'—')+(p&&p.localidade?', ':'')+escaparHTML((p&&p.cidade)||'—')+'/'+escaparHTML(estadoNome)+'</div>';
+
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Propriedade</h2>';
+  conteudo += '<div class="cartao">Área total: <strong>'+(p&&p.area_total_hectares!=null ? p.area_total_hectares+' ha' : '—')+'</strong> · Área p/ alimentação animal: <strong>'+(p&&p.area_alimentos_hectares!=null ? p.area_alimentos_hectares+' ha' : '—')+'</strong></div>';
+  conteudo += '<div class="cartao"><strong>Alimentos produzidos:</strong><br>'+(alimentos.length ? alimentos.map(formatarItemAlimentoProduzido).join('<br>') : 'Nenhum informado.')+'</div>';
+  conteudo += '<div class="cartao"><strong>Outras fontes de renda:</strong><br>'+(fontes.length ? fontes.map(formatarFonteRendaExibicao).join('<br>') : 'Nenhuma informada.')+'</div>';
+
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Indicadores</h2>';
+  conteudo += await montarBlocoIndicadoresAdmin(produtorId);
+
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção de leite (histórico completo)</h2>';
+  conteudo += '<div class="cartao">Total histórico: <strong>'+totalLitros.toFixed(1)+' L</strong> — Registros: '+(producao?producao.length:0)+'</div>';
+  conteudo += (producao&&producao.length)
+    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Manhã (L)</th><th>Tarde (L)</th><th>Método</th></tr></thead><tbody>'+producao.map(r=>'<tr><td>'+formatarData(r.data)+'</td><td>'+(r.litros_manha||0)+'</td><td>'+(r.litros_tarde||0)+'</td><td>'+(r.metodo_registro==='individual'?'Por vaca':'Por rebanho')+'</td></tr>').join('')+'</tbody></table>'
+    : '<div class="legenda-muted">Nenhum registro de produção.</div>';
+
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção individual por vaca</h2>';
+  conteudo += (producaoIndividual&&producaoIndividual.length)
+    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Vaca</th><th>Manhã (L)</th><th>Tarde (L)</th></tr></thead><tbody>'+producaoIndividual.map(r=>'<tr><td>'+formatarData(r.data)+'</td><td>Nº '+escaparHTML((r.animais&&r.animais.identificacao)||'?')+'</td><td>'+(r.litros_manha??'—')+'</td><td>'+(r.litros_tarde??'—')+'</td></tr>').join('')+'</tbody></table>'
+    : '<div class="legenda-muted">Nenhum registro individual por vaca.</div>';
+
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Animais (total: '+(animais?animais.length:0)+')</h2>';
+  conteudo += (animais&&animais.length)
+    ? '<table class="tabela-admin"><thead><tr><th>Nº</th><th>Grau de sangue</th><th>Lote</th></tr></thead><tbody>'+animais.map(a=>{
+        const lote = calcularLoteAnimal(a, eventosPorAnimalRelatorio[a.id]);
+        return '<tr><td>'+escaparHTML(a.identificacao)+'</td><td>'+escaparHTML(a.grau_sangue||'—')+'</td><td>'+(STATUS_ANIMAL[lote]?STATUS_ANIMAL[lote].rot:'—')+'</td></tr>';
+      }).join('')+'</tbody></table>'
+    : '<div class="legenda-muted">Nenhum animal cadastrado.</div>';
+
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Eventos reprodutivos (histórico completo)</h2>';
+  conteudo += (eventosRepro&&eventosRepro.length)
+    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Evento</th></tr></thead><tbody>'+eventosRepro.map(ev=>'<tr><td>'+formatarData(ev.data)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+TIPOS_EVENTO[ev.tipo]+(ev.tipo==='parto' && formatarDetalhesParto(ev) ? ' — '+formatarDetalhesParto(ev) : '')+'</td></tr>').join('')+'</tbody></table>'
+    : '<div class="legenda-muted">Nenhum evento registrado.</div>';
+
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Manejo sanitário (histórico completo)</h2>';
+  conteudo += (eventosSan&&eventosSan.length)
+    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Categoria</th><th>Carência até</th></tr></thead><tbody>'+eventosSan.map(ev=>'<tr><td>'+formatarData(ev.data_aplicacao)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+formatarDetalhesSanitario(ev)+'</td><td>'+(ev.data_fim_carencia?formatarData(ev.data_fim_carencia):'—')+'</td></tr>').join('')+'</tbody></table>'
+    : '<div class="legenda-muted">Nenhum evento registrado.</div>';
+
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Qualidade do leite (histórico completo)</h2>';
+  conteudo += (qualidade&&qualidade.length)
+    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>CCS</th><th>CBT</th><th>Gordura</th><th>Proteína</th></tr></thead><tbody>'+qualidade.map(r=>'<tr><td>'+formatarData(r.data)+'</td><td>'+formatarNumero(r.ccs)+'</td><td>'+formatarNumero(r.cbt)+'</td><td>'+formatarPercentual(r.gordura)+'</td><td>'+formatarPercentual(r.proteina)+'</td></tr>').join('')+'</tbody></table>'
+    : '<div class="legenda-muted">Nenhum resultado registrado.</div>';
+
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Estoque</h2>';
+  conteudo += (itensEstoque&&itensEstoque.length)
+    ? '<table class="tabela-admin"><thead><tr><th>Item</th><th>Categoria</th><th>Subcategoria</th><th>Saldo</th></tr></thead><tbody>'+itensEstoque.map(i=>'<tr><td>'+escaparHTML(i.nome)+'</td><td>'+escaparHTML(i.categoria||'—')+'</td><td>'+escaparHTML(i.subcategoria||'—')+'</td><td>'+i.quantidade_atual+' '+escaparHTML(i.unidade||'')+'</td></tr>').join('')+'</tbody></table>'
+    : '<div class="legenda-muted">Nenhum item cadastrado.</div>';
+
+  imprimirRelatorio('Relatório completo — '+escaparHTML(nomeProdutor), conteudo);
 }
 
 function exportarCSVAdmin(){
