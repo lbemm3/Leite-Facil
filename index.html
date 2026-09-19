@@ -1512,7 +1512,7 @@ const HIGIENIZACAO_ORDENHA = { total:'Cumpridos totalmente', parcial:'Cumprido p
 
 function camposSessaoOrdenha(sufixo, tituloSessao, registro, litrosReadonly){
   const g = campo => (registro && registro[campo] !== null && registro[campo] !== undefined) ? registro[campo] : '';
-  return '<div class="rotulo-secao" style="font-size:14px; margin-top:18px; color:var(--azul)">'+tituloSessao+'</div>'
+  return '<div class="rotulo-secao" style="font-size:14px; margin-top:18px; color:var(--azul); font-weight:800">'+tituloSessao+'</div>'
     + '<div class="grupo-campo"><label for="campo-litros-'+sufixo+'">Litros ordenhados'+(litrosReadonly ? ' (somado automaticamente pelas vacas abaixo)' : '')+'</label><input id="campo-litros-'+sufixo+'" type="number" step="0.1" min="0" value="'+g('litros_'+sufixo)+'" '+(litrosReadonly ? 'readonly' : '')+'></div>'
     + '<div class="grupo-campo"><label for="campo-tipo-ordenha-'+sufixo+'">Tipo de ordenha</label><select id="campo-tipo-ordenha-'+sufixo+'">'
       + '<option value="">—</option>'
@@ -1589,7 +1589,7 @@ async function abrirFormularioProducaoIndividual(data){
   const registro = PRODUCAO_LEITE.find(r=>r.data===data) || null;
   document.getElementById('conteudo-modal').innerHTML =
     '<button onclick="abrirRegistroProducao(\''+data+'\')" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar</button>'
-    + '<div class="rotulo-secao" style="margin-top:0; color:var(--azul)">Produção por vaca — '+formatarData(data)+'</div>'
+    + '<div class="rotulo-secao" style="margin-top:0; color:var(--azul); font-weight:800">Produção por vaca — '+formatarData(data)+'</div>'
     + '<div class="legenda-muted" style="margin-bottom:10px">Digite o volume de cada vaca lactante. O total de cada sessão é somado automaticamente logo abaixo da tabela.</div>'
     + '<input type="hidden" id="campo-data-producao" value="'+data+'">'
     + '<div id="aviso-vacas-faltando" class="legenda-muted" style="margin-bottom:8px"></div>'
