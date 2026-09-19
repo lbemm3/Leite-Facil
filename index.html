@@ -1512,7 +1512,7 @@ const HIGIENIZACAO_ORDENHA = { total:'Cumpridos totalmente', parcial:'Cumprido p
 
 function camposSessaoOrdenha(sufixo, tituloSessao, registro, litrosReadonly){
   const g = campo => (registro && registro[campo] !== null && registro[campo] !== undefined) ? registro[campo] : '';
-  return '<div class="rotulo-secao" style="font-size:14px; margin-top:18px">'+tituloSessao+'</div>'
+  return '<div class="rotulo-secao" style="font-size:14px; margin-top:18px; color:var(--azul)">'+tituloSessao+'</div>'
     + '<div class="grupo-campo"><label for="campo-litros-'+sufixo+'">Litros ordenhados'+(litrosReadonly ? ' (somado automaticamente pelas vacas abaixo)' : '')+'</label><input id="campo-litros-'+sufixo+'" type="number" step="0.1" min="0" value="'+g('litros_'+sufixo)+'" '+(litrosReadonly ? 'readonly' : '')+'></div>'
     + '<div class="grupo-campo"><label for="campo-tipo-ordenha-'+sufixo+'">Tipo de ordenha</label><select id="campo-tipo-ordenha-'+sufixo+'">'
       + '<option value="">—</option>'
@@ -1589,13 +1589,17 @@ async function abrirFormularioProducaoIndividual(data){
   const registro = PRODUCAO_LEITE.find(r=>r.data===data) || null;
   document.getElementById('conteudo-modal').innerHTML =
     '<button onclick="abrirRegistroProducao(\''+data+'\')" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar</button>'
-    + '<div class="rotulo-secao" style="margin-top:0">Produção por vaca — '+formatarData(data)+'</div>'
+    + '<div class="rotulo-secao" style="margin-top:0; color:var(--azul)">Produção por vaca — '+formatarData(data)+'</div>'
     + '<div class="legenda-muted" style="margin-bottom:10px">Digite o volume de cada vaca lactante. O total de cada sessão é somado automaticamente logo abaixo da tabela.</div>'
     + '<input type="hidden" id="campo-data-producao" value="'+data+'">'
     + '<div id="aviso-vacas-faltando" class="legenda-muted" style="margin-bottom:8px"></div>'
     + '<div id="tabela-ordenha-individual-modal"><div class="legenda-muted">Carregando vacas...</div></div>'
     + camposSessaoOrdenha('manha', 'Ordenha da manhã', registro, true)
     + camposSessaoOrdenha('tarde', 'Ordenha da tarde', registro, true)
+    + '<div style="text-align:center; margin:18px 0">'
+      + '<div class="legenda-muted" style="margin-bottom:2px">Total do dia</div>'
+      + '<div id="valor-total-dia-individual" style="font-size:30px; font-weight:800; color:var(--sucesso)">0,0 L</div>'
+    + '</div>'
     + '<div id="mensagem-producao" class="legenda-muted" style="min-height:18px; margin-top:14px"></div>'
     + '<button class="botao botao-primario botao-bloco" onclick="salvarProducao()">Salvar</button>'
     + (registro ? '<button class="botao botao-secundario botao-bloco" style="margin-top:10px; color:var(--perigo); border-color:var(--perigo)" onclick="excluirProducao(\''+data+'\')">Excluir registro</button>' : '');
@@ -1686,6 +1690,8 @@ function atualizarTotaisOrdenhaIndividualModal(){
   const campoTarde = document.getElementById('campo-litros-tarde');
   if(campoManha) campoManha.value = totalManha.toFixed(1);
   if(campoTarde) campoTarde.value = totalTarde.toFixed(1);
+  const valorTotalDia = document.getElementById('valor-total-dia-individual');
+  if(valorTotalDia) valorTotalDia.textContent = (totalManha + totalTarde).toFixed(1).replace('.', ',') + ' L';
   const aviso = document.getElementById('aviso-vacas-faltando');
   if(aviso){
     aviso.textContent = (linhas.length && faltando) ? faltando+' de '+linhas.length+' vacas lactantes sem registro nesse dia ainda.' : '';
