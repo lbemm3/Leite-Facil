@@ -2254,7 +2254,7 @@ function montarBlocoConsentimentoFinanceiroAdmin(p){
     + '<div class="legenda-muted" style="margin-bottom:10px">'
       + (liberado
           ? 'Você liberou o acesso da equipe de pesquisa aos seus dados financeiros'+(desde ? ' em '+desde : '')+'. Você pode revogar isso quando quiser.'
-          : 'Por padrão, ninguém além de você vê esses dados — nem o administrador do sistema. Você pode liberar o acesso da equipe de pesquisa da UEM, se quiser um acompanhamento financeiro da propriedade.')
+          : 'Por padrão, ninguém além de você vê esses dados, nem o administrador do sistema. Porém, você pode permitir o acesso à equipe de pesquisa da UEM, caso queira um acompanhamento financeiro especializado da propriedade.')
     + '</div>'
     + (liberado
         ? '<button class="botao" style="background:var(--perigo); border-color:var(--perigo); color:var(--branco)" onclick="revogarAcessoFinanceiroAdmin()">Revogar acesso do admin</button>'
@@ -2336,8 +2336,8 @@ async function renderFinanceiro(){
 
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Financeiro</div>'
     + '<div class="legenda-muted">Este módulo é privado — somente você tem acesso aos seus dados financeiros, a menos que você libere abaixo.</div>'
-    + resumo
     + montarBlocoConsentimentoFinanceiroAdmin(meuProdutor)
+    + resumo
     + '<div style="display:flex; gap:10px; margin:14px 0 18px">'
       + '<button class="botao botao-primario" style="flex:1" onclick="abrirNovoLancamentoDespesa()">'+iconeInline('moeda',18)+' Lançar uma Despesa/Saída</button>'
       + '<button class="botao botao-secundario" style="flex:1" onclick="abrirNovoLancamentoReceita()">'+iconeInline('moeda',18)+' Lançar uma Receita/Entrada</button>'
