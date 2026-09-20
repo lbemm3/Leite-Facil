@@ -2242,6 +2242,79 @@ function detalheQuantidadeLancamento(l){
   return '';
 }
 
+// Bloco de consentimento: o produtor decide se libera o Financeiro para a equipe
+// de pesquisa (administradores do LeiteFácil). Fica dentro da própria tela
+// Financeiro, exatamente onde ele já espera decidir sobre a privacidade desse dado.
+function montarBlocoConsentimentoFinanceiroAdmin(p){
+  const liberado = p && p.admin_financeiro_liberado;
+  const desde = p && p.admin_financeiro_liberado_em ? formatarData(p.admin_financeiro_liberado_em.slice(0,10)) : null;
+
+  return '<div class="cartao">'
+    + '<div style="font-weight:700; margin-bottom:6px">Acesso da equipe de pesquisa (UEM) ao seu Financeiro</div>'
+    + '<div class="legenda-muted" style="margin-bottom:10px">'
+      + (liberado
+          ? 'Você liberou o acesso da equipe de pesquisa aos seus dados financeiros'+(desde ? ' em '+desde : '')+'. Você pode revogar isso quando quiser.'
+          : 'Por padrão, ninguém além de você vê esses dados — nem o administrador do sistema. Você pode liberar o acesso da equipe de pesquisa da UEM, se quiser um acompanhamento financeiro da propriedade.')
+    + '</div>'
+    + (liberado
+        ? '<button class="botao" style="background:var(--perigo); border-color:var(--perigo); color:var(--branco)" onclick="revogarAcessoFinanceiroAdmin()">Revogar acesso do admin</button>'
+        : '<button class="botao" style="background:var(--sucesso); border-color:var(--sucesso); color:var(--branco)" onclick="abrirConsentimentoFinanceiroAdmin()">Permitir acesso do admin</button>')
+    + '</div>';
+}
+
+function abrirConsentimentoFinanceiroAdmin(){
+  document.getElementById('conteudo-modal').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Liberar acesso financeiro à equipe de pesquisa</div>'
+    + '<div class="legenda-muted" style="margin-bottom:10px">Ao liberar, a equipe de pesquisa da UEM (administradores do LeiteFácil) passa a ver os lançamentos financeiros da sua propriedade. Isso permite:</div>'
+    + '<ul style="margin:0 0 14px 18px; padding:0; color:var(--tinta-suave); font-size:14px; line-height:1.6">'
+      + '<li>Acompanhamento sistemático das finanças por especialistas</li>'
+      + '<li>Dicas para otimizar gastos e aumentar o lucro</li>'
+      + '<li>Cursos de educação e gestão financeira voltados pra sua realidade</li>'
+      + '<li>Comparação, de forma agregada, com outras propriedades participantes</li>'
+      + '<li>Apoio na hora de buscar crédito rural ou financiamento</li>'
+    + '</ul>'
+    + '<div class="cartao" style="background:var(--fundo-suave, #f2f6f0); margin-bottom:14px">'
+      + '<div style="font-weight:700; margin-bottom:4px; font-size:13px">Compromisso da equipe</div>'
+      + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">A equipe de pesquisa se compromete a jamais usar esses dados para fins comerciais ou ganho próprio — apenas para acompanhamento, orientação e pesquisa acadêmica ligada ao LeiteFácil.</div>'
+    + '</div>'
+    + '<div class="legenda-muted" style="margin-bottom:14px; font-size:13px">Você pode revogar esse acesso a qualquer momento, voltando nesta mesma tela.</div>'
+    + '<div id="mensagem-consentimento-financeiro" class="legenda-muted" style="min-height:18px"></div>'
+    + '<button class="botao botao-bloco" style="background:var(--sucesso); border-color:var(--sucesso); color:var(--branco)" onclick="confirmarConsentimentoFinanceiroAdmin()">Concordo e libero o acesso</button>'
+    + '<button class="botao botao-secundario botao-bloco" style="margin-top:10px" onclick="fecharModal()">Cancelar</button>';
+  abrirModal();
+}
+
+async function confirmarConsentimentoFinanceiroAdmin(){
+  const msg = document.getElementById('mensagem-consentimento-financeiro');
+  msg.textContent = 'Salvando...';
+  msg.style.color = 'var(--tinta-suave)';
+
+  const { data, error } = await sb.from('produtores')
+    .update({ admin_financeiro_liberado: true, admin_financeiro_liberado_em: new Date().toISOString(), admin_financeiro_revogado_em: null })
+    .eq('id', usuarioAtual.id)
+    .select()
+    .maybeSingle();
+
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
+
+  meuProdutor = data;
+  fecharModal();
+  renderFinanceiro();
+}
+
+function revogarAcessoFinanceiroAdmin(){
+  confirmarAcao('Revogar o acesso da equipe de pesquisa aos seus dados financeiros?', async () => {
+    const { data, error } = await sb.from('produtores')
+      .update({ admin_financeiro_liberado: false, admin_financeiro_revogado_em: new Date().toISOString() })
+      .eq('id', usuarioAtual.id)
+      .select()
+      .maybeSingle();
+    if(error){ avisar(mensagemErroAmigavel(error, 'salvar')); return; }
+    meuProdutor = data;
+    renderFinanceiro();
+  }, { textoConfirmar:'Revogar' });
+}
+
 async function renderFinanceiro(){
   document.getElementById('tela-financeiro').innerHTML = '<div class="legenda-muted">Carregando financeiro...</div>';
   const { data, error } = await sb.from('financeiro_lancamentos').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false });
@@ -2262,8 +2335,9 @@ async function renderFinanceiro(){
     + '</div>';
 
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Financeiro</div>'
-    + '<div class="legenda-muted">Este módulo é privado — somente você tem acesso aos seus dados financeiros.</div>'
+    + '<div class="legenda-muted">Este módulo é privado — somente você tem acesso aos seus dados financeiros, a menos que você libere abaixo.</div>'
     + resumo
+    + montarBlocoConsentimentoFinanceiroAdmin(meuProdutor)
     + '<div style="display:flex; gap:10px; margin:14px 0 18px">'
       + '<button class="botao botao-primario" style="flex:1" onclick="abrirNovoLancamentoDespesa()">'+iconeInline('moeda',18)+' Lançar uma Despesa/Saída</button>'
       + '<button class="botao botao-secundario" style="flex:1" onclick="abrirNovoLancamentoReceita()">'+iconeInline('moeda',18)+' Lançar uma Receita/Entrada</button>'
@@ -3203,11 +3277,11 @@ async function renderAdmin(){
     + '</div>';
 
   const linhas = data.map(p=>
-    '<tr style="cursor:pointer" onclick="abrirFichaProdutorAdmin(\''+p.id+'\')"><td>'+escaparHTML(p.nome||'—')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+(contagemAnimais[p.id]||0)+'</td></tr>'
+    '<tr style="cursor:pointer" onclick="abrirFichaProdutorAdmin(\''+p.id+'\')"><td>'+escaparHTML(p.nome||'—')+(p.admin_financeiro_liberado ? ' <span title="Financeiro liberado" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--sucesso); margin-left:4px"></span>' : '')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+(contagemAnimais[p.id]||0)+'</td></tr>'
   ).join('');
   document.getElementById('tela-admin').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Painel administrativo</div>'
-    + '<div class="legenda-muted">Visão geral de todos os produtores cadastrados (exceto dados financeiros, que são privados). Toque no nome de um produtor para ver a ficha completa dele.</div>'
+    + '<div class="legenda-muted">Visão geral de todos os produtores cadastrados (financeiro só aparece para quem liberou — veja a bolinha verde ao lado do nome). Toque no nome de um produtor para ver a ficha completa dele.</div>'
     + cartoesIndicadores
     + '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px">'
       + '<button class="botao botao-secundario" onclick="exportarCSVAdmin()">Baixar CSV da região</button>'
@@ -3229,10 +3303,11 @@ let ADMIN_DADOS_ATUAIS = null;
 async function abrirFichaProdutorAdmin(produtorId){
   const p = ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores.find(x=>x.id===produtorId);
   const nomeProdutor = (p && p.nome) || 'Produtor';
+  const financeiroLiberado = !!(p && p.admin_financeiro_liberado);
 
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">'+escaparHTML(nomeProdutor)+'</div>'
-    + '<div class="legenda-muted" style="margin-top:-8px; margin-bottom:12px">Visão do administrador — dados financeiros não são exibidos aqui.</div>'
+    + '<div class="legenda-muted" style="margin-top:-8px; margin-bottom:12px">'+(financeiroLiberado ? 'Este produtor liberou o acesso da equipe de pesquisa ao Financeiro.' : 'Visão do administrador — dados financeiros não são exibidos aqui (o produtor não liberou).')+'</div>'
     + '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px">'
       + '<button class="botao botao-secundario" onclick="exportarCSVFichaProdutorAdmin(\''+produtorId+'\')">Baixar CSV (produção completa)</button>'
       + '<button class="botao botao-primario" onclick="gerarPDFFichaProdutorAdmin(\''+produtorId+'\')">Gerar relatório PDF completo</button>'
@@ -3241,8 +3316,8 @@ async function abrirFichaProdutorAdmin(produtorId){
   abrirModal();
 
   const blocoPerfilPropriedade = montarBlocoPerfilPropriedade(p);
-  const blocoIndicadores = '<div class="rotulo-secao">Indicadores</div>' + await montarBlocoIndicadores(produtorId, false);
-  const permissoesAdmin = { ve_animais:true, ve_reprodutivo:true, ve_sanitario:true, ve_producao:true, ve_estoque:true, ve_financeiro:false };
+  const blocoIndicadores = '<div class="rotulo-secao">Indicadores</div>' + await montarBlocoIndicadores(produtorId, financeiroLiberado);
+  const permissoesAdmin = { ve_animais:true, ve_reprodutivo:true, ve_sanitario:true, ve_producao:true, ve_estoque:true, ve_financeiro:financeiroLiberado };
   const htmlModulos = await montarFichaProdutorHTML(produtorId, permissoesAdmin);
   document.getElementById('secao-ficha-admin').innerHTML = blocoPerfilPropriedade + blocoIndicadores + htmlModulos;
 }
@@ -3514,7 +3589,7 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p){
 async function gerarPDFFichaProdutorAdmin(produtorId){
   const p = ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores.find(x=>x.id===produtorId);
   const nomeProdutor = (p && p.nome) || 'Produtor';
-  const permissoesAdmin = { ve_animais:true, ve_reprodutivo:true, ve_sanitario:true, ve_producao:true, ve_estoque:true, ve_financeiro:false };
+  const permissoesAdmin = { ve_animais:true, ve_reprodutivo:true, ve_sanitario:true, ve_producao:true, ve_estoque:true, ve_financeiro: !!(p && p.admin_financeiro_liberado) };
   await gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoesAdmin, p);
 }
 
