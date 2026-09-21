@@ -855,11 +855,17 @@ function filtrarAnimaisPorLote(chave){
 }
 
 function abrirCadastroAnimal(){
+  const hoje = new Date().toISOString().slice(0,10);
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Adicionar animal</div>'
     + '<div class="grupo-campo"><label for="campo-identificacao">Número / brinco</label><input id="campo-identificacao" type="text" placeholder="Ex.: 042"></div>'
     + '<div class="grupo-campo"><label for="campo-grau-sangue">Grau de sangue</label><input id="campo-grau-sangue" type="text" placeholder="Ex.: 3/4 Holandês, 1/4 Jersey"></div>'
     + '<div class="grupo-campo"><label for="campo-nascimento">Data de nascimento</label><input id="campo-nascimento" type="date"></div>'
+    + '<div class="linha-tracejada"></div>'
+    + '<div class="rotulo-secao">Situação ao entrar no rebanho</div>'
+    + '<div class="legenda-muted" style="margin-top:-8px">Se esse animal já pariu antes de você começar a usar o app (ex.: comprado já adulto, ou rebanho existente sendo cadastrado agora), marque aqui — sem isso, o app não tem como saber que já é uma vaca lactante, e vai classificar como novilha.</div>'
+    + '<label class="item-servico-extra"><input type="checkbox" id="campo-ja-pariu" onchange="atualizarCampoDataPartoAnterior()"><span>Já pariu antes de entrar no rebanho</span></label>'
+    + '<div id="wrap-data-parto-anterior"></div>'
     + '<div class="linha-tracejada"></div>'
     + '<div class="rotulo-secao">Genealogia (opcional)</div>'
     + '<div class="grupo-campo"><label for="campo-mae-nome">Nome da mãe</label><input id="campo-mae-nome" type="text"></div>'
@@ -872,6 +878,15 @@ function abrirCadastroAnimal(){
   abrirModal();
 }
 
+// Mostra a caixa de data quando "Já pariu antes de entrar no rebanho" é marcado.
+function atualizarCampoDataPartoAnterior(){
+  const marcado = document.getElementById('campo-ja-pariu').checked;
+  const hoje = new Date().toISOString().slice(0,10);
+  document.getElementById('wrap-data-parto-anterior').innerHTML = marcado
+    ? '<div class="grupo-campo"><label for="campo-data-parto-anterior">Data do último parto (aproximada, se não souber a exata)</label><input id="campo-data-parto-anterior" type="date" value="'+hoje+'"></div>'
+    : '';
+}
+
 async function salvarNovoAnimal(){
   const identificacao = document.getElementById('campo-identificacao').value.trim();
   const grau_sangue = document.getElementById('campo-grau-sangue').value.trim();
@@ -882,19 +897,31 @@ async function salvarNovoAnimal(){
   const pai_nome = document.getElementById('campo-pai-nome').value.trim();
   const avo_nome = document.getElementById('campo-avo-nome').value.trim();
   const avo_macho_nome = document.getElementById('campo-avo-macho-nome').value.trim();
+  const jaPariu = document.getElementById('campo-ja-pariu').checked;
+  const dataPartoAnterior = jaPariu ? document.getElementById('campo-data-parto-anterior').value : null;
   const msg = document.getElementById('mensagem-animal');
 
   if(!identificacao){ msg.textContent = 'Preencha o número/brinco do animal.'; msg.style.color = 'var(--perigo)'; return; }
+  if(jaPariu && !dataPartoAnterior){ msg.textContent = 'Preencha a data do último parto.'; msg.style.color = 'var(--perigo)'; return; }
 
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
 
-  const { error } = await sb.from('animais').insert({
+  const { data: animalSalvo, error } = await sb.from('animais').insert({
     produtor_id: usuarioAtual.id, identificacao, grau_sangue, data_nascimento, status,
     mae_nome, mae_brinco, pai_nome, avo_nome, avo_macho_nome
-  });
+  }).select().single();
 
   if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
+
+  // Parto anterior à entrada no rebanho: só a data, sem detalhes do bezerro (não se aplica aqui).
+  if(jaPariu && dataPartoAnterior){
+    const { error: erroParto } = await sb.from('eventos_reprodutivos').insert({
+      animal_id: animalSalvo.id, produtor_id: usuarioAtual.id, tipo:'parto', data: dataPartoAnterior,
+      observacoes: 'Parto anterior à entrada no rebanho (data aproximada)'
+    });
+    if(erroParto){ msg.textContent = mensagemErroAmigavel(erroParto, 'registrar o parto anterior (mas o animal já foi salvo)'); msg.style.color = 'var(--perigo)'; return; }
+  }
 
   fecharModal();
   renderAnimais();
@@ -1068,6 +1095,21 @@ function atualizarCamposFormularioEvento(tipo){
   if(tipo !== 'parto'){ alvo.innerHTML = ''; return; }
 
   alvo.innerHTML =
+    '<label class="item-servico-extra"><input type="checkbox" id="campo-parto-anterior-rebanho" onchange="atualizarDetalhesPartoAnterior()"><span>Parto anterior à entrada no rebanho (não sei os detalhes do bezerro)</span></label>'
+    + '<div id="wrap-detalhes-parto"></div>';
+
+  atualizarDetalhesPartoAnterior();
+}
+
+// Esconde os campos de detalhe do bezerro (período, condição, peso, sexo) quando o
+// parto for anterior à entrada do animal no rebanho — nesses casos o produtor não
+// tem como saber esses detalhes, e não faz sentido cadastrar uma bezerra "nova".
+function atualizarDetalhesPartoAnterior(){
+  const anterior = document.getElementById('campo-parto-anterior-rebanho').checked;
+  const alvo = document.getElementById('wrap-detalhes-parto');
+  if(anterior){ alvo.innerHTML = ''; return; }
+
+  alvo.innerHTML =
     '<div class="grupo-campo"><label for="campo-periodo-parto">Período do parto</label><select id="campo-periodo-parto">'
       + '<option value="manha">Manhã</option><option value="tarde">Tarde</option><option value="noite">Noite</option><option value="madrugada">Madrugada</option>'
     + '</select></div>'
@@ -1113,8 +1155,11 @@ async function salvarEventoReprodutivo(animalId){
   const registro = { animal_id: animalId, produtor_id: usuarioAtual.id, tipo, data, observacoes };
 
   let sexoBezerra = null, adicionarRebanho = null, brincoBezerra = '';
+  const partoAnterior = tipo === 'parto' && document.getElementById('campo-parto-anterior-rebanho') && document.getElementById('campo-parto-anterior-rebanho').checked;
 
-  if(tipo === 'parto'){
+  if(tipo === 'parto' && partoAnterior){
+    registro.observacoes = observacoes || 'Parto anterior à entrada no rebanho (detalhes do bezerro não informados)';
+  } else if(tipo === 'parto'){
     registro.periodo_parto = document.getElementById('campo-periodo-parto').value;
     registro.condicao_parto = document.getElementById('campo-condicao-parto').value;
     const pesoEl = document.getElementById('campo-peso-nascimento');
