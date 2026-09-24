@@ -190,7 +190,13 @@
     #area-impressao, #area-impressao *{ visibility:visible; }
     #area-impressao{ display:block; position:absolute; top:0; left:0; width:100%; padding:20px; }
     #area-impressao .cartao{ border:1px solid #ccc; break-inside:avoid; }
+    #area-impressao h2{ break-after:avoid; }
+    #area-impressao tr{ break-inside:avoid; }
+    #area-impressao thead{ display:table-header-group; }
   }
+  @page{ size:A4 landscape; margin:12mm; }
+  table.tabela-admin.matriz th, table.tabela-admin.matriz td{ padding:4px 5px; font-size:11px; text-align:right; white-space:nowrap; }
+  table.tabela-admin.matriz th:first-child, table.tabela-admin.matriz td:first-child{ text-align:left; }
 
   .nav-inferior-mobile{ display:flex; position:fixed; left:0; right:0; bottom:0; z-index:30; background: var(--branco); border-top:1px dashed var(--zinco-claro); padding: 8px 6px calc(env(safe-area-inset-bottom, 8px) + 8px); }
   @media (min-width:900px){ .nav-inferior-mobile{ display:none; } }
@@ -645,7 +651,9 @@ async function montarFichaProdutorHTML(produtorId, permissoes){
   }
 
   if(permissoes.ve_reprodutivo){
-    const { data: eventos } = await sb.from('eventos_reprodutivos').select('*, animais(identificacao)').eq('produtor_id', produtorId).order('data', { ascending:false }).limit(20);
+    const { data: eventos } = await sb.from('eventos_reprodutivos').select('*').eq('produtor_id', produtorId).order('data', { ascending:false }).limit(20);
+    const idsAnimais = await mapaIdentificacaoAnimais(produtorId);
+    (eventos||[]).forEach(ev=>{ ev.animais = { identificacao: idsAnimais[ev.animal_id] }; });
     html += '<div class="rotulo-secao">Reprodutivo (últimos eventos)</div>';
     html += (eventos && eventos.length)
       ? eventos.map(ev=>'<div class="cartao"><strong>'+TIPOS_EVENTO[ev.tipo]+'</strong> — Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(ev.data)+'</div></div>').join('')
@@ -694,6 +702,7 @@ async function abrirVisualizacaoColaborador(colabId){
 
   const botoesExportacao = c.ve_producao
     ? '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px">'
+        + '<button class="botao botao-secundario" onclick="baixarExcelColaborador('+colabId+')">Baixar Excel para análise</button>'
         + '<button class="botao botao-secundario" onclick="exportarCSVColaborador('+colabId+')">Baixar CSV (produção completa)</button>'
         + '<button class="botao botao-primario" onclick="gerarPDFColaborador('+colabId+')">Gerar relatório PDF completo</button>'
       + '</div>'
@@ -2805,13 +2814,15 @@ async function gerarPDFProdutor(){
   const [{ data: producao }, { data: animais }, { data: eventosRepro }, { data: eventosSan }, { data: lancamentos }, { data: qualidade }, { data: eventosReproCompletos }, { data: producaoIndividual }] = await Promise.all([
     sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('animais').select('*').eq('produtor_id', usuarioAtual.id),
-    sb.from('eventos_reprodutivos').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
+    sb.from('eventos_reprodutivos').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('eventos_sanitarios').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data_aplicacao', inicio).lte('data_aplicacao', fim).order('data_aplicacao', { ascending:true }),
     sb.from('financeiro_lancamentos').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id),
     sb.from('producao_leite_individual').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true })
   ]);
+  const idsPeriodo = {}; (animais||[]).forEach(a=>{ idsPeriodo[a.id] = a.identificacao; });
+  (eventosRepro||[]).forEach(ev=>{ ev.animais = { identificacao: idsPeriodo[ev.animal_id] }; });
 
   const eventosPorAnimalRelatorio = {};
   (eventosReproCompletos||[]).forEach(ev => {
@@ -3368,6 +3379,7 @@ async function abrirFichaProdutorAdmin(produtorId){
     '<div class="rotulo-secao" style="margin-top:0">'+escaparHTML(nomeProdutor)+'</div>'
     + '<div class="legenda-muted" style="margin-top:-8px; margin-bottom:12px">'+(financeiroLiberado ? 'Este produtor liberou o acesso da equipe de pesquisa ao Financeiro.' : 'Visão do administrador — dados financeiros não são exibidos aqui (o produtor não liberou).')+'</div>'
     + '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:16px">'
+      + '<button class="botao botao-secundario" onclick="baixarExcelFichaProdutorAdmin(\''+produtorId+'\')">Baixar Excel para análise</button>'
       + '<button class="botao botao-secundario" onclick="exportarCSVFichaProdutorAdmin(\''+produtorId+'\')">Baixar CSV (produção completa)</button>'
       + '<button class="botao botao-primario" onclick="gerarPDFFichaProdutorAdmin(\''+produtorId+'\')">Gerar relatório PDF completo</button>'
     + '</div>'
@@ -3429,7 +3441,7 @@ function montarBlocoPerfilPropriedade(p){
 // lógica de renderIndicadores. O bloco de custo por litro (é financeiro) só aparece
 // quando mostrarCustoPorLitro é true — para o admin isso é sempre false; para um
 // colaborador, depende de ele ter permissão de ver o Financeiro daquele produtor.
-async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro){
+async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro, incluirReprodutivo = true){
   const hoje = new Date().toISOString().slice(0,10);
   const inicioMes = hoje.slice(0,8) + '01';
   const consultas = [
@@ -3481,10 +3493,11 @@ async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro){
     return '<tr><td>Nº '+escaparHTML(a.identificacao)+'</td><td>'+del+'</td><td>'+iep+'</td></tr>';
   }).filter(Boolean).join('');
 
-  const blocoReprodutivo = '<div class="legenda-muted" style="margin:10px 0 4px; font-weight:700">Reprodutivo (DEL/IEP por animal)</div>'
+  const blocoReprodutivoCompleto = '<div class="legenda-muted" style="margin:10px 0 4px; font-weight:700">Reprodutivo (DEL/IEP por animal)</div>'
     + (linhasReprodutivo
       ? '<div class="cartao"><table class="tabela-admin"><thead><tr><th>Animal</th><th>DEL</th><th>IEP</th></tr></thead><tbody>'+linhasReprodutivo+'</tbody></table></div>'
       : '<div class="legenda-muted">Nenhum animal com parto registrado ainda.</div>');
+  const blocoReprodutivo = incluirReprodutivo ? blocoReprodutivoCompleto : '';
 
   let blocoFinanceiro = '';
   if(mostrarCustoPorLitro){
@@ -3519,6 +3532,176 @@ async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro){
 // Baixa o CSV com todo o histórico de produção (sem filtro de período) de um produtor.
 // Usado tanto pelo admin (sem restrição) quanto pelo colaborador (só aparece o botão
 // se ele tiver permissão de ver Produção — ver abrirVisualizacaoColaborador).
+// ---------- Análise: dados consolidados por produtor (PDF resumo e Excel) ----------
+async function mapaIdentificacaoAnimais(produtorId){
+  const { data } = await sb.from('animais').select('id, identificacao').eq('produtor_id', produtorId);
+  const mapa = {}; (data||[]).forEach(a=>{ mapa[a.id] = a.identificacao; });
+  return mapa;
+}
+
+const ordemNumerica = (a,b) => String(a).localeCompare(String(b), 'pt', { numeric:true });
+
+// Partos, último parto, DEL (dias desde o último parto, vazio se já secou) e IEP (dias entre os dois últimos partos).
+function resumoReprodutivoAnimal(evs, hojeIso){
+  const partos = (evs||[]).filter(e=>e.tipo==='parto').sort((x,y)=>x.data.localeCompare(y.data));
+  const ultimo = partos.length ? partos[partos.length-1] : null;
+  const secouDepois = ultimo && (evs||[]).some(e=>e.tipo==='secagem' && e.data > ultimo.data);
+  return {
+    partos: partos.length,
+    ultimoParto: ultimo ? ultimo.data : null,
+    del: (ultimo && !secouDepois) ? diasEntre(ultimo.data, hojeIso) : null,
+    iep: partos.length >= 2 ? diasEntre(partos[partos.length-2].data, ultimo.data) : null
+  };
+}
+
+// Tabela do PDF: uma vaca por linha e uma data por coluna (total do dia), em blocos de 14 datas.
+function montarMatrizProducaoHTML(animais, individual, producao){
+  if(!individual.length) return '<div class="legenda-muted">Nenhum registro individual por vaca.</div>';
+  const idPor = {}; animais.forEach(a=>{ idPor[a.id] = a.identificacao; });
+  const datas = [...new Set(individual.map(r=>r.data))].sort().slice(-28);
+  const cel = {};
+  individual.forEach(r=>{
+    if(!datas.includes(r.data)) return;
+    const n = (r.litros_manha!=null ? 1 : 0) + (r.litros_tarde!=null ? 1 : 0);
+    (cel[r.animal_id] = cel[r.animal_id] || {})[r.data] = { total: Number(r.litros_manha||0) + Number(r.litros_tarde||0), n };
+  });
+  const vacas = Object.keys(cel).sort((a,b)=>ordemNumerica(idPor[a]||'', idPor[b]||''));
+  const soma = {}; datas.forEach(d=>{ soma[d] = vacas.reduce((s,v)=>s + ((cel[v][d]||{}).total||0), 0); });
+  const rebanho = {};
+  (producao||[]).forEach(r=>{ rebanho[r.data] = { total: Number(r.litros_manha||0) + Number(r.litros_tarde||0), porVaca: r.metodo_registro==='individual' }; });
+  let html = '';
+  for(let i=0; i<datas.length; i+=14){
+    const bloco = datas.slice(i, i+14);
+    html += '<table class="tabela-admin matriz"><thead><tr><th>Vaca</th>' + bloco.map(d=>'<th>'+d.slice(8,10)+'/'+d.slice(5,7)+'</th>').join('') + '</tr></thead><tbody>'
+      + vacas.map(v=>'<tr><td>Nº '+escaparHTML(idPor[v]||'?')+'</td>' + bloco.map(d=>{ const c = cel[v][d]; return '<td>'+(c ? c.total.toFixed(1)+(c.n<2 ? '*' : '') : '·')+'</td>'; }).join('') + '</tr>').join('')
+      + '<tr style="font-weight:700"><td>Soma das vacas</td>' + bloco.map(d=>'<td>'+soma[d].toFixed(1)+'</td>').join('') + '</tr>'
+      + '<tr style="font-weight:700"><td>Total do rebanho</td>' + bloco.map(d=>{
+          const r = rebanho[d]; const difere = r && r.porVaca && Math.abs(r.total - soma[d]) > 0.05;
+          return '<td'+(difere ? ' style="color:#b3261e"' : '')+'>'+(r ? r.total.toFixed(1) : '—')+(difere ? ' ≠' : '')+'</td>';
+        }).join('') + '</tr></tbody></table><div style="height:14px"></div>';
+  }
+  return '<div class="legenda-muted" style="margin-bottom:6px">Litros por dia (manhã + tarde). * = só uma ordenha lançada; · = sem lançamento; ≠ = o total do rebanho difere da soma das vacas. Últimos '+datas.length+' dias com registro; o histórico completo está no Excel.</div>' + html;
+}
+
+// Tabela do PDF: uma linha por animal com dados de cadastro, reprodução e resumo da produção.
+function montarResumoPorAnimalHTML(animais, eventosPorAnimal, individual){
+  const hoje = new Date().toISOString().slice(0,10);
+  const regsPor = {}; individual.forEach(r=>{ (regsPor[r.animal_id] = regsPor[r.animal_id] || []).push(r); });
+  const linhas = [...animais].sort((a,b)=>ordemNumerica(a.identificacao, b.identificacao)).map(a=>{
+    const evs = eventosPorAnimal[a.id] || [];
+    const rr = resumoReprodutivoAnimal(evs, hoje);
+    const lote = calcularLoteAnimal(a, evs);
+    const regs = regsPor[a.id] || [];
+    const completos = regs.filter(r=>r.litros_manha!=null && r.litros_tarde!=null).map(r=>Number(r.litros_manha)+Number(r.litros_tarde));
+    const vazio = '—';
+    return '<tr><td>Nº '+escaparHTML(a.identificacao)+'</td><td>'+escaparHTML(a.grau_sangue||vazio)+'</td><td>'+(STATUS_ANIMAL[lote] ? STATUS_ANIMAL[lote].rot : vazio)+'</td>'
+      + '<td>'+(a.data_nascimento ? formatarData(a.data_nascimento) : vazio)+'</td><td>'+rr.partos+'</td><td>'+(rr.ultimoParto ? formatarData(rr.ultimoParto) : vazio)+'</td>'
+      + '<td>'+(rr.del!=null ? rr.del : vazio)+'</td><td>'+(rr.iep!=null ? rr.iep : vazio)+'</td><td>'+regs.length+'</td><td>'+completos.length+'</td>'
+      + '<td>'+(completos.length ? (completos.reduce((s,x)=>s+x,0)/completos.length).toFixed(1) : vazio)+'</td><td>'+(completos.length ? Math.max(...completos).toFixed(1) : vazio)+'</td></tr>';
+  }).join('');
+  return '<table class="tabela-admin matriz"><thead><tr><th>Animal</th><th>Grau de sangue</th><th>Lote</th><th>Nascimento</th><th>Partos</th><th>Último parto</th><th>DEL</th><th>IEP</th><th>Dias c/ registro</th><th>Dias completos</th><th>Média/dia (L)</th><th>Melhor dia (L)</th></tr></thead><tbody>'+linhas+'</tbody></table>'
+    + '<div class="legenda-muted" style="margin-top:6px">DEL = dias desde o último parto (vazio se a vaca já secou). IEP = dias entre os dois últimos partos. Média e melhor dia consideram só os dias com as duas ordenhas lançadas.</div>';
+}
+
+// ---------- Excel para análise (uma aba por tabela, dados em formato "uma linha por observação") ----------
+function carregarSheetJS(){
+  if(window.XLSX) return Promise.resolve();
+  return new Promise((ok, falha)=>{
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    s.onload = ok; s.onerror = () => falha(new Error('sem internet'));
+    document.head.appendChild(s);
+  });
+}
+
+async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
+  try{ await carregarSheetJS(); }
+  catch(e){ avisar('Não foi possível carregar o gerador de Excel. Verifique a conexão com a internet e tente de novo.'); return; }
+
+  const q = (tabela, ordem) => sb.from(tabela).select('*').eq('produtor_id', produtorId).order(ordem, { ascending:true });
+  const pedidos = { animais: q('animais','id') };
+  if(permissoes.ve_reprodutivo) pedidos.eventos = q('eventos_reprodutivos','data');
+  if(permissoes.ve_sanitario) pedidos.sanitario = q('eventos_sanitarios','data_aplicacao');
+  if(permissoes.ve_producao){ pedidos.producao = q('producao_leite','data'); pedidos.individual = q('producao_leite_individual','data'); pedidos.qualidade = q('qualidade_leite','data'); }
+  if(permissoes.ve_financeiro) pedidos.financeiro = q('financeiro_lancamentos','data');
+  const chaves = Object.keys(pedidos);
+  const resp = await Promise.all(chaves.map(k=>pedidos[k]));
+  const falha = resp.find(r=>r.error);
+  if(falha){ avisar(mensagemErroAmigavel(falha.error, 'gerar o Excel')); return; }
+  const d = {}; chaves.forEach((k,i)=>{ d[k] = resp[i].data || []; });
+
+  const hoje = new Date().toISOString().slice(0,10);
+  const animalPor = {}; d.animais.forEach(a=>{ animalPor[a.id] = a; });
+  const eventosPor = {}; (d.eventos||[]).forEach(e=>{ (eventosPor[e.animal_id] = eventosPor[e.animal_id] || []).push(e); });
+  const limpar = linhas => (linhas||[]).map(r=>{
+    const o = {};
+    Object.keys(r).forEach(k=>{
+      if(['id','produtor_id','created_at','criado_em','bezerra_animal_id'].includes(k)) return;
+      if(k==='animal_id'){ o.animal = (animalPor[r.animal_id]||{}).identificacao || ''; return; }
+      o[k] = r[k];
+    });
+    return o;
+  });
+
+  const wb = XLSX.utils.book_new();
+  const aba = (nome, linhas) => { if(linhas && linhas.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(linhas), nome); };
+
+  aba('Leia-me', [
+    { aba:'Producao_por_vaca', o_que_e:'Uma linha por vaca por dia. del_na_data = dias desde o último parto registrado até aquele dia; partos_ate_a_data = quantos partos já tinha naquele dia; ordenhas_lancadas = 0, 1 ou 2.' },
+    { aba:'Producao_rebanho', o_que_e:'Uma linha por dia, com o total do rebanho e os detalhes das ordenhas. soma_vacas_* vem dos lançamentos individuais; diferenca_total diferente de 0 indica que o total do rebanho não bate com a soma das vacas.' },
+    { aba:'Animais', o_que_e:'Cadastro atual: lote calculado, número de partos, último parto, DEL (vazio se secou) e IEP (dias entre os dois últimos partos).' },
+    { aba:'Demais abas', o_que_e:'Reprodutivo, Sanitario, Qualidade e Financeiro (só se liberado) trazem todos os registros, com o número do animal no lugar do código interno.' },
+    { aba:'Gerado em', o_que_e: formatarData(hoje)+' — '+nomeProdutor }
+  ]);
+
+  if(permissoes.ve_producao){
+    aba('Producao_por_vaca', d.individual.map(r=>{
+      const a = animalPor[r.animal_id] || {};
+      const partos = (eventosPor[r.animal_id]||[]).filter(e=>e.tipo==='parto' && e.data <= r.data).sort((x,y)=>x.data.localeCompare(y.data));
+      const ult = partos.length ? partos[partos.length-1].data : null;
+      const m = r.litros_manha, t = r.litros_tarde;
+      return { data:r.data, animal:a.identificacao||'', litros_manha:m==null?'':Number(m), litros_tarde:t==null?'':Number(t), total_dia:Number(m||0)+Number(t||0),
+               ordenhas_lancadas:(m!=null?1:0)+(t!=null?1:0), grau_sangue:a.grau_sangue||'', partos_ate_a_data: permissoes.ve_reprodutivo ? partos.length : '', del_na_data: ult ? diasEntre(ult, r.data) : '' };
+    }));
+    const somaInd = {};
+    d.individual.forEach(r=>{ const s = (somaInd[r.data] = somaInd[r.data] || { m:0, t:0 }); s.m += Number(r.litros_manha||0); s.t += Number(r.litros_tarde||0); });
+    aba('Producao_rebanho', limpar(d.producao).map((o,i)=>{
+      const r = d.producao[i], s = somaInd[r.data];
+      o.total_dia = Number(r.litros_manha||0) + Number(r.litros_tarde||0);
+      o.soma_vacas_manha = s ? Math.round(s.m*10)/10 : ''; o.soma_vacas_tarde = s ? Math.round(s.t*10)/10 : '';
+      o.diferenca_total = s ? Math.round((o.total_dia - s.m - s.t)*10)/10 : '';
+      return o;
+    }));
+  }
+  if(permissoes.ve_animais){
+    aba('Animais', d.animais.map(a=>{
+      const evs = eventosPor[a.id] || [], rr = resumoReprodutivoAnimal(evs, hoje), lote = calcularLoteAnimal(a, evs);
+      const o = { animal:a.identificacao, grau_sangue:a.grau_sangue||'', data_nascimento:a.data_nascimento||'', mae_brinco:a.mae_brinco||'', lote_atual:(STATUS_ANIMAL[lote]?STATUS_ANIMAL[lote].rot:'') };
+      if(permissoes.ve_reprodutivo){ o.partos = rr.partos; o.ultimo_parto = rr.ultimoParto||''; o.del = rr.del==null?'':rr.del; o.iep = rr.iep==null?'':rr.iep; }
+      return o;
+    }));
+  }
+  if(permissoes.ve_reprodutivo) aba('Reprodutivo', limpar(d.eventos));
+  if(permissoes.ve_sanitario) aba('Sanitario', limpar(d.sanitario));
+  if(permissoes.ve_producao) aba('Qualidade', limpar(d.qualidade));
+  if(permissoes.ve_financeiro) aba('Financeiro', limpar(d.financeiro));
+
+  const nomeArquivo = 'leitefacil_'+(nomeProdutor||'produtor').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_')+'_analise.xlsx';
+  XLSX.writeFile(wb, nomeArquivo);
+}
+
+async function baixarExcelFichaProdutorAdmin(produtorId){
+  const p = ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores.find(x=>x.id===produtorId);
+  const permissoesAdmin = { ve_animais:true, ve_reprodutivo:true, ve_sanitario:true, ve_producao:true, ve_estoque:true, ve_financeiro: !!(p && p.admin_financeiro_liberado) };
+  await baixarExcelFichaProdutor(produtorId, (p && p.nome) || 'Produtor', permissoesAdmin);
+}
+
+async function baixarExcelColaborador(colabId){
+  const c = MEUS_ACESSOS_COLABORADOR.find(x=>x.id===colabId);
+  if(!c) return;
+  await baixarExcelFichaProdutor(c.produtor_id, (c.produtores && c.produtores.nome) || 'Produtor', c);
+}
+
 async function baixarCSVProducaoCompleta(produtorId, nomeProdutor){
   const { data, error } = await sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
   if(error){ avisar(mensagemErroAmigavel(error, 'gerar o CSV')); return; }
@@ -3545,8 +3728,8 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p){
   const estadoNome = (ESTADOS_BR.find(e=>e[0]===(p&&p.estado))||[])[1] || (p&&p.estado) || '—';
 
   const consultas = {};
-  if(permissoes.ve_animais) consultas.animais = sb.from('animais').select('*').eq('produtor_id', produtorId);
-  if(permissoes.ve_reprodutivo) consultas.eventosRepro = sb.from('eventos_reprodutivos').select('*, animais(identificacao)').eq('produtor_id', produtorId).order('data', { ascending:true });
+  consultas.animais = sb.from('animais').select('*').eq('produtor_id', produtorId);
+  if(permissoes.ve_reprodutivo) consultas.eventosRepro = sb.from('eventos_reprodutivos').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
   if(permissoes.ve_sanitario) consultas.eventosSan = sb.from('eventos_sanitarios').select('*, animais(identificacao)').eq('produtor_id', produtorId).order('data_aplicacao', { ascending:true });
   if(permissoes.ve_producao){
     consultas.producao = sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
@@ -3559,7 +3742,11 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p){
   const chaves = Object.keys(consultas);
   const resultados = await Promise.all(chaves.map(k=>consultas[k]));
   const dados = {};
+  const falha = resultados.find(r=>r.error);
+  if(falha){ avisar(mensagemErroAmigavel(falha.error, 'gerar o relatório')); return; }
   chaves.forEach((k,i)=>{ dados[k] = resultados[i].data; });
+  const idsRelatorio = {}; (dados.animais||[]).forEach(a=>{ idsRelatorio[a.id] = a.identificacao; });
+  (dados.eventosRepro||[]).forEach(ev=>{ ev.animais = { identificacao: idsRelatorio[ev.animal_id] }; });
 
   const eventosPorAnimalRelatorio = {};
   (dados.eventosRepro||[]).forEach(ev => { (eventosPorAnimalRelatorio[ev.animal_id] = eventosPorAnimalRelatorio[ev.animal_id]||[]).push(ev); });
@@ -3575,7 +3762,7 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p){
   conteudo += '<div class="cartao"><strong>Outras fontes de renda:</strong><br>'+(fontes.length ? fontes.map(formatarFonteRendaExibicao).join('<br>') : 'Nenhuma informada.')+'</div>';
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Indicadores</h2>';
-  conteudo += await montarBlocoIndicadores(produtorId, !!permissoes.ve_financeiro);
+  conteudo += await montarBlocoIndicadores(produtorId, !!permissoes.ve_financeiro, false);
 
   if(permissoes.ve_producao){
     const producao = dados.producao || [];
@@ -3583,14 +3770,11 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p){
     conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção de leite (histórico completo)</h2>';
     conteudo += '<div class="cartao">Total histórico: <strong>'+totalLitros.toFixed(1)+' L</strong> — Registros: '+producao.length+'</div>';
     conteudo += producao.length
-      ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Manhã (L)</th><th>Tarde (L)</th><th>Método</th></tr></thead><tbody>'+producao.map(r=>'<tr><td>'+formatarData(r.data)+'</td><td>'+(r.litros_manha||0)+'</td><td>'+(r.litros_tarde||0)+'</td><td>'+(r.metodo_registro==='individual'?'Por vaca':'Por rebanho')+'</td></tr>').join('')+'</tbody></table>'
+      ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Manhã (L)</th><th>Tarde (L)</th><th>Método</th></tr></thead><tbody>'+producao.slice(-28).map(r=>'<tr><td>'+formatarData(r.data)+'</td><td>'+(r.litros_manha||0)+'</td><td>'+(r.litros_tarde||0)+'</td><td>'+(r.metodo_registro==='individual'?'Por vaca':'Por rebanho')+'</td></tr>').join('')+'</tbody></table>'
       : '<div class="legenda-muted">Nenhum registro de produção.</div>';
 
-    const producaoIndividual = dados.producaoIndividual || [];
-    conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção individual por vaca</h2>';
-    conteudo += producaoIndividual.length
-      ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Vaca</th><th>Manhã (L)</th><th>Tarde (L)</th></tr></thead><tbody>'+producaoIndividual.map(r=>'<tr><td>'+formatarData(r.data)+'</td><td>Nº '+escaparHTML((r.animais&&r.animais.identificacao)||'?')+'</td><td>'+(r.litros_manha??'—')+'</td><td>'+(r.litros_tarde??'—')+'</td></tr>').join('')+'</tbody></table>'
-      : '<div class="legenda-muted">Nenhum registro individual por vaca.</div>';
+    conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção por vaca (litros por dia)</h2>';
+    conteudo += montarMatrizProducaoHTML(dados.animais||[], dados.producaoIndividual||[], producao);
 
     const qualidade = dados.qualidade || [];
     conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Qualidade do leite (histórico completo)</h2>';
@@ -3602,12 +3786,7 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p){
   if(permissoes.ve_animais){
     const animais = dados.animais || [];
     conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Animais (total: '+animais.length+')</h2>';
-    conteudo += animais.length
-      ? '<table class="tabela-admin"><thead><tr><th>Nº</th><th>Grau de sangue</th><th>Lote</th></tr></thead><tbody>'+animais.map(a=>{
-          const lote = calcularLoteAnimal(a, eventosPorAnimalRelatorio[a.id]);
-          return '<tr><td>'+escaparHTML(a.identificacao)+'</td><td>'+escaparHTML(a.grau_sangue||'—')+'</td><td>'+(STATUS_ANIMAL[lote]?STATUS_ANIMAL[lote].rot:'—')+'</td></tr>';
-        }).join('')+'</tbody></table>'
-      : '<div class="legenda-muted">Nenhum animal cadastrado.</div>';
+    conteudo += animais.length ? montarResumoPorAnimalHTML(animais, eventosPorAnimalRelatorio, dados.producaoIndividual||[]) : '<div class="legenda-muted">Nenhum animal cadastrado.</div>';
   }
 
   if(permissoes.ve_reprodutivo){
