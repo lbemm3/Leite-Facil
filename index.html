@@ -319,7 +319,8 @@ const ICONES = {
   compartilhar: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><line x1="8.2" y1="10.8" x2="15.8" y2="7.2"/><line x1="8.2" y1="13.2" x2="15.8" y2="16.8"/>',
   frasco: '<path d="M9 2h6"/><path d="M10 2v6.2L4.6 18a2 2 0 0 0 1.8 3h11.2a2 2 0 0 0 1.8-3L14 8.2V2"/><path d="M7.2 15h9.6"/>',
   documento: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>',
-  sino: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/>'
+  sino: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  lapis: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'
 };
 function iconeInline(nome, tamanho){ return ic(ICONES[nome] || '', tamanho); }
 function iniciais(nome){ return (nome||'').split(' ').filter(Boolean).slice(0,2).map(p=>p[0]).join('').toUpperCase(); }
@@ -1390,6 +1391,7 @@ function linhaCompacta(icone, titulo, subtitulo, valorDireita, onclickAttr, corB
       + '<div class="legenda-muted" style="margin-bottom:0; font-size:12px">'+subtitulo+'</div>'
     + '</div>'
     + (valorDireita ? '<span style="font-family:var(--fonte-dados); font-weight:600; font-size:14px; color:var(--azul); white-space:nowrap">'+valorDireita+'</span>' : '')
+    + '<span style="color:var(--zinco); margin-left:4px; display:flex">'+iconeInline('lapis',14)+'</span>'
     + '</button>';
 }
 
@@ -1606,7 +1608,19 @@ let METODO_PRODUCAO_ATUAL = 'rebanho';
 // Tela de escolha: por rebanho (total digitado) ou por vaca (individual, somado sozinho).
 // Se já existir um registro para a data, o método já usado aparece destacado —
 // mas os dois continuam acessíveis, e trocar de um pro outro não apaga nada do outro.
+// Ponto de entrada: se já existir um registro com método conhecido para essa data,
+// pula direto pro formulário certo (edição rápida, com o botão Excluir à mão) — só
+// mostra a tela de escolha quando for um registro novo ou um caso legado sem método.
 function abrirRegistroProducao(dataAlvo){
+  const hoje = new Date().toISOString().slice(0,10);
+  dataAlvo = dataAlvo || hoje;
+  const registro = PRODUCAO_LEITE.find(r=>r.data===dataAlvo) || null;
+  if(registro && registro.metodo_registro === 'individual'){ abrirFormularioProducaoIndividual(dataAlvo); return; }
+  if(registro && registro.metodo_registro === 'rebanho'){ abrirFormularioProducaoRebanho(dataAlvo); return; }
+  abrirEscolhaMetodoProducao(dataAlvo);
+}
+
+function abrirEscolhaMetodoProducao(dataAlvo){
   const hoje = new Date().toISOString().slice(0,10);
   dataAlvo = dataAlvo || hoje;
   const registro = PRODUCAO_LEITE.find(r=>r.data===dataAlvo) || null;
@@ -1614,7 +1628,7 @@ function abrirRegistroProducao(dataAlvo){
 
   document.getElementById('conteudo-modal').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Registrar produção do dia</div>'
-    + '<div class="grupo-campo"><label for="campo-data-escolha-producao">Data</label><input id="campo-data-escolha-producao" type="date" value="'+dataAlvo+'" onchange="abrirRegistroProducao(this.value)"></div>'
+    + '<div class="grupo-campo"><label for="campo-data-escolha-producao">Data</label><input id="campo-data-escolha-producao" type="date" value="'+dataAlvo+'" onchange="abrirEscolhaMetodoProducao(this.value)"></div>'
     + '<div class="legenda-muted" style="margin-bottom:12px">'+(registro ? 'Já existe um registro para esse dia. Escolha um método para editar — os dados do outro método, se houver, continuam salvos.' : 'Escolha como você quer registrar a produção desse dia.')+'</div>'
     + '<div style="display:flex; gap:10px">'
       + '<button class="botao '+(metodoAtual==='rebanho' ? 'botao-primario' : 'botao-secundario')+'" style="flex:1" onclick="abrirFormularioProducaoRebanho(\''+dataAlvo+'\')">Por rebanho (total)</button>'
@@ -1627,7 +1641,7 @@ function abrirFormularioProducaoRebanho(data){
   METODO_PRODUCAO_ATUAL = 'rebanho';
   const registro = PRODUCAO_LEITE.find(r=>r.data===data) || null;
   document.getElementById('conteudo-modal').innerHTML =
-    '<button onclick="abrirRegistroProducao(\''+data+'\')" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar</button>'
+    '<button onclick="abrirEscolhaMetodoProducao(\''+data+'\')" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar / trocar método</button>'
     + '<div class="rotulo-secao" style="margin-top:0">Produção por rebanho — '+formatarData(data)+'</div>'
     + '<input type="hidden" id="campo-data-producao" value="'+data+'">'
     + camposSessaoOrdenha('manha', 'Ordenha da manhã', registro)
@@ -1644,7 +1658,7 @@ async function abrirFormularioProducaoIndividual(data){
   METODO_PRODUCAO_ATUAL = 'individual';
   const registro = PRODUCAO_LEITE.find(r=>r.data===data) || null;
   document.getElementById('conteudo-modal').innerHTML =
-    '<button onclick="abrirRegistroProducao(\''+data+'\')" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar</button>'
+    '<button onclick="abrirEscolhaMetodoProducao(\''+data+'\')" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar / trocar método</button>'
     + '<div class="rotulo-secao" style="margin-top:0; color:var(--azul); font-weight:800">Produção por vaca — '+formatarData(data)+'</div>'
     + '<div class="legenda-muted" style="margin-bottom:10px">Digite o volume de cada vaca lactante. O total de cada sessão é somado automaticamente logo abaixo da tabela.</div>'
     + '<input type="hidden" id="campo-data-producao" value="'+data+'">'
