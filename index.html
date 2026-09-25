@@ -1017,6 +1017,64 @@ const DIAS_LACTACAO_ATE_SECAGEM = 305;
 const DIAS_CICLO_ESTRO = 21;
 const DIAS_BEZERRA_ATE_NOVILHA = 180;
 const DIAS_SECA_ANTES_PARTO = 60;
+const DIAS_JANELA_REPETICAO_CIO = 35; // cio após a cobertura dentro desse prazo conta como "repetição" (volta ao cio)
+
+// Grupo 1 — indicadores reprodutivos do projeto com a UEM: idade ao 1º parto e frequência de repetição de cio.
+// Recebe todos os eventos do produtor (não só os últimos 20) e a lista de animais.
+function calcularIndicadoresGrupo1(animais, eventos, hojeIso){
+  const eventosPorAnimal = {};
+  (eventos||[]).forEach(ev=>{ (eventosPorAnimal[ev.animal_id] = eventosPorAnimal[ev.animal_id] || []).push(ev); });
+
+  // Idade ao 1º parto: só para animais nascidos na propriedade (data de nascimento conhecida) cujo primeiro
+  // parto não seja o "parto anterior à entrada no rebanho" lançado no cadastro — esse é aproximado e de um
+  // animal que já chegou adulto, não serve para medir precocidade.
+  let somaIdadeDias = 0, elegiveisIdade = 0, excluidosIdade = 0;
+  animais.forEach(a=>{
+    const partos = (eventosPorAnimal[a.id]||[]).filter(e=>e.tipo==='parto').sort((x,y)=>x.data.localeCompare(y.data));
+    if(!partos.length) return;
+    const primeiro = partos[0];
+    const entrouJaParida = (primeiro.observacoes||'').startsWith('Parto anterior à entrada no rebanho');
+    if(!a.data_nascimento || entrouJaParida){ excluidosIdade++; return; }
+    somaIdadeDias += diasEntre(a.data_nascimento, primeiro.data);
+    elegiveisIdade++;
+  });
+
+  // Repetição de cio: para cada cobertura, procura um cio da mesma vaca até 35 dias depois. Só entram na
+  // taxa as coberturas com pelo menos esse prazo já passado, senão ainda não dá para saber o resultado.
+  let coberturasAvaliaveis = 0, repeticoes = 0, somaIntervaloDias = 0;
+  Object.keys(eventosPorAnimal).forEach(animalId=>{
+    const evs = eventosPorAnimal[animalId];
+    const coberturas = evs.filter(e=>e.tipo==='cobertura').sort((x,y)=>x.data.localeCompare(y.data));
+    const cios = evs.filter(e=>e.tipo==='cio').sort((x,y)=>x.data.localeCompare(y.data));
+    coberturas.forEach(c=>{
+      if(diasEntre(c.data, hojeIso) < DIAS_JANELA_REPETICAO_CIO) return; // prazo ainda não completou
+      coberturasAvaliaveis++;
+      const repeticao = cios.find(cio=>{
+        const dias = diasEntre(c.data, cio.data);
+        return dias > 0 && dias <= DIAS_JANELA_REPETICAO_CIO;
+      });
+      if(repeticao){ repeticoes++; somaIntervaloDias += diasEntre(c.data, repeticao.data); }
+    });
+  });
+
+  return {
+    idadePrimeiroParto: { mediaMeses: elegiveisIdade ? (somaIdadeDias/elegiveisIdade)/30.44 : null, elegiveis: elegiveisIdade, excluidos: excluidosIdade },
+    repeticaoCio: { coberturas: coberturasAvaliaveis, repeticoes, taxaPct: coberturasAvaliaveis ? (repeticoes/coberturasAvaliaveis)*100 : null, intervaloMedioDias: repeticoes ? somaIntervaloDias/repeticoes : null }
+  };
+}
+
+// HTML do cartão do Grupo 1, reaproveitado na tela de Indicadores e na ficha (tela e PDF).
+function montarCartaoGrupo1(ind){
+  const idade = ind.idadePrimeiroParto, cio = ind.repeticaoCio;
+  return '<div class="cartao" style="display:flex; flex-wrap:wrap; justify-content:space-around; text-align:center; gap:10px">'
+    + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Idade média ao 1º parto</div><div style="font-weight:700; font-size:18px">'+(idade.mediaMeses!==null ? idade.mediaMeses.toFixed(1)+' meses' : '—')+'</div>'
+      + (idade.elegiveis || idade.excluidos ? '<div class="legenda-muted" style="font-size:11px">'+idade.elegiveis+' animal(is) considerado(s)'+(idade.excluidos ? ', '+idade.excluidos+' fora (sem nascimento na propriedade ou entrou já parido)' : '')+'</div>' : '')
+    + '</div>'
+    + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Repetição de cio (após cobertura)</div><div style="font-weight:700; font-size:18px">'+(cio.taxaPct!==null ? cio.taxaPct.toFixed(0)+'%' : '—')+'</div>'
+      + (cio.coberturas ? '<div class="legenda-muted" style="font-size:11px">'+cio.repeticoes+' de '+cio.coberturas+' cobertura(s)'+(cio.intervaloMedioDias ? ' · intervalo médio '+cio.intervaloMedioDias.toFixed(0)+' dias' : '')+'</div>' : '<div class="legenda-muted" style="font-size:11px">Nenhuma cobertura com prazo já completo</div>')
+    + '</div>'
+  + '</div>';
+}
 
 function somarDias(dataIso, dias){
   const d = new Date(dataIso + 'T00:00:00');
@@ -1613,6 +1671,11 @@ function atualizarTempoOrdenha(sufixo){
 }
 
 let METODO_PRODUCAO_ATUAL = 'rebanho';
+// No modo "Por vaca", o total do dia (registro do rebanho) acompanha cada lançamento individual.
+// Fica desligado só quando o dia já tinha um total digitado no modo "Por rebanho": nesse caso o total
+// só muda quando a pessoa toca em Salvar, para não apagar aquele valor sem ela pedir.
+let SINCRONIZAR_TOTAL_DIA = false;
+let PRODUCAO_DESATUALIZADA = false;
 
 // Tela de escolha: por rebanho (total digitado) ou por vaca (individual, somado sozinho).
 // Se já existir um registro para a data, o método já usado aparece destacado —
@@ -1666,10 +1729,11 @@ function abrirFormularioProducaoRebanho(data){
 async function abrirFormularioProducaoIndividual(data){
   METODO_PRODUCAO_ATUAL = 'individual';
   const registro = PRODUCAO_LEITE.find(r=>r.data===data) || null;
+  SINCRONIZAR_TOTAL_DIA = !registro || registro.metodo_registro === 'individual';
   document.getElementById('conteudo-modal').innerHTML =
     '<button onclick="abrirEscolhaMetodoProducao(\''+data+'\')" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar / trocar método</button>'
     + '<div class="rotulo-secao" style="margin-top:0; color:var(--azul); font-weight:800">Produção por vaca — '+formatarData(data)+'</div>'
-    + '<div class="legenda-muted" style="margin-bottom:10px">Digite o volume de cada vaca lactante. O total de cada sessão é somado automaticamente logo abaixo da tabela.</div>'
+    + '<div class="legenda-muted" style="margin-bottom:10px">Digite o volume de cada vaca lactante. O total de cada sessão é somado automaticamente logo abaixo da tabela.'+(SINCRONIZAR_TOTAL_DIA ? ' O total do dia já fica salvo a cada valor digitado; o botão Salvar grava também os detalhes da ordenha (tipo, ordenhador, higienização e problemas).' : '')+'</div>'
     + '<input type="hidden" id="campo-data-producao" value="'+data+'">'
     + '<div id="aviso-vacas-faltando" class="legenda-muted" style="margin-bottom:8px"></div>'
     + '<div id="tabela-ordenha-individual-modal"><div class="legenda-muted">Carregando vacas...</div></div>'
@@ -1797,6 +1861,27 @@ async function salvarOrdenhaIndividualModal(data, animalId, inputAlterado){
   if(statusEl) statusEl.innerHTML = '<span style="color:'+statusInfo.cor+'; font-weight:700; font-size:12.5px">'+statusInfo.texto+'</span>';
 
   atualizarTotaisOrdenhaIndividualModal();
+  await sincronizarTotalDiaIndividual(data);
+}
+
+// Grava o total do dia (soma das vacas) no registro do rebanho a cada lançamento individual, para os dois
+// nunca ficarem diferentes. O upsert só envia estas colunas, então os detalhes das sessões já salvos continuam intactos.
+async function sincronizarTotalDiaIndividual(data){
+  if(!SINCRONIZAR_TOTAL_DIA) return;
+  const campoManha = document.getElementById('campo-litros-manha');
+  const campoTarde = document.getElementById('campo-litros-tarde');
+  if(!campoManha || !campoTarde) return;
+  const { error } = await sb.from('producao_leite').upsert({
+    produtor_id: usuarioAtual.id, data, metodo_registro: 'individual',
+    litros_manha: Number(campoManha.value || 0), litros_tarde: Number(campoTarde.value || 0)
+  }, { onConflict: 'produtor_id,data' });
+  const msg = document.getElementById('mensagem-producao');
+  if(error){
+    if(msg){ msg.textContent = mensagemErroAmigavel(error, 'atualizar o total do dia'); msg.style.color = 'var(--perigo)'; }
+    return;
+  }
+  if(msg) msg.textContent = '';
+  PRODUCAO_DESATUALIZADA = true;
 }
 
 async function salvarProducao(){
@@ -1825,6 +1910,7 @@ async function salvarProducao(){
 
   if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
+  PRODUCAO_DESATUALIZADA = false;
   fecharModal();
   renderProducao();
 }
@@ -2745,6 +2831,9 @@ async function renderIndicadores(){
     return '<tr><td>Nº '+escaparHTML(a.identificacao)+'</td><td>'+del+'</td><td>'+iep+'</td></tr>';
   }).filter(Boolean).join('');
 
+  const grupo1 = calcularIndicadoresGrupo1(animais, eventos, hoje);
+  const blocoGrupo1 = '<div class="rotulo-secao">Reprodutivo (indicadores gerais)</div>' + montarCartaoGrupo1(grupo1);
+
   const blocoReprodutivo = '<div class="rotulo-secao">Reprodutivo (por animal)</div>'
     + (linhasReprodutivo
       ? '<div class="cartao"><table class="tabela-admin"><thead><tr><th>Animal</th><th>DEL (dias em lactação)</th><th>IEP (intervalo entre partos)</th></tr></thead><tbody>'+linhasReprodutivo+'</tbody></table></div>'
@@ -2780,7 +2869,7 @@ async function renderIndicadores(){
 
   document.getElementById('tela-indicadores').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Indicadores</div>'
-    + blocoProducao + blocoReprodutivo + blocoFinanceiro + blocoQualidade
+    + blocoProducao + blocoGrupo1 + blocoReprodutivo + blocoFinanceiro + blocoQualidade
     + blocoRelatorios();
 }
 
@@ -3446,7 +3535,7 @@ async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro, incluirR
   const inicioMes = hoje.slice(0,8) + '01';
   const consultas = [
     sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:false }),
-    sb.from('animais').select('id, identificacao').eq('produtor_id', produtorId),
+    sb.from('animais').select('id, identificacao, data_nascimento').eq('produtor_id', produtorId),
     sb.from('eventos_reprodutivos').select('*').eq('produtor_id', produtorId).order('data', { ascending:true }),
     sb.from('qualidade_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:false })
   ];
@@ -3497,7 +3586,9 @@ async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro, incluirR
     + (linhasReprodutivo
       ? '<div class="cartao"><table class="tabela-admin"><thead><tr><th>Animal</th><th>DEL</th><th>IEP</th></tr></thead><tbody>'+linhasReprodutivo+'</tbody></table></div>'
       : '<div class="legenda-muted">Nenhum animal com parto registrado ainda.</div>');
-  const blocoReprodutivo = incluirReprodutivo ? blocoReprodutivoCompleto : '';
+  const grupo1Ficha = calcularIndicadoresGrupo1(animais, eventos, hoje);
+  const blocoGrupo1Ficha = '<div class="legenda-muted" style="margin:10px 0 4px; font-weight:700">Reprodutivo (indicadores gerais)</div>' + montarCartaoGrupo1(grupo1Ficha);
+  const blocoReprodutivo = blocoGrupo1Ficha + (incluirReprodutivo ? blocoReprodutivoCompleto : '');
 
   let blocoFinanceiro = '';
   if(mostrarCustoPorLitro){
@@ -3867,6 +3958,7 @@ function abrirModal(bloqueado){
 function fecharModal(){
   if(MODAL_BLOQUEADO) return;
   document.getElementById('camada-modal').classList.remove('ativo');
+  if(PRODUCAO_DESATUALIZADA){ PRODUCAO_DESATUALIZADA = false; renderProducao(); }
 }
 
 // Substitui o confirm() nativo do navegador por uma caixa com a cara do app.
