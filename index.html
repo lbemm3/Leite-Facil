@@ -1634,6 +1634,7 @@ function excluirQualidade(id){
 
 const TIPOS_ORDENHA = { manual:'Manual', mecanica:'Mecânica', robotica:'Robótica' };
 const HIGIENIZACAO_ORDENHA = { total:'Cumpridos totalmente', parcial:'Cumprido parcialmente', nao_cumprido:'Não cumpridos' };
+const TIPOS_RESFRIAMENTO = { individual:'Individual (latão/recipiente por vaca)', coletivo:'Tanque coletivo' };
 
 function camposSessaoOrdenha(sufixo, tituloSessao, registro, litrosReadonly){
   const g = campo => (registro && registro[campo] !== null && registro[campo] !== undefined) ? registro[campo] : '';
@@ -1651,6 +1652,10 @@ function camposSessaoOrdenha(sufixo, tituloSessao, registro, litrosReadonly){
     + '<div class="grupo-campo"><label for="campo-higiene-'+sufixo+'">Processos de higienização da ordenha</label><select id="campo-higiene-'+sufixo+'">'
       + '<option value="">—</option>'
       + Object.keys(HIGIENIZACAO_ORDENHA).map(k=>'<option value="'+k+'"'+(g('higienizacao_'+sufixo)===k?' selected':'')+'>'+HIGIENIZACAO_ORDENHA[k]+'</option>').join('')
+    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-resfriamento-'+sufixo+'">Resfriamento do leite</label><select id="campo-resfriamento-'+sufixo+'">'
+      + '<option value="">—</option>'
+      + Object.keys(TIPOS_RESFRIAMENTO).map(k=>'<option value="'+k+'"'+(g('resfriamento_'+sufixo)===k?' selected':'')+'>'+TIPOS_RESFRIAMENTO[k]+'</option>').join('')
     + '</select></div>'
     + '<div class="grupo-campo"><label for="campo-prob-animais-'+sufixo+'">Problemas identificados com animais (opcional)</label><input id="campo-prob-animais-'+sufixo+'" type="text" placeholder="ex.: Mastite na vaca 23; Sangue no leite da vaca 12" value="'+escaparHTML(g('problemas_animais_'+sufixo))+'"></div>'
     + '<div class="grupo-campo"><label for="campo-prob-equip-'+sufixo+'">Problemas identificados com equipamento (opcional)</label><input id="campo-prob-equip-'+sufixo+'" type="text" placeholder="ex.: Entradas de ar e chiados; Barulhos estranhos na bomba de vácuo" value="'+escaparHTML(g('problemas_equipamento_'+sufixo))+'"></div>';
@@ -1896,6 +1901,7 @@ async function salvarProducao(){
     ['ordenhador_'+sufixo]: document.getElementById('campo-ordenhador-'+sufixo).value.trim() || null,
     ['tempo_ordenha_min_'+sufixo]: document.getElementById('campo-tempo-'+sufixo).value === '' ? null : Number(document.getElementById('campo-tempo-'+sufixo).value),
     ['higienizacao_'+sufixo]: document.getElementById('campo-higiene-'+sufixo).value || null,
+    ['resfriamento_'+sufixo]: document.getElementById('campo-resfriamento-'+sufixo).value || null,
     ['problemas_animais_'+sufixo]: document.getElementById('campo-prob-animais-'+sufixo).value.trim() || null,
     ['problemas_equipamento_'+sufixo]: document.getElementById('campo-prob-equip-'+sufixo).value.trim() || null
   });
@@ -2931,15 +2937,15 @@ async function gerarPDFProdutor(){
   const linhasSessaoOrdenha = [];
   (producao||[]).forEach(r=>{
     ['manha','tarde'].forEach(sufixo=>{
-      const temDetalhe = r['tipo_ordenha_'+sufixo] || r['ordenhador_'+sufixo] || r['tempo_ordenha_min_'+sufixo] || r['higienizacao_'+sufixo] || r['problemas_animais_'+sufixo] || r['problemas_equipamento_'+sufixo];
+      const temDetalhe = r['tipo_ordenha_'+sufixo] || r['ordenhador_'+sufixo] || r['tempo_ordenha_min_'+sufixo] || r['higienizacao_'+sufixo] || r['resfriamento_'+sufixo] || r['problemas_animais_'+sufixo] || r['problemas_equipamento_'+sufixo];
       if(!temDetalhe) return;
       const problemas = [r['problemas_animais_'+sufixo], r['problemas_equipamento_'+sufixo]].filter(Boolean).join(' · ') || '—';
-      linhasSessaoOrdenha.push('<tr><td>'+formatarData(r.data)+'</td><td>'+(sufixo==='manha'?'Manhã':'Tarde')+'</td><td>'+(TIPOS_ORDENHA[r['tipo_ordenha_'+sufixo]]||'—')+'</td><td>'+escaparHTML(r['ordenhador_'+sufixo]||'—')+'</td><td>'+(r['tempo_ordenha_min_'+sufixo]!=null?r['tempo_ordenha_min_'+sufixo]+' min':'—')+'</td><td>'+(HIGIENIZACAO_ORDENHA[r['higienizacao_'+sufixo]]||'—')+'</td><td>'+escaparHTML(problemas)+'</td></tr>');
+      linhasSessaoOrdenha.push('<tr><td>'+formatarData(r.data)+'</td><td>'+(sufixo==='manha'?'Manhã':'Tarde')+'</td><td>'+(TIPOS_ORDENHA[r['tipo_ordenha_'+sufixo]]||'—')+'</td><td>'+escaparHTML(r['ordenhador_'+sufixo]||'—')+'</td><td>'+(r['tempo_ordenha_min_'+sufixo]!=null?r['tempo_ordenha_min_'+sufixo]+' min':'—')+'</td><td>'+(HIGIENIZACAO_ORDENHA[r['higienizacao_'+sufixo]]||'—')+'</td><td>'+(TIPOS_RESFRIAMENTO[r['resfriamento_'+sufixo]]||'—')+'</td><td>'+escaparHTML(problemas)+'</td></tr>');
     });
   });
   if(linhasSessaoOrdenha.length){
     conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Detalhes das sessões de ordenha</h2>';
-    conteudo += '<table class="tabela-admin"><thead><tr><th>Data</th><th>Sessão</th><th>Tipo</th><th>Ordenhador(a)</th><th>Tempo</th><th>Higienização</th><th>Problemas</th></tr></thead><tbody>'+linhasSessaoOrdenha.join('')+'</tbody></table>';
+    conteudo += '<table class="tabela-admin"><thead><tr><th>Data</th><th>Sessão</th><th>Tipo</th><th>Ordenhador(a)</th><th>Tempo</th><th>Higienização</th><th>Resfriamento</th><th>Problemas</th></tr></thead><tbody>'+linhasSessaoOrdenha.join('')+'</tbody></table>';
   }
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção individual por vaca (opcional)</h2>';
