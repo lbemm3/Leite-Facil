@@ -274,6 +274,7 @@
       <section class="painel-tela" id="tela-perfil"></section>
       <section class="painel-tela" id="tela-producao"></section>
       <section class="painel-tela" id="tela-estoque"></section>
+      <section class="painel-tela" id="tela-nutricao"></section>
       <section class="painel-tela" id="tela-financeiro"></section>
       <section class="painel-tela" id="tela-indicadores"></section>
       <section class="painel-tela" id="tela-admin"></section>
@@ -326,7 +327,8 @@ const ICONES = {
   frasco: '<path d="M9 2h6"/><path d="M10 2v6.2L4.6 18a2 2 0 0 0 1.8 3h11.2a2 2 0 0 0 1.8-3L14 8.2V2"/><path d="M7.2 15h9.6"/>',
   documento: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>',
   sino: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/>',
-  lapis: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>'
+  lapis: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  folha: '<path d="M20 4C10 4 4 10 4 18v2h2c8 0 14-6 14-16z"/><path d="M6 20c3-6 8-10 14-12"/>'
 };
 function iconeInline(nome, tamanho){ return ic(ICONES[nome] || '', tamanho); }
 function iniciais(nome){ return (nome||'').split(' ').filter(Boolean).slice(0,2).map(p=>p[0]).join('').toUpperCase(); }
@@ -532,6 +534,7 @@ function abasAtivas(){
     { id:'tela-animais', rot:'Meus animais', ic:'vaca' },
     { id:'tela-producao', rot:'Produção', ic:'gota' },
     { id:'tela-estoque', rot:'Estoque', ic:'caixa' },
+    { id:'tela-nutricao', rot:'Nutrição', ic:'folha' },
     { id:'tela-financeiro', rot:'Financeiro', ic:'moeda' },
     { id:'tela-indicadores', rot:'Indicadores', ic:'grafico' },
     { id:'tela-perfil', rot:'Perfil', ic:'usuario' },
@@ -563,6 +566,7 @@ async function trocarAba(id){
   if(id === 'tela-animais') renderAnimais();
   if(id === 'tela-producao') renderProducao();
   if(id === 'tela-estoque') renderEstoque();
+  if(id === 'tela-nutricao') renderNutricao();
   if(id === 'tela-financeiro') renderFinanceiro();
   if(id === 'tela-indicadores') renderIndicadores();
   if(id === 'tela-perfil') renderPerfil();
@@ -2041,6 +2045,260 @@ function obterGrupoEstoque(categoriaNome, grupoNome){
 // o item específico — detectado por ehOpcaoOutro (função compartilhada com os outros módulos).
 
 let CONTEXTO_CATEGORIA_ESTOQUE = null;
+
+// ---------- Nutrição (Grupo 4 — UEM): Alimentação (evento a evento) e Pastagem (piquetes) ----------
+const TIPOS_ALIMENTO = { pasto:'Pasto', silagem:'Silagem', concentrado:'Concentrado', feno:'Feno', sal_mineral:'Sal mineral', outro:'Outro' };
+const ESPECIES_PASTO = { tifton:'Tifton', aveia_verao:'Aveia de verão', braquiaria:'Braquiária', aveia:'Aveia (inverno)', azevem:'Azevém', aveia_azevem:'Mistura de aveia com azevém', outro:'Outra' };
+// Os mesmos quatro lotes que o app já calcula sozinho para cada animal (ver STATUS_ANIMAL) — a
+// alimentação é lançada por lote porque animais de lotes distintos recebem dietas diferentes.
+const LOTES_NUTRICAO = STATUS_ANIMAL;
+let MEUS_PIQUETES = [];
+let MINHA_ALIMENTACAO = [];
+let MEUS_CICLOS_PASTEJO = [];
+
+async function renderNutricao(){
+  document.getElementById('tela-nutricao').innerHTML = '<div class="legenda-muted">Carregando nutrição...</div>';
+  const [{ data: piquetes, error: erroPiquetes }] = await Promise.all([
+    sb.from('piquetes').select('*').eq('produtor_id', usuarioAtual.id).order('nome', { ascending:true })
+  ]);
+  if(erroPiquetes){
+    document.getElementById('tela-nutricao').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Nutrição</div><div class="legenda-muted">'+mensagemErroAmigavel(erroPiquetes, 'carregar a nutrição')+'</div>';
+    return;
+  }
+  MEUS_PIQUETES = piquetes || [];
+
+  document.getElementById('tela-nutricao').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Nutrição</div>'
+    + '<div class="cartao" style="background:var(--fundo-suave, #f2f6f0)">'
+      + '<div class="legenda-muted" style="margin-bottom:0">Registre o que cada lote come em <strong>Alimentação</strong> — a cada refeição, não um resumo do dia. Cadastre os piquetes e acompanhe a altura do pasto em <strong>Pastagem</strong>.</div>'
+    + '</div>'
+    + '<div style="display:flex; gap:12px; margin:14px 0; flex-wrap:wrap">'
+      + '<button class="cartao" style="flex:1; min-width:150px; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirAlimentacao()"><div class="avatar">'+iconeInline('gota',20)+'</div><div><strong>Alimentação</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">Lançar o que cada lote comeu</div></div></button>'
+      + '<button class="cartao" style="flex:1; min-width:150px; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirPastagem()"><div class="avatar">'+iconeInline('folha',20)+'</div><div><strong>Pastagem</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+MEUS_PIQUETES.length+' piquete(s) cadastrado(s)</div></div></button>'
+    + '</div>';
+}
+
+// ----- Alimentação -----
+async function abrirAlimentacao(){
+  document.getElementById('conteudo-modal').innerHTML = '<div class="legenda-muted">Carregando...</div>';
+  abrirModal();
+  const { data, error } = await sb.from('alimentacao_eventos').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false }).order('horario', { ascending:false }).limit(60);
+  if(error){ document.getElementById('conteudo-modal').innerHTML = '<div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar a alimentação')+'</div>'; return; }
+  MINHA_ALIMENTACAO = data || [];
+  renderListaAlimentacao();
+}
+
+function renderListaAlimentacao(){
+  const piquetePor = {}; MEUS_PIQUETES.forEach(p=>{ piquetePor[p.id] = p.nome; });
+  const linha = ev => {
+    const detalhe = ev.tipo_alimento === 'pasto'
+      ? (piquetePor[ev.piquete_id] || 'Piquete não informado')
+      : [ev.quantidade_kg!=null ? ev.quantidade_kg+' kg' : null, ev.composicao].filter(Boolean).join(' · ') || '—';
+    return '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirCadastroAlimentacao(\''+ev.id+'\')">'
+      + '<div class="avatar">'+iconeInline(ev.tipo_alimento==='pasto' ? 'folha' : 'gota', 18)+'</div>'
+      + '<div style="flex:1"><strong>'+(TIPOS_ALIMENTO[ev.tipo_alimento] || escaparHTML(ev.tipo_alimento_outro||'Alimento'))+'</strong> · '+(LOTES_NUTRICAO[ev.lote] ? LOTES_NUTRICAO[ev.lote].rot : ev.lote)
+      + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(ev.data)+(ev.horario ? ' às '+ev.horario.slice(0,5) : '')+' · '+escaparHTML(detalhe)+'</div></div>'
+    + '</button>';
+  };
+  document.getElementById('conteudo-modal').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Alimentação</div>'
+    + '<button class="botao botao-primario botao-bloco" style="margin-bottom:14px" onclick="abrirCadastroAlimentacao()">'+iconeInline('gota',16)+' Novo lançamento</button>'
+    + (MINHA_ALIMENTACAO.length ? MINHA_ALIMENTACAO.map(linha).join('') : '<div class="legenda-muted">Nenhum lançamento ainda. Mostrando os últimos 60 quando houver.</div>');
+}
+
+function abrirCadastroAlimentacao(id){
+  const ev = id ? MINHA_ALIMENTACAO.find(e=>e.id===id) : null;
+  const hoje = new Date().toISOString().slice(0,10);
+  document.getElementById('conteudo-modal').innerHTML =
+    '<button onclick="renderListaAlimentacao()" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar</button>'
+    + '<div class="rotulo-secao" style="margin-top:0">'+(ev ? 'Editar lançamento' : 'Novo lançamento de alimentação')+'</div>'
+    + '<div class="grupo-campo"><label for="campo-alim-data">Data</label><input id="campo-alim-data" type="date" value="'+(ev ? ev.data : hoje)+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-alim-horario">Horário (opcional)</label><input id="campo-alim-horario" type="time" value="'+(ev && ev.horario ? ev.horario.slice(0,5) : '')+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-alim-lote">Lote</label><select id="campo-alim-lote">'
+      + Object.keys(LOTES_NUTRICAO).map(k=>'<option value="'+k+'"'+(ev && ev.lote===k ? ' selected' : '')+'>'+LOTES_NUTRICAO[k].rot+'</option>').join('')
+    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-alim-tipo">Tipo de alimento</label><select id="campo-alim-tipo" onchange="atualizarCamposTipoAlimento(this.value)">'
+      + Object.keys(TIPOS_ALIMENTO).map(k=>'<option value="'+k+'"'+(ev && ev.tipo_alimento===k ? ' selected' : '')+'>'+TIPOS_ALIMENTO[k]+'</option>').join('')
+    + '</select></div>'
+    + '<div id="campos-tipo-alimento"></div>'
+    + '<div class="grupo-campo"><label for="campo-alim-sobras">Sobras no cocho, kg (opcional)</label><input id="campo-alim-sobras" type="number" min="0" step="0.05" value="'+(ev && ev.sobras_cocho_kg!=null ? ev.sobras_cocho_kg : '')+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-alim-obs">Observações (opcional)</label><textarea id="campo-alim-obs" rows="2">'+(ev ? escaparHTML(ev.observacoes||'') : '')+'</textarea></div>'
+    + '<div id="mensagem-alimentacao" style="margin-bottom:8px"></div>'
+    + '<button class="botao botao-primario botao-bloco" onclick="salvarAlimentacao('+(ev ? '\''+ev.id+'\'' : 'null')+')">Salvar</button>'
+    + (ev ? '<button class="botao botao-secundario botao-bloco" style="margin-top:8px" onclick="excluirAlimentacao(\''+ev.id+'\')">Excluir</button>' : '');
+  atualizarCamposTipoAlimento(ev ? ev.tipo_alimento : 'pasto', ev);
+}
+
+// Mostra quantidade+composição (alimentos de cocho) ou o seletor de piquete (pasto), nunca os dois.
+function atualizarCamposTipoAlimento(tipo, ev){
+  const alvo = document.getElementById('campos-tipo-alimento');
+  if(!alvo) return;
+  if(tipo === 'pasto'){
+    alvo.innerHTML = MEUS_PIQUETES.length
+      ? '<div class="grupo-campo"><label for="campo-alim-piquete">Piquete</label><select id="campo-alim-piquete">'
+          + MEUS_PIQUETES.map(p=>'<option value="'+p.id+'"'+(ev && ev.piquete_id===p.id ? ' selected' : '')+'>'+escaparHTML(p.nome)+'</option>').join('')
+        + '</select></div>'
+      : '<div class="legenda-muted" style="margin-bottom:10px">Nenhum piquete cadastrado ainda. Cadastre um em Nutrição → Pastagem antes de lançar pasto.</div>';
+    return;
+  }
+  alvo.innerHTML = '<div class="grupo-campo"><label for="campo-alim-qtd">Quantidade (kg)</label><input id="campo-alim-qtd" type="number" min="0" step="0.05" value="'+(ev && ev.quantidade_kg!=null ? ev.quantidade_kg : '')+'"></div>'
+    + (tipo==='silagem' || tipo==='concentrado' || tipo==='outro'
+        ? '<div class="grupo-campo"><label for="campo-alim-composicao">'+(tipo==='outro' ? 'Qual alimento / composição' : 'Composição')+'</label><input id="campo-alim-composicao" type="text" value="'+(ev ? escaparHTML(ev.composicao||ev.tipo_alimento_outro||'') : '')+'" placeholder="'+(tipo==='outro' ? 'ex.: farelo de arroz' : 'ex.: milho + sorgo')+'"></div>'
+        : '');
+}
+
+async function salvarAlimentacao(id){
+  const msg = document.getElementById('mensagem-alimentacao');
+  const data = document.getElementById('campo-alim-data').value;
+  if(!data){ msg.textContent = 'Informe a data.'; msg.style.color = 'var(--perigo)'; return; }
+  const tipo = document.getElementById('campo-alim-tipo').value;
+  const registro = {
+    produtor_id: usuarioAtual.id, data,
+    horario: document.getElementById('campo-alim-horario').value || null,
+    lote: document.getElementById('campo-alim-lote').value,
+    tipo_alimento: tipo,
+    tipo_alimento_outro: null, quantidade_kg: null, composicao: null, piquete_id: null,
+    sobras_cocho_kg: (() => { const v = document.getElementById('campo-alim-sobras').value; return v==='' ? null : Number(v); })(),
+    observacoes: document.getElementById('campo-alim-obs').value.trim() || null
+  };
+  if(tipo === 'pasto'){
+    const campoPiquete = document.getElementById('campo-alim-piquete');
+    if(!campoPiquete){ msg.textContent = 'Cadastre um piquete antes de lançar pasto.'; msg.style.color = 'var(--perigo)'; return; }
+    registro.piquete_id = campoPiquete.value;
+  } else {
+    const campoQtd = document.getElementById('campo-alim-qtd');
+    registro.quantidade_kg = campoQtd.value === '' ? null : Number(campoQtd.value);
+    const campoComposicao = document.getElementById('campo-alim-composicao');
+    if(campoComposicao){ tipo==='outro' ? registro.tipo_alimento_outro = campoComposicao.value.trim() || null : registro.composicao = campoComposicao.value.trim() || null; }
+  }
+  const query = id ? sb.from('alimentacao_eventos').update(registro).eq('id', id) : sb.from('alimentacao_eventos').insert(registro);
+  const { error } = await query;
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar a alimentação'); msg.style.color = 'var(--perigo)'; return; }
+  await abrirAlimentacao();
+}
+
+function excluirAlimentacao(id){
+  confirmarAcao('Esse lançamento de alimentação será removido.', async () => {
+    const { error } = await sb.from('alimentacao_eventos').delete().eq('id', id);
+    if(error){ avisar(mensagemErroAmigavel(error, 'excluir o lançamento')); return; }
+    await abrirAlimentacao();
+  }, { titulo:'Excluir lançamento?', textoConfirmar:'Excluir' });
+}
+
+// ----- Pastagem -----
+async function abrirPastagem(){
+  document.getElementById('conteudo-modal').innerHTML = '<div class="legenda-muted">Carregando...</div>';
+  abrirModal();
+  renderListaPiquetes();
+}
+
+function renderListaPiquetes(){
+  const cartaoPiquete = p => '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirCiclosPiquete(\''+p.id+'\')">'
+    + '<div class="avatar">'+iconeInline('folha',18)+'</div>'
+    + '<div style="flex:1"><strong>'+escaparHTML(p.nome)+'</strong>'
+    + (p.area_hectares!=null ? '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+p.area_hectares+' ha</div>' : '')
+    + '</div><span class="legenda-muted" style="font-size:20px">›</span></button>';
+  document.getElementById('conteudo-modal').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Pastagem</div>'
+    + '<button class="botao botao-primario botao-bloco" style="margin-bottom:14px" onclick="abrirCadastroPiquete()">'+iconeInline('folha',16)+' Novo piquete</button>'
+    + (MEUS_PIQUETES.length ? MEUS_PIQUETES.map(cartaoPiquete).join('') : '<div class="legenda-muted">Nenhum piquete cadastrado ainda.</div>');
+}
+
+function abrirCadastroPiquete(id){
+  const p = id ? MEUS_PIQUETES.find(x=>x.id===id) : null;
+  document.getElementById('conteudo-modal').innerHTML =
+    '<button onclick="renderListaPiquetes()" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar</button>'
+    + '<div class="rotulo-secao" style="margin-top:0">'+(p ? 'Editar piquete' : 'Novo piquete')+'</div>'
+    + '<div class="grupo-campo"><label for="campo-piq-nome">Nome</label><input id="campo-piq-nome" type="text" value="'+(p ? escaparHTML(p.nome) : '')+'" placeholder="ex.: Piquete 1"></div>'
+    + '<div class="grupo-campo"><label for="campo-piq-area">Área (hectares, opcional)</label><input id="campo-piq-area" type="number" min="0" step="0.01" value="'+(p && p.area_hectares!=null ? p.area_hectares : '')+'"></div>'
+    + '<div id="mensagem-piquete" style="margin-bottom:8px"></div>'
+    + '<button class="botao botao-primario botao-bloco" onclick="salvarPiquete('+(p ? '\''+p.id+'\'' : 'null')+')">Salvar</button>';
+}
+
+async function salvarPiquete(id){
+  const msg = document.getElementById('mensagem-piquete');
+  const nome = document.getElementById('campo-piq-nome').value.trim();
+  if(!nome){ msg.textContent = 'Informe o nome do piquete.'; msg.style.color = 'var(--perigo)'; return; }
+  const area = document.getElementById('campo-piq-area').value;
+  const registro = { produtor_id: usuarioAtual.id, nome, area_hectares: area === '' ? null : Number(area) };
+  const query = id ? sb.from('piquetes').update(registro).eq('id', id) : sb.from('piquetes').insert(registro);
+  const { error } = await query;
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar o piquete'); msg.style.color = 'var(--perigo)'; return; }
+  const { data } = await sb.from('piquetes').select('*').eq('produtor_id', usuarioAtual.id).order('nome', { ascending:true });
+  MEUS_PIQUETES = data || [];
+  renderListaPiquetes();
+}
+
+async function abrirCiclosPiquete(piqueteId){
+  document.getElementById('conteudo-modal').innerHTML = '<div class="legenda-muted">Carregando...</div>';
+  const { data, error } = await sb.from('ciclos_pastejo').select('*').eq('piquete_id', piqueteId).order('data_entrada', { ascending:false });
+  if(error){ document.getElementById('conteudo-modal').innerHTML = '<div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar os ciclos')+'</div>'; return; }
+  MEUS_CICLOS_PASTEJO = data || [];
+  renderListaCiclos(piqueteId);
+}
+
+function renderListaCiclos(piqueteId){
+  const piquete = MEUS_PIQUETES.find(p=>p.id===piqueteId);
+  const linha = c => '<button class="cartao" style="width:100%; text-align:left; cursor:pointer" onclick="abrirCadastroCiclo(\''+piqueteId+'\',\''+c.id+'\')">'
+    + '<strong>'+formatarData(c.data_entrada)+'</strong> · '+(ESPECIES_PASTO[c.especie_pasto] || escaparHTML(c.especie_pasto_outro || 'Espécie não informada'))
+    + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'
+      + [c.altura_entrada_cm!=null ? 'Entrada '+c.altura_entrada_cm+' cm' : null, c.altura_saida_cm!=null ? 'Saída '+c.altura_saida_cm+' cm' : null, c.dias_pastejo!=null ? c.dias_pastejo+' dia(s) de pastejo' : null, c.estimativa_ms_ton_ha!=null ? c.estimativa_ms_ton_ha+' t MS/ha' : null].filter(Boolean).join(' · ')
+    + '</div></button>';
+  document.getElementById('conteudo-modal').innerHTML =
+    '<button onclick="renderListaPiquetes()" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar aos piquetes</button>'
+    + '<div class="rotulo-secao" style="margin-top:0">'+escaparHTML(piquete ? piquete.nome : 'Piquete')+'</div>'
+    + '<button class="botao botao-secundario botao-bloco" style="margin-bottom:10px" onclick="abrirCadastroPiquete(\''+piqueteId+'\')">Editar dados do piquete</button>'
+    + '<button class="botao botao-primario botao-bloco" style="margin-bottom:14px" onclick="abrirCadastroCiclo(\''+piqueteId+'\')">'+iconeInline('folha',16)+' Novo ciclo de pastejo</button>'
+    + (MEUS_CICLOS_PASTEJO.length ? MEUS_CICLOS_PASTEJO.map(linha).join('') : '<div class="legenda-muted">Nenhum ciclo registrado ainda.</div>');
+}
+
+function abrirCadastroCiclo(piqueteId, cicloId){
+  const c = cicloId ? MEUS_CICLOS_PASTEJO.find(x=>x.id===cicloId) : null;
+  const hoje = new Date().toISOString().slice(0,10);
+  document.getElementById('conteudo-modal').innerHTML =
+    '<button onclick="renderListaCiclos(\''+piqueteId+'\')" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar</button>'
+    + '<div class="rotulo-secao" style="margin-top:0">'+(c ? 'Editar ciclo de pastejo' : 'Novo ciclo de pastejo')+'</div>'
+    + '<div class="grupo-campo"><label for="campo-ciclo-data">Data de entrada</label><input id="campo-ciclo-data" type="date" value="'+(c ? c.data_entrada : hoje)+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-ciclo-especie">Espécie do pasto</label><select id="campo-ciclo-especie" onchange="document.getElementById(\'campo-ciclo-especie-outro-wrap\').style.display = this.value===\'outro\' ? \'\' : \'none\'">'
+      + Object.keys(ESPECIES_PASTO).map(k=>'<option value="'+k+'"'+(c && c.especie_pasto===k ? ' selected' : '')+'>'+ESPECIES_PASTO[k]+'</option>').join('')
+    + '</select></div>'
+    + '<div class="grupo-campo" id="campo-ciclo-especie-outro-wrap" style="display:'+(c && c.especie_pasto==='outro' ? '' : 'none')+'"><label for="campo-ciclo-especie-outro">Qual espécie</label><input id="campo-ciclo-especie-outro" type="text" value="'+(c ? escaparHTML(c.especie_pasto_outro||'') : '')+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-ciclo-altura-entrada">Altura de entrada (cm)</label><input id="campo-ciclo-altura-entrada" type="number" min="0" step="1" value="'+(c && c.altura_entrada_cm!=null ? c.altura_entrada_cm : '')+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-ciclo-altura-saida">Altura de saída (cm)</label><input id="campo-ciclo-altura-saida" type="number" min="0" step="1" value="'+(c && c.altura_saida_cm!=null ? c.altura_saida_cm : '')+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-ciclo-dias">Dias de pastejo</label><input id="campo-ciclo-dias" type="number" min="0" step="1" value="'+(c && c.dias_pastejo!=null ? c.dias_pastejo : '')+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-ciclo-ms">Estimativa de produção de MS (toneladas/ha, opcional)</label><input id="campo-ciclo-ms" type="number" min="0" step="0.1" value="'+(c && c.estimativa_ms_ton_ha!=null ? c.estimativa_ms_ton_ha : '')+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-ciclo-obs">Observações (opcional)</label><textarea id="campo-ciclo-obs" rows="2">'+(c ? escaparHTML(c.observacoes||'') : '')+'</textarea></div>'
+    + '<div id="mensagem-ciclo" style="margin-bottom:8px"></div>'
+    + '<button class="botao botao-primario botao-bloco" onclick="salvarCiclo(\''+piqueteId+'\''+(c ? ',\''+c.id+'\'' : ',null')+')">Salvar</button>'
+    + (c ? '<button class="botao botao-secundario botao-bloco" style="margin-top:8px" onclick="excluirCiclo(\''+piqueteId+'\',\''+c.id+'\')">Excluir</button>' : '');
+}
+
+async function salvarCiclo(piqueteId, cicloId){
+  const msg = document.getElementById('mensagem-ciclo');
+  const data_entrada = document.getElementById('campo-ciclo-data').value;
+  if(!data_entrada){ msg.textContent = 'Informe a data de entrada.'; msg.style.color = 'var(--perigo)'; return; }
+  const especie = document.getElementById('campo-ciclo-especie').value;
+  const num = elId => { const v = document.getElementById(elId).value; return v === '' ? null : Number(v); };
+  const registro = {
+    produtor_id: usuarioAtual.id, piquete_id: piqueteId, data_entrada,
+    especie_pasto: especie, especie_pasto_outro: especie==='outro' ? (document.getElementById('campo-ciclo-especie-outro').value.trim() || null) : null,
+    altura_entrada_cm: num('campo-ciclo-altura-entrada'), altura_saida_cm: num('campo-ciclo-altura-saida'),
+    dias_pastejo: num('campo-ciclo-dias'), estimativa_ms_ton_ha: num('campo-ciclo-ms'),
+    observacoes: document.getElementById('campo-ciclo-obs').value.trim() || null
+  };
+  const query = cicloId ? sb.from('ciclos_pastejo').update(registro).eq('id', cicloId) : sb.from('ciclos_pastejo').insert(registro);
+  const { error } = await query;
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar o ciclo'); msg.style.color = 'var(--perigo)'; return; }
+  await abrirCiclosPiquete(piqueteId);
+}
+
+function excluirCiclo(piqueteId, cicloId){
+  confirmarAcao('Esse ciclo de pastejo será removido.', async () => {
+    const { error } = await sb.from('ciclos_pastejo').delete().eq('id', cicloId);
+    if(error){ avisar(mensagemErroAmigavel(error, 'excluir o ciclo')); return; }
+    await abrirCiclosPiquete(piqueteId);
+  }, { titulo:'Excluir ciclo de pastejo?', textoConfirmar:'Excluir' });
+}
 
 async function renderEstoque(){
   document.getElementById('tela-estoque').innerHTML = '<div class="legenda-muted">Carregando estoque...</div>';
@@ -3719,7 +3977,10 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
   const pedidos = { animais: q('animais','id') };
   if(permissoes.ve_reprodutivo) pedidos.eventos = q('eventos_reprodutivos','data');
   if(permissoes.ve_sanitario) pedidos.sanitario = q('eventos_sanitarios','data_aplicacao');
-  if(permissoes.ve_producao){ pedidos.producao = q('producao_leite','data'); pedidos.individual = q('producao_leite_individual','data'); pedidos.qualidade = q('qualidade_leite','data'); }
+  if(permissoes.ve_producao){
+    pedidos.producao = q('producao_leite','data'); pedidos.individual = q('producao_leite_individual','data'); pedidos.qualidade = q('qualidade_leite','data');
+    pedidos.alimentacao = q('alimentacao_eventos','data'); pedidos.piquetes = q('piquetes','nome'); pedidos.ciclosPastejo = q('ciclos_pastejo','data_entrada');
+  }
   if(permissoes.ve_financeiro) pedidos.financeiro = q('financeiro_lancamentos','data');
   const chaves = Object.keys(pedidos);
   const resp = await Promise.all(chaves.map(k=>pedidos[k]));
@@ -3730,11 +3991,13 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
   const hoje = new Date().toISOString().slice(0,10);
   const animalPor = {}; d.animais.forEach(a=>{ animalPor[a.id] = a; });
   const eventosPor = {}; (d.eventos||[]).forEach(e=>{ (eventosPor[e.animal_id] = eventosPor[e.animal_id] || []).push(e); });
+  const piquetePor = {}; (d.piquetes||[]).forEach(p=>{ piquetePor[p.id] = p.nome; });
   const limpar = linhas => (linhas||[]).map(r=>{
     const o = {};
     Object.keys(r).forEach(k=>{
       if(['id','produtor_id','created_at','criado_em','bezerra_animal_id'].includes(k)) return;
       if(k==='animal_id'){ o.animal = (animalPor[r.animal_id]||{}).identificacao || ''; return; }
+      if(k==='piquete_id'){ o.piquete = piquetePor[r.piquete_id] || ''; return; }
       o[k] = r[k];
     });
     return o;
@@ -3747,6 +4010,8 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
     { aba:'Producao_por_vaca', o_que_e:'Uma linha por vaca por dia. del_na_data = dias desde o último parto registrado até aquele dia; partos_ate_a_data = quantos partos já tinha naquele dia; ordenhas_lancadas = 0, 1 ou 2.' },
     { aba:'Producao_rebanho', o_que_e:'Uma linha por dia, com o total do rebanho e os detalhes das ordenhas. soma_vacas_* vem dos lançamentos individuais; diferenca_total diferente de 0 indica que o total do rebanho não bate com a soma das vacas.' },
     { aba:'Animais', o_que_e:'Cadastro atual: lote calculado, número de partos, último parto, DEL (vazio se secou) e IEP (dias entre os dois últimos partos).' },
+    { aba:'Alimentacao', o_que_e:'Um lançamento por evento de alimentação, por lote (bezerra/novilha/lactante/seca). Quando o alimento é pasto, a coluna piquete traz o nome em vez do código interno.' },
+    { aba:'Piquetes / Pastagem_ciclos', o_que_e:'Piquetes cadastrados e o histórico de ciclos de pastejo de cada um (espécie do pasto, altura de entrada/saída, dias de pastejo, estimativa de matéria seca).' },
     { aba:'Demais abas', o_que_e:'Reprodutivo, Sanitario, Qualidade e Financeiro (só se liberado) trazem todos os registros, com o número do animal no lugar do código interno.' },
     { aba:'Gerado em', o_que_e: formatarData(hoje)+' — '+nomeProdutor }
   ]);
@@ -3781,6 +4046,9 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
   if(permissoes.ve_reprodutivo) aba('Reprodutivo', limpar(d.eventos));
   if(permissoes.ve_sanitario) aba('Sanitario', limpar(d.sanitario));
   if(permissoes.ve_producao) aba('Qualidade', limpar(d.qualidade));
+  if(permissoes.ve_producao) aba('Alimentacao', limpar(d.alimentacao));
+  if(permissoes.ve_producao) aba('Piquetes', limpar(d.piquetes));
+  if(permissoes.ve_producao) aba('Pastagem_ciclos', limpar(d.ciclosPastejo));
   if(permissoes.ve_financeiro) aba('Financeiro', limpar(d.financeiro));
 
   const nomeArquivo = 'leitefacil_'+(nomeProdutor||'produtor').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_')+'_analise.xlsx';
