@@ -4100,6 +4100,9 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p){
     consultas.producao = sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
     consultas.producaoIndividual = sb.from('producao_leite_individual').select('*, animais(identificacao)').eq('produtor_id', produtorId).order('data', { ascending:true });
     consultas.qualidade = sb.from('qualidade_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
+    consultas.alimentacao = sb.from('alimentacao_eventos').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
+    consultas.piquetesRelatorio = sb.from('piquetes').select('*').eq('produtor_id', produtorId).order('nome', { ascending:true });
+    consultas.ciclosPastejoRelatorio = sb.from('ciclos_pastejo').select('*').eq('produtor_id', produtorId).order('data_entrada', { ascending:true });
   }
   if(permissoes.ve_estoque) consultas.itensEstoque = sb.from('estoque_itens').select('*').eq('produtor_id', produtorId).order('nome', { ascending:true });
   if(permissoes.ve_financeiro) consultas.lancamentos = sb.from('financeiro_lancamentos').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
@@ -4146,6 +4149,26 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p){
     conteudo += qualidade.length
       ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>CCS</th><th>CBT</th><th>Gordura</th><th>Proteína</th></tr></thead><tbody>'+qualidade.map(r=>'<tr><td>'+formatarData(r.data)+'</td><td>'+formatarNumero(r.ccs)+'</td><td>'+formatarNumero(r.cbt)+'</td><td>'+formatarPercentual(r.gordura)+'</td><td>'+formatarPercentual(r.proteina)+'</td></tr>').join('')+'</tbody></table>'
       : '<div class="legenda-muted">Nenhum resultado registrado.</div>';
+
+    const piquetesRelatorio = dados.piquetesRelatorio || [];
+    const piquetePorRelatorio = {}; piquetesRelatorio.forEach(pq=>{ piquetePorRelatorio[pq.id] = pq.nome; });
+    const alimentacao = dados.alimentacao || [];
+    conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Alimentação (histórico completo)</h2>';
+    conteudo += alimentacao.length
+      ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Lote</th><th>Alimento</th><th>Detalhe</th></tr></thead><tbody>'+alimentacao.map(ev=>{
+          const detalhe = ev.tipo_alimento === 'pasto'
+            ? escaparHTML(piquetePorRelatorio[ev.piquete_id] || 'Piquete não informado')
+            : escaparHTML([ev.quantidade_kg!=null ? ev.quantidade_kg+' kg' : null, ev.composicao].filter(Boolean).join(' · ') || '—');
+          return '<tr><td>'+formatarData(ev.data)+(ev.horario ? ' '+ev.horario.slice(0,5) : '')+'</td><td>'+(STATUS_ANIMAL[ev.lote] ? STATUS_ANIMAL[ev.lote].rot : escaparHTML(ev.lote))+'</td><td>'+(TIPOS_ALIMENTO[ev.tipo_alimento] || escaparHTML(ev.tipo_alimento_outro||'—'))+'</td><td>'+detalhe+'</td></tr>';
+        }).join('')+'</tbody></table>'
+      : '<div class="legenda-muted">Nenhum lançamento de alimentação registrado.</div>';
+
+    const ciclosPastejoRelatorio = dados.ciclosPastejoRelatorio || [];
+    conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Pastagem (piquetes e ciclos)</h2>';
+    conteudo += piquetesRelatorio.length ? '<div class="cartao">Piquetes cadastrados: '+piquetesRelatorio.map(pq=>escaparHTML(pq.nome)+(pq.area_hectares!=null ? ' ('+pq.area_hectares+' ha)' : '')).join(', ')+'</div>' : '';
+    conteudo += ciclosPastejoRelatorio.length
+      ? '<table class="tabela-admin"><thead><tr><th>Piquete</th><th>Entrada</th><th>Espécie</th><th>Altura entrada</th><th>Altura saída</th><th>Dias</th><th>MS (t/ha)</th></tr></thead><tbody>'+ciclosPastejoRelatorio.map(c=>'<tr><td>'+escaparHTML(piquetePorRelatorio[c.piquete_id]||'?')+'</td><td>'+formatarData(c.data_entrada)+'</td><td>'+(ESPECIES_PASTO[c.especie_pasto] || escaparHTML(c.especie_pasto_outro||'—'))+'</td><td>'+(c.altura_entrada_cm!=null ? c.altura_entrada_cm+' cm' : '—')+'</td><td>'+(c.altura_saida_cm!=null ? c.altura_saida_cm+' cm' : '—')+'</td><td>'+(c.dias_pastejo!=null ? c.dias_pastejo : '—')+'</td><td>'+(c.estimativa_ms_ton_ha!=null ? c.estimativa_ms_ton_ha : '—')+'</td></tr>').join('')+'</tbody></table>'
+      : '<div class="legenda-muted">Nenhum ciclo de pastejo registrado.</div>';
   }
 
   if(permissoes.ve_animais){
