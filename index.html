@@ -1014,6 +1014,7 @@ const TIPOS_EVENTO = {
   cio: 'Cio',
   cobertura: 'Cobertura / Inseminação',
   parto: 'Parto',
+  aborto: 'Aborto / perda gestacional',
   secagem: 'Secagem'
 };
 const DIAS_GESTACAO = 283;
@@ -1107,15 +1108,25 @@ async function renderHistoricoReprodutivo(animalId){
     }
   }
 
+  // Aborto e natimorto contam a vida toda da vaca — o objetivo é dar ao produtor um sinal de alerta
+  // (esta vaca em especial vem abortando ou tendo natimortos?) para decidir entre tratar ou descartar.
+  const rr = resumoReprodutivoAnimal(data, new Date().toISOString().slice(0,10));
+  const abortoNatimortoHTML = (rr.abortos || rr.natimortos)
+    ? '<div class="cartao" style="display:flex; justify-content:space-around; text-align:center; gap:10px">'
+        + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Abortos (vida toda)</div><div style="font-weight:700; font-size:18px'+(rr.abortos ? '; color:var(--perigo)' : '')+'">'+rr.abortos+(rr.taxaAbortoPct!=null ? ' ('+rr.taxaAbortoPct.toFixed(0)+'%)' : '')+'</div></div>'
+        + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Natimortos (vida toda)</div><div style="font-weight:700; font-size:18px'+(rr.natimortos ? '; color:var(--perigo)' : '')+'">'+rr.natimortos+(rr.taxaNatimortoPct!=null ? ' ('+rr.taxaNatimortoPct.toFixed(0)+'%)' : '')+'</div></div>'
+      + '</div>'
+    : '';
+
   const lista = data.map(ev=>{
-    const detalhesParto = ev.tipo === 'parto' ? formatarDetalhesParto(ev) : '';
+    const detalhesParto = ev.tipo === 'parto' ? formatarDetalhesParto(ev) : (ev.tipo === 'aborto' ? formatarDetalhesAborto(ev) : '');
     return '<div class="cartao" style="display:flex; align-items:center; gap:12px; margin-bottom:8px">'
     + '<div style="flex:1"><strong>'+TIPOS_EVENTO[ev.tipo]+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(ev.data)+(detalhesParto ? ' · '+detalhesParto : '')+(ev.observacoes ? ' · '+escaparHTML(ev.observacoes) : '')+'</div></div>'
     + '<button class="botao-perigo-fino" style="margin-top:0" onclick="excluirEventoReprodutivo('+ev.id+','+animalId+')">'+iconeInline('lixo',15)+'</button>'
     + '</div>';
   }).join('');
 
-  alvo.innerHTML = previsaoHTML
+  alvo.innerHTML = previsaoHTML + abortoNatimortoHTML
     + (data.length ? lista : '<div class="legenda-muted">Nenhum evento registrado ainda.</div>')
     + '<button class="botao botao-secundario botao-bloco" onclick="abrirFormularioEvento('+animalId+')">'+iconeInline('coracao',18)+' Adicionar evento reprodutivo</button>';
 }
@@ -1140,8 +1151,13 @@ function formatarDetalhesParto(ev){
   if(ev.condicao_parto) partes.push(CONDICOES_PARTO[ev.condicao_parto] || ev.condicao_parto);
   if(ev.peso_nascimento_kg !== null && ev.peso_nascimento_kg !== undefined) partes.push(ev.peso_nascimento_kg+' kg');
   if(ev.sexo_bezerro) partes.push(ev.sexo_bezerro === 'femea' ? 'Fêmea' : 'Macho');
+  if(ev.natimorto) partes.push('Natimorto');
   if(ev.bezerra_animal_id) partes.push('bezerra cadastrada no rebanho');
   return partes.join(' · ');
+}
+
+function formatarDetalhesAborto(ev){
+  return (ev.meses_gestacao_aborto != null) ? (ev.meses_gestacao_aborto+' meses de gestação (estimado)') : '';
 }
 
 function abrirFormularioEvento(animalId){
@@ -1164,6 +1180,10 @@ function abrirFormularioEvento(animalId){
 function atualizarCamposFormularioEvento(tipo){
   const alvo = document.getElementById('campos-extras-evento');
   if(!alvo) return;
+  if(tipo === 'aborto'){
+    alvo.innerHTML = '<div class="grupo-campo"><label for="campo-aborto-meses-gestacao">Estimativa de meses de gestação (opcional)</label><input id="campo-aborto-meses-gestacao" type="number" min="0" max="9" step="0.5"></div>';
+    return;
+  }
   if(tipo !== 'parto'){ alvo.innerHTML = ''; return; }
 
   alvo.innerHTML =
@@ -1182,7 +1202,8 @@ function atualizarDetalhesPartoAnterior(){
   if(anterior){ alvo.innerHTML = ''; return; }
 
   alvo.innerHTML =
-    '<div class="grupo-campo"><label for="campo-periodo-parto">Período do parto</label><select id="campo-periodo-parto">'
+    '<label class="item-servico-extra"><input type="checkbox" id="campo-parto-natimorto" onchange="atualizarCamposSexoBezerra(document.getElementById(\'campo-sexo-bezerro\').value)"><span>Bezerro nasceu morto (natimorto)</span></label>'
+    + '<div class="grupo-campo"><label for="campo-periodo-parto">Período do parto</label><select id="campo-periodo-parto">'
       + '<option value="manha">Manhã</option><option value="tarde">Tarde</option><option value="noite">Noite</option><option value="madrugada">Madrugada</option>'
     + '</select></div>'
     + '<div class="grupo-campo"><label for="campo-condicao-parto">Condição de parto</label><select id="campo-condicao-parto">'
@@ -1200,7 +1221,8 @@ function atualizarDetalhesPartoAnterior(){
 function atualizarCamposSexoBezerra(sexo){
   const alvo = document.getElementById('campos-femea-bezerra');
   if(!alvo) return;
-  if(sexo !== 'femea'){ alvo.innerHTML = ''; return; }
+  const elNatimorto = document.getElementById('campo-parto-natimorto');
+  if(sexo !== 'femea' || (elNatimorto && elNatimorto.checked)){ alvo.innerHTML = ''; return; }
   alvo.innerHTML =
     '<div class="grupo-campo"><label for="campo-adicionar-rebanho">Adicionar ao rebanho?</label><select id="campo-adicionar-rebanho" onchange="atualizarCampoBrincoBezerra(this.value)">'
       + '<option value="nao">Não</option><option value="sim">Sim</option>'
@@ -1216,7 +1238,54 @@ function atualizarCampoBrincoBezerra(valor){
     : '';
 }
 
+// Se a vaca está com uma cobertura em aberto (sem parto/aborto/secagem depois) e o produtor
+// lança um novo cio ou uma nova cobertura DEPOIS daquela data, é sinal de que houve um aborto ou
+// um nascimento que não chegou a ser registrado — pergunta antes de simplesmente salvar o evento.
 async function salvarEventoReprodutivo(animalId){
+  const tipo = document.getElementById('campo-tipo-evento').value;
+  const data = document.getElementById('campo-data-evento').value;
+  if((tipo === 'cio' || tipo === 'cobertura') && data){
+    const { data: ultimos } = await sb.from('eventos_reprodutivos').select('tipo,data').eq('animal_id', animalId).order('data', { ascending:false }).limit(1);
+    const ultimo = ultimos && ultimos[0];
+    if(ultimo && ultimo.tipo === 'cobertura' && data > ultimo.data){
+      perguntarGestacaoEmAberto(animalId, tipo);
+      return;
+    }
+  }
+  await executarSalvarEventoReprodutivo(animalId);
+}
+
+function perguntarGestacaoEmAberto(animalId, tipoTentado){
+  document.getElementById('caixa-confirmacao').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Esta vaca está registrada como prenhe</div>'
+    + '<div class="legenda-muted" style="margin-bottom:18px">Um novo '+TIPOS_EVENTO[tipoTentado].toLowerCase()+' indica aborto ou nascimento não lançado. Quer registrar um desses agora, em vez do '+TIPOS_EVENTO[tipoTentado].toLowerCase()+'?</div>'
+    + '<div style="display:flex; gap:10px">'
+      + '<button class="botao botao-secundario" style="flex:1" onclick="fecharConfirmacao(); executarSalvarEventoReprodutivo('+animalId+');">Não</button>'
+      + '<button class="botao botao-primario" style="flex:1" onclick="mostrarEscolhaAbortoOuNascimento('+animalId+')">Sim</button>'
+    + '</div>';
+  document.getElementById('camada-confirmacao').classList.add('ativo');
+}
+
+function mostrarEscolhaAbortoOuNascimento(animalId){
+  document.getElementById('caixa-confirmacao').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">O que aconteceu?</div>'
+    + '<div style="display:flex; flex-direction:column; gap:10px">'
+      + '<button class="botao botao-primario botao-bloco" onclick="fecharConfirmacao(); prepararFormularioComTipo(\'aborto\');">Registrar aborto</button>'
+      + '<button class="botao botao-primario botao-bloco" onclick="fecharConfirmacao(); prepararFormularioComTipo(\'parto\');">Registrar nascimento</button>'
+      + '<button class="botao botao-secundario botao-bloco" onclick="fecharConfirmacao()">Cancelar</button>'
+    + '</div>';
+}
+
+// Troca o tipo do evento já aberto no formulário (mantendo a data que o produtor já tinha
+// digitado) em vez de fechar tudo e abrir um formulário do zero.
+function prepararFormularioComTipo(tipo){
+  const selectTipo = document.getElementById('campo-tipo-evento');
+  if(!selectTipo) return;
+  selectTipo.value = tipo;
+  atualizarCamposFormularioEvento(tipo);
+}
+
+async function executarSalvarEventoReprodutivo(animalId){
   const tipo = document.getElementById('campo-tipo-evento').value;
   const data = document.getElementById('campo-data-evento').value;
   const observacoes = document.getElementById('campo-obs-evento').value.trim();
@@ -1231,6 +1300,9 @@ async function salvarEventoReprodutivo(animalId){
 
   if(tipo === 'parto' && partoAnterior){
     registro.observacoes = observacoes || 'Parto anterior à entrada no rebanho (detalhes do bezerro não informados)';
+  } else if(tipo === 'aborto'){
+    const elMeses = document.getElementById('campo-aborto-meses-gestacao');
+    registro.meses_gestacao_aborto = (elMeses && elMeses.value !== '') ? Number(elMeses.value) : null;
   } else if(tipo === 'parto'){
     registro.periodo_parto = document.getElementById('campo-periodo-parto').value;
     registro.condicao_parto = document.getElementById('campo-condicao-parto').value;
@@ -1238,8 +1310,10 @@ async function salvarEventoReprodutivo(animalId){
     registro.peso_nascimento_kg = pesoEl.value === '' ? null : Number(pesoEl.value);
     sexoBezerra = document.getElementById('campo-sexo-bezerro').value;
     registro.sexo_bezerro = sexoBezerra;
+    const elNatimorto = document.getElementById('campo-parto-natimorto');
+    registro.natimorto = !!(elNatimorto && elNatimorto.checked);
 
-    if(sexoBezerra === 'femea'){
+    if(!registro.natimorto && sexoBezerra === 'femea'){
       adicionarRebanho = document.getElementById('campo-adicionar-rebanho').value;
       if(adicionarRebanho === 'sim'){
         const brincoEl = document.getElementById('campo-brinco-bezerra');
@@ -3901,11 +3975,19 @@ function resumoReprodutivoAnimal(evs, hojeIso){
   const partos = (evs||[]).filter(e=>e.tipo==='parto').sort((x,y)=>x.data.localeCompare(y.data));
   const ultimo = partos.length ? partos[partos.length-1] : null;
   const secouDepois = ultimo && (evs||[]).some(e=>e.tipo==='secagem' && e.data > ultimo.data);
+  // Abortos e natimortos são contados na vida toda do animal (não numa janela de tempo): o objetivo é
+  // acompanhar vaca a vaca se ela vem abortando ou tendo natimortos com frequência, para decidir entre
+  // tratamento ou descarte — um recorte recente esconderia justamente o histórico que importa aqui.
+  const abortos = (evs||[]).filter(e=>e.tipo==='aborto').length;
+  const natimortos = partos.filter(e=>e.natimorto).length;
+  const desfechos = abortos + partos.length;
   return {
     partos: partos.length,
     ultimoParto: ultimo ? ultimo.data : null,
     del: (ultimo && !secouDepois) ? diasEntre(ultimo.data, hojeIso) : null,
-    iep: partos.length >= 2 ? diasEntre(partos[partos.length-2].data, ultimo.data) : null
+    iep: partos.length >= 2 ? diasEntre(partos[partos.length-2].data, ultimo.data) : null,
+    abortos, taxaAbortoPct: desfechos ? (abortos/desfechos)*100 : null,
+    natimortos, taxaNatimortoPct: partos.length ? (natimortos/partos.length)*100 : null
   };
 }
 
@@ -3951,11 +4033,14 @@ function montarResumoPorAnimalHTML(animais, eventosPorAnimal, individual){
     const vazio = '—';
     return '<tr><td>Nº '+escaparHTML(a.identificacao)+'</td><td>'+escaparHTML(a.grau_sangue||vazio)+'</td><td>'+(STATUS_ANIMAL[lote] ? STATUS_ANIMAL[lote].rot : vazio)+'</td>'
       + '<td>'+(a.data_nascimento ? formatarData(a.data_nascimento) : vazio)+'</td><td>'+rr.partos+'</td><td>'+(rr.ultimoParto ? formatarData(rr.ultimoParto) : vazio)+'</td>'
-      + '<td>'+(rr.del!=null ? rr.del : vazio)+'</td><td>'+(rr.iep!=null ? rr.iep : vazio)+'</td><td>'+regs.length+'</td><td>'+completos.length+'</td>'
+      + '<td>'+(rr.del!=null ? rr.del : vazio)+'</td><td>'+(rr.iep!=null ? rr.iep : vazio)+'</td>'
+      + '<td>'+(rr.abortos ? rr.abortos+(rr.taxaAbortoPct!=null ? ' ('+rr.taxaAbortoPct.toFixed(0)+'%)' : '') : '0')+'</td>'
+      + '<td>'+(rr.natimortos ? rr.natimortos+(rr.taxaNatimortoPct!=null ? ' ('+rr.taxaNatimortoPct.toFixed(0)+'%)' : '') : '0')+'</td>'
+      + '<td>'+regs.length+'</td><td>'+completos.length+'</td>'
       + '<td>'+(completos.length ? (completos.reduce((s,x)=>s+x,0)/completos.length).toFixed(1) : vazio)+'</td><td>'+(completos.length ? Math.max(...completos).toFixed(1) : vazio)+'</td></tr>';
   }).join('');
-  return '<table class="tabela-admin matriz"><thead><tr><th>Animal</th><th>Grau de sangue</th><th>Lote</th><th>Nascimento</th><th>Partos</th><th>Último parto</th><th>DEL</th><th>IEP</th><th>Dias c/ registro</th><th>Dias completos</th><th>Média/dia (L)</th><th>Melhor dia (L)</th></tr></thead><tbody>'+linhas+'</tbody></table>'
-    + '<div class="legenda-muted" style="margin-top:6px">DEL = dias desde o último parto (vazio se a vaca já secou). IEP = dias entre os dois últimos partos. Média e melhor dia consideram só os dias com as duas ordenhas lançadas.</div>';
+  return '<table class="tabela-admin matriz"><thead><tr><th>Animal</th><th>Grau de sangue</th><th>Lote</th><th>Nascimento</th><th>Partos</th><th>Último parto</th><th>DEL</th><th>IEP</th><th>Abortos</th><th>Natimortos</th><th>Dias c/ registro</th><th>Dias completos</th><th>Média/dia (L)</th><th>Melhor dia (L)</th></tr></thead><tbody>'+linhas+'</tbody></table>'
+    + '<div class="legenda-muted" style="margin-top:6px">DEL = dias desde o último parto (vazio se a vaca já secou). IEP = dias entre os dois últimos partos. Abortos e natimortos contam a vida toda do animal, com a taxa entre parênteses (abortos sobre gestações com desfecho conhecido; natimortos sobre total de partos). Média e melhor dia consideram só os dias com as duas ordenhas lançadas.</div>';
 }
 
 // ---------- Excel para análise (uma aba por tabela, dados em formato "uma linha por observação") ----------
