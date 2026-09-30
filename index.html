@@ -303,6 +303,31 @@ const SUPABASE_URL = 'https://uknaypyjykbetxdwgnxv.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_sOtcjxZ9R7ZyE-CkphzRdw_HV2QeeJz';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// ---------- Monitoramento de erros (Fase 1 do diagnóstico técnico) ----------
+// Guarda em uma tabela do próprio Supabase qualquer erro de JavaScript não tratado
+// que acontecer no celular de quem usa o app — sem isso, uma falha silenciosa só
+// vira conhecida se a pessoa parar para reclamar, o que no público deste app
+// (produtores rurais, muitos com pouca familiaridade com tecnologia) pode nunca
+// acontecer. Só o admin consegue ler esses registros (ver política de RLS).
+async function registrarErro(mensagem, pilha, origem){
+  try{
+    await sb.from('logs_erro').insert({
+      produtor_id: (typeof usuarioAtual !== 'undefined' && usuarioAtual) ? usuarioAtual.id : null,
+      mensagem: String(mensagem || 'Erro sem mensagem').slice(0, 500),
+      pilha: pilha ? String(pilha).slice(0, 2000) : null,
+      pagina: origem || (document.querySelector('.painel-tela.ativa') ? document.querySelector('.painel-tela.ativa').id : null),
+      user_agent: navigator.userAgent
+    });
+  }catch(e){ /* o registro de erro nunca pode, ele mesmo, gerar outro erro visível para o usuário */ }
+}
+window.addEventListener('error', function(evento){
+  registrarErro(evento.message, evento.error && evento.error.stack, 'erro de javascript');
+});
+window.addEventListener('unhandledrejection', function(evento){
+  const motivo = evento.reason;
+  registrarErro('Promise rejeitada: ' + (motivo && motivo.message ? motivo.message : motivo), motivo && motivo.stack, 'promise rejeitada');
+});
+
 function ic(inner, size){ size = size || 24; return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+inner+'</svg>'; }
 const ICONES = {
   logo: '<path d="M9 3h6l1 4H8z"/><path d="M8 7h8l-1 13a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1z"/>',
@@ -2567,6 +2592,12 @@ function abrirFormularioMovimento(itemId, tipo, categoriaOrigem){
   );
 }
 
+// Regra de negócio pura (sem banco nem tela): dado o saldo atual, o tipo do movimento e a
+// quantidade, devolve o novo saldo. Isolada do resto para poder ser testada sozinha.
+function calcularNovoSaldoEstoque(saldoAtual, tipo, quantidade){
+  return tipo === 'entrada' ? Number(saldoAtual) + Number(quantidade) : Number(saldoAtual) - Number(quantidade);
+}
+
 async function salvarMovimentoEstoque(itemId, tipo, categoriaOrigem){
   const quantidade = Number(document.getElementById('campo-quantidade-mov').value);
   const data = document.getElementById('campo-data-mov').value;
@@ -2585,7 +2616,7 @@ async function salvarMovimentoEstoque(itemId, tipo, categoriaOrigem){
   if(erroMov){ msg.textContent = 'Não foi possível salvar: ' + erroMov.message; msg.style.color = 'var(--perigo)'; return; }
 
   const item = MEU_ESTOQUE.find(i=>i.id===itemId);
-  const novoSaldo = tipo === 'entrada' ? Number(item.quantidade_atual) + quantidade : Number(item.quantidade_atual) - quantidade;
+  const novoSaldo = calcularNovoSaldoEstoque(item.quantidade_atual, tipo, quantidade);
   const { error: erroItem } = await sb.from('estoque_itens').update({ quantidade_atual: novoSaldo }).eq('id', itemId);
   if(erroItem){ msg.textContent = 'Movimento salvo, mas não foi possível atualizar o saldo: ' + erroItem.message; msg.style.color = 'var(--perigo)'; return; }
 
@@ -3783,6 +3814,7 @@ async function renderAdmin(){
     + '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px">'
       + '<button class="botao botao-secundario" onclick="exportarCSVAdmin()">Baixar CSV da região</button>'
       + '<button class="botao botao-primario" onclick="gerarPDFAdmin()">Gerar relatório PDF da região</button>'
+      + '<button class="botao botao-secundario" onclick="abrirLogsErro()">'+iconeInline('sino',16)+' Ver erros técnicos recentes</button>'
     + '</div>'
     + '<div class="cartao">'
       + (data.length
@@ -3794,6 +3826,26 @@ async function renderAdmin(){
 }
 
 let ADMIN_DADOS_ATUAIS = null;
+
+// Tela do admin para os erros técnicos registrados sozinhos pelo app (ver
+// window.addEventListener('error', ...) logo no início do arquivo).
+async function abrirLogsErro(){
+  document.getElementById('conteudo-modal').innerHTML = '<div class="legenda-muted">Carregando...</div>';
+  abrirModal();
+  const { data, error } = await sb.from('logs_erro').select('*').order('criado_em', { ascending:false }).limit(100);
+  if(error){ document.getElementById('conteudo-modal').innerHTML = '<div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar os logs de erro')+'</div>'; return; }
+  const nomePor = {}; (ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores || []).forEach(p=>{ nomePor[p.id] = p.nome; });
+  const linha = log => '<div class="cartao" style="margin-bottom:8px">'
+    + '<div style="display:flex; justify-content:space-between; gap:10px"><strong style="font-size:13px">'+escaparHTML(log.pagina || 'origem não identificada')+'</strong><span class="legenda-muted" style="font-size:12px; margin-bottom:0">'+new Date(log.criado_em).toLocaleString('pt-BR')+'</span></div>'
+    + '<div style="font-size:13px; margin:4px 0">'+escaparHTML(log.mensagem)+'</div>'
+    + '<div class="legenda-muted" style="font-size:12px; margin-bottom:0">'+(log.produtor_id ? escaparHTML(nomePor[log.produtor_id] || 'produtor não identificado') : 'antes do login')+'</div>'
+    + (log.pilha ? '<details style="margin-top:6px"><summary class="legenda-muted" style="cursor:pointer; font-size:12px">Detalhes técnicos</summary><pre style="white-space:pre-wrap; font-size:11px; overflow-x:auto">'+escaparHTML(log.pilha)+'</pre></details>' : '')
+    + '</div>';
+  document.getElementById('conteudo-modal').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Erros técnicos recentes</div>'
+    + '<div class="legenda-muted" style="margin-bottom:14px">Últimos 100 erros de JavaScript capturados automaticamente no celular de quem usa o app. Isso não substitui o produtor relatar um problema, mas avisa mesmo quando ninguém reclama.</div>'
+    + (data.length ? data.map(linha).join('') : '<div class="legenda-muted">Nenhum erro registrado — bom sinal.</div>');
+}
 
 // Ficha completa de um produtor, vista pelo administrador — reaproveita a mesma
 // montagem usada na visão do colaborador, sempre sem o módulo Financeiro.
