@@ -1,0 +1,28 @@
+# LeiteFácil — roda os testes automatizados a cada vez que alguém sobe
+# código novo no GitHub. Não precisa fazer nada manualmente: depois de um
+# "commit", abra a aba "Actions" no GitHub para ver uma marca verde (✅,
+# passou) ou vermelha (❌, algum cálculo não bateu com o esperado).
+#
+# Este arquivo precisa ficar exatamente neste caminho dentro do repositório:
+# .github/workflows/testes.yml
+
+name: Testes automatizados
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  testar-calculos:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o código do repositório
+        uses: actions/checkout@v4
+      - name: Preparar o Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Rodar os testes de cálculo
+        run: node testes/testar-calculos.js
