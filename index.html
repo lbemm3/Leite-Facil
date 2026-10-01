@@ -184,15 +184,14 @@
   .cartao-estat .rot{ font-size:11.5px; font-weight:700; color: var(--tinta-suave); text-transform:uppercase; letter-spacing:0.4px; }
   .cartao-estat .num{ font-family: var(--fonte-dados); font-weight:600; font-size:24px; color: var(--azul-escuro); margin-top:6px; }
 
-  #area-impressao{ display:none; }
+  /* Relatórios abrem em aba própria (ver abrirJanelaRelatorio/imprimirRelatorio) em
+     vez de usar window.print() nesta página — mas quem quiser imprimir ou salvar como
+     PDF a partir daquela aba (Ctrl+P) ainda aproveita este formato paisagem A4. */
   @media print{
-    body *{ visibility:hidden; }
-    #area-impressao, #area-impressao *{ visibility:visible; }
-    #area-impressao{ display:block; position:absolute; top:0; left:0; width:100%; padding:20px; }
-    #area-impressao .cartao{ border:1px solid #ccc; break-inside:avoid; }
-    #area-impressao h2{ break-after:avoid; }
-    #area-impressao tr{ break-inside:avoid; }
-    #area-impressao thead{ display:table-header-group; }
+    .cartao{ border:1px solid #ccc; break-inside:avoid; }
+    h2{ break-after:avoid; }
+    tr{ break-inside:avoid; }
+    thead{ display:table-header-group; }
   }
   @page{ size:A4 landscape; margin:12mm; }
   table.tabela-admin.matriz th, table.tabela-admin.matriz td{ padding:4px 5px; font-size:11px; text-align:right; white-space:nowrap; }
@@ -295,7 +294,7 @@
   <div class="caixa-confirmacao" id="caixa-confirmacao"></div>
 </div>
 
-<div id="area-impressao"></div>
+
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
@@ -425,12 +424,38 @@ function baixarCSV(nomeArquivo, colunas, linhas){
   URL.revokeObjectURL(url);
 }
 
-function imprimirRelatorio(tituloHTML, conteudoHTML){
-  document.getElementById('area-impressao').innerHTML =
-    '<h1 style="font-family:var(--fonte-titulo)">'+tituloHTML+'</h1>'
+// Abre a aba do relatório ANTES de qualquer busca assíncrona, ainda na mesma chamada
+// do clique — se o window.open() acontecer só depois de um "await", o navegador trata
+// como se não tivesse vindo de uma ação da pessoa e bloqueia a aba (vira pop-up
+// bloqueado em vez de abrir sozinha). Por isso cada botão de relatório chama isto
+// primeiro, guarda a referência da aba, e só manda o conteúdo pronto pra ela depois.
+function abrirJanelaRelatorio(){
+  const janela = window.open('', '_blank');
+  if(janela) janela.document.write('<!doctype html><title>Gerando relatório…</title><body style="font-family:sans-serif; padding:40px; color:#888">Gerando o relatório, só um instante…</body>');
+  return janela;
+}
+
+// Mostra o relatório pronto na aba já aberta por abrirJanelaRelatorio — reaproveita o
+// <style> inteiro da página (mesmas classes .cartao/.tabela-admin/etc.), então o
+// relatório sai com a cara do app sem precisar duplicar nada de CSS aqui.
+function imprimirRelatorio(janela, tituloHTML, conteudoHTML){
+  if(!janela || janela.closed){
+    avisar('O navegador bloqueou a abertura do relatório em outra aba. Permita pop-ups para este site e tente de novo.');
+    return;
+  }
+  const estilos = document.querySelector('style') ? document.querySelector('style').outerHTML : '';
+  janela.document.open();
+  janela.document.write(
+    '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>'+tituloHTML.replace(/<[^>]+>/g,'')+'</title>'
+    + estilos
+    + '<style>body{ max-width:900px; margin:0 auto; padding:24px 20px 60px } @media print{ body{ padding:0 } }</style>'
+    + '</head><body>'
+    + '<h1 style="font-family:var(--fonte-titulo)">'+tituloHTML+'</h1>'
     + '<div class="legenda-muted">Gerado em '+formatarData(new Date().toISOString().slice(0,10))+'</div>'
-    + conteudoHTML;
-  window.print();
+    + conteudoHTML
+    + '</body></html>'
+  );
+  janela.document.close();
 }
 
 let usuarioAtual = null;
@@ -3278,6 +3303,7 @@ async function exportarCSVProdutor(){
 }
 
 async function gerarPDFProdutor(){
+  const janela = abrirJanelaRelatorio();
   const inicio = document.getElementById('campo-relatorio-inicio').value;
   const fim = document.getElementById('campo-relatorio-fim').value;
 
@@ -3356,7 +3382,7 @@ async function gerarPDFProdutor(){
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Financeiro no período</h2>';
   conteudo += '<div class="cartao">Receitas: R$ '+totalReceitas.toFixed(2)+' · Despesas: R$ '+totalDespesas.toFixed(2)+' · Saldo: R$ '+(totalReceitas-totalDespesas).toFixed(2)+'</div>';
 
-  imprimirRelatorio('Relatório LeiteFácil', conteudo);
+  imprimirRelatorio(janela, 'Relatório LeiteFácil', conteudo);
 }
 
 async function salvarEdicaoAnimal(id){
@@ -4263,7 +4289,7 @@ async function exportarCSVColaborador(colabId){
 // PDF completo (todo o histórico, sem filtro de data) de um produtor específico —
 // só entra no relatório o que "permissoes" libera (para o admin, tudo exceto
 // Financeiro; para um colaborador, exatamente o que o convite dele autorizou).
-async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p){
+async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p, janela){
   const estadoNome = (ESTADOS_BR.find(e=>e[0]===(p&&p.estado))||[])[1] || (p&&p.estado) || '—';
 
   const consultas = {};
@@ -4383,24 +4409,26 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p){
       : '<div class="legenda-muted">Nenhum lançamento registrado.</div>';
   }
 
-  imprimirRelatorio('Relatório completo — '+escaparHTML(nomeProdutor), conteudo);
+  imprimirRelatorio(janela, 'Relatório completo — '+escaparHTML(nomeProdutor), conteudo);
 }
 
 async function gerarPDFFichaProdutorAdmin(produtorId){
+  const janela = abrirJanelaRelatorio();
   registrarAcesso(produtorId, 'admin', 'gerar_pdf');
   const p = ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores.find(x=>x.id===produtorId);
   const nomeProdutor = (p && p.nome) || 'Produtor';
   const permissoesAdmin = { ve_animais:true, ve_reprodutivo:true, ve_sanitario:true, ve_producao:true, ve_estoque:true, ve_financeiro: !!(p && p.admin_financeiro_liberado) };
-  await gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoesAdmin, p);
+  await gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoesAdmin, p, janela);
 }
 
 async function gerarPDFColaborador(colabId){
+  const janela = abrirJanelaRelatorio();
   const c = MEUS_ACESSOS_COLABORADOR.find(x=>x.id===colabId);
   if(!c) return;
   registrarAcesso(c.produtor_id, 'colaborador', 'gerar_pdf');
   const nomeProdutor = (c.produtores && c.produtores.nome) || 'Produtor';
   const { data: p } = await sb.from('produtores').select('*').eq('id', c.produtor_id).maybeSingle();
-  await gerarPDFFichaProdutor(c.produtor_id, nomeProdutor, c, p);
+  await gerarPDFFichaProdutor(c.produtor_id, nomeProdutor, c, p, janela);
 }
 
 function exportarCSVAdmin(){
@@ -4413,6 +4441,7 @@ function exportarCSVAdmin(){
 }
 
 function gerarPDFAdmin(){
+  const janela = abrirJanelaRelatorio();
   if(!ADMIN_DADOS_ATUAIS) return;
   const d = ADMIN_DADOS_ATUAIS;
   let conteudo = '<div class="cartao">Produtores: <strong>'+d.produtores.length+'</strong> · Animais na região: <strong>'+d.totalAnimaisRegiao+'</strong> · Produção (7 dias): <strong>'+d.producaoTotal7dias.toFixed(0)+' L</strong> · Média/produtor: <strong>'+d.mediaPorProdutor.toFixed(0)+' L</strong> · Animais em carência agora: <strong>'+d.animaisEmCarencia+'</strong></div>';
@@ -4420,7 +4449,7 @@ function gerarPDFAdmin(){
   conteudo += '<table class="tabela-admin"><thead><tr><th>Nome</th><th>Propriedade</th><th>Cidade</th><th>Telefone</th><th>Animais</th></tr></thead><tbody>'
     + d.produtores.map(p=>'<tr><td>'+escaparHTML(p.nome||'—')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+(d.contagemAnimais[p.id]||0)+'</td></tr>').join('')
     + '</tbody></table>';
-  imprimirRelatorio('Relatório LeiteFácil — Painel administrativo', conteudo);
+  imprimirRelatorio(janela, 'Relatório LeiteFácil — Painel administrativo', conteudo);
 }
 
 function abrirModal(bloqueado){
