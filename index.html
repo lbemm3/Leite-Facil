@@ -448,7 +448,10 @@ function imprimirRelatorio(janela, tituloHTML, conteudoHTML){
   janela.document.write(
     '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>'+tituloHTML.replace(/<[^>]+>/g,'')+'</title>'
     + estilos
-    + '<style>body{ max-width:900px; margin:0 auto; padding:24px 20px 60px } @media print{ body{ padding:0 } }</style>'
+    // O <style> copiado do app trava a rolagem da página inteira de propósito (o app
+    // controla a rolagem tela por tela, por dentro) — essa regra não faz sentido aqui
+    // e precisa ser desfeita, senão o relatório fica cortado sem jeito de rolar.
+    + '<style>html, body{ height:auto !important; overflow:visible !important; } body{ max-width:900px; margin:0 auto; padding:24px 20px 60px } @media print{ body{ padding:0 } }</style>'
     + '</head><body>'
     + '<h1 style="font-family:var(--fonte-titulo)">'+tituloHTML+'</h1>'
     + '<div class="legenda-muted">Gerado em '+formatarData(new Date().toISOString().slice(0,10))+'</div>'
