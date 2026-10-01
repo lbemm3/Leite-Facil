@@ -371,7 +371,18 @@ function mensagemErroAmigavel(error, oQueFalhou){
   else if(/permission denied|row-level security/i.test(tecnica)) dica = 'Você não tem permissão para fazer isso.';
   else if(/Failed to fetch|network|NetworkError|fetch/i.test(tecnica)) dica = 'Parece que a internet caiu. Confira sua conexão e tente de novo.';
   else if(/JWT|token|session/i.test(tecnica)) dica = 'Sua sessão expirou. Saia do app e entre novamente.';
+  else if(/violates check constraint/i.test(tecnica)) dica = 'Um dos valores informados não é válido (por exemplo, um número negativo onde não devia). Confira os campos preenchidos e tente de novo.';
   return (oQueFalhou ? 'Não foi possível ' + oQueFalhou + '. ' : 'Não foi possível concluir a ação. ') + dica;
+}
+
+// Registro de auditoria (Fase 2 do diagnóstico técnico): toda vez que um admin ou
+// colaborador visualiza ou exporta a ficha de um produtor, fica um registro de quem,
+// quando, e o quê — importante para a rastreabilidade de dados que um projeto de
+// pesquisa (CEP/Plataforma Brasil) costuma exigir. "Fire and forget": nunca atrasa
+// nem bloqueia a ação da pessoa, e uma falha ao gravar o log não aparece pra ela.
+function registrarAcesso(produtorId, papel, acao){
+  sb.from('logs_acesso').insert({ usuario_id: usuarioAtual.id, papel, produtor_id: produtorId, acao })
+    .then(({ error }) => { if(error) console.error('[LeiteFácil] falha ao registrar acesso', error); });
 }
 
 // Detecta se um nome de subcategoria/item é o "catch-all" tipo "Outro(s)/Outra(s)"
@@ -727,6 +738,7 @@ async function montarFichaProdutorHTML(produtorId, permissoes){
 async function abrirVisualizacaoColaborador(colabId){
   const c = MEUS_ACESSOS_COLABORADOR.find(x=>x.id===colabId);
   if(!c) return;
+  registrarAcesso(c.produtor_id, 'colaborador', 'visualizar_ficha');
   const nomeProdutor = (c.produtores && c.produtores.nome) || 'Produtor';
 
   const botoesExportacao = c.ve_producao
@@ -3815,6 +3827,7 @@ async function renderAdmin(){
       + '<button class="botao botao-secundario" onclick="exportarCSVAdmin()">Baixar CSV da região</button>'
       + '<button class="botao botao-primario" onclick="gerarPDFAdmin()">Gerar relatório PDF da região</button>'
       + '<button class="botao botao-secundario" onclick="abrirLogsErro()">'+iconeInline('sino',16)+' Ver erros técnicos recentes</button>'
+      + '<button class="botao botao-secundario" onclick="abrirLogsAcesso()">'+iconeInline('documento',16)+' Ver registros de acesso</button>'
     + '</div>'
     + '<div class="cartao">'
       + (data.length
@@ -3847,9 +3860,29 @@ async function abrirLogsErro(){
     + (data.length ? data.map(linha).join('') : '<div class="legenda-muted">Nenhum erro registrado — bom sinal.</div>');
 }
 
+// Tela do admin para o registro de auditoria (Fase 2 do diagnóstico técnico): quem
+// (admin ou colaborador) acessou a ficha de qual produtor, quando, e de que forma
+// (visualizou, baixou PDF/Excel/CSV). Ver registrarAcesso().
+async function abrirLogsAcesso(){
+  document.getElementById('conteudo-modal').innerHTML = '<div class="legenda-muted">Carregando...</div>';
+  abrirModal();
+  const { data, error } = await sb.from('logs_acesso').select('*').order('criado_em', { ascending:false }).limit(200);
+  if(error){ document.getElementById('conteudo-modal').innerHTML = '<div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar os registros de acesso')+'</div>'; return; }
+  const nomePor = {}; (ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores || []).forEach(p=>{ nomePor[p.id] = p.nome; });
+  const ACOES_LOG = { visualizar_ficha:'Visualizou a ficha', gerar_pdf:'Baixou o PDF completo', baixar_excel:'Baixou o Excel para análise', baixar_csv:'Baixou o CSV de produção' };
+  const linha = log => '<tr><td>'+new Date(log.criado_em).toLocaleString('pt-BR')+'</td><td>'+(log.papel==='admin'?'Admin':'Colaborador')+'</td><td>'+escaparHTML(nomePor[log.produtor_id] || 'produtor não identificado')+'</td><td>'+(ACOES_LOG[log.acao] || escaparHTML(log.acao))+'</td></tr>';
+  document.getElementById('conteudo-modal').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Registros de acesso</div>'
+    + '<div class="legenda-muted" style="margin-bottom:14px">Últimos 200 acessos de administradores e colaboradores às fichas dos produtores — quem viu ou baixou o quê, e quando.</div>'
+    + (data.length
+      ? '<table class="tabela-admin"><thead><tr><th>Quando</th><th>Quem</th><th>Produtor</th><th>Ação</th></tr></thead><tbody>'+data.map(linha).join('')+'</tbody></table>'
+      : '<div class="legenda-muted">Nenhum acesso registrado ainda.</div>');
+}
+
 // Ficha completa de um produtor, vista pelo administrador — reaproveita a mesma
 // montagem usada na visão do colaborador, sempre sem o módulo Financeiro.
 async function abrirFichaProdutorAdmin(produtorId){
+  registrarAcesso(produtorId, 'admin', 'visualizar_ficha');
   const p = ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores.find(x=>x.id===produtorId);
   const nomeProdutor = (p && p.nome) || 'Produtor';
   const financeiroLiberado = !!(p && p.admin_financeiro_liberado);
@@ -4193,6 +4226,7 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
 }
 
 async function baixarExcelFichaProdutorAdmin(produtorId){
+  registrarAcesso(produtorId, 'admin', 'baixar_excel');
   const p = ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores.find(x=>x.id===produtorId);
   const permissoesAdmin = { ve_animais:true, ve_reprodutivo:true, ve_sanitario:true, ve_producao:true, ve_estoque:true, ve_financeiro: !!(p && p.admin_financeiro_liberado) };
   await baixarExcelFichaProdutor(produtorId, (p && p.nome) || 'Produtor', permissoesAdmin);
@@ -4201,6 +4235,7 @@ async function baixarExcelFichaProdutorAdmin(produtorId){
 async function baixarExcelColaborador(colabId){
   const c = MEUS_ACESSOS_COLABORADOR.find(x=>x.id===colabId);
   if(!c) return;
+  registrarAcesso(c.produtor_id, 'colaborador', 'baixar_excel');
   await baixarExcelFichaProdutor(c.produtor_id, (c.produtores && c.produtores.nome) || 'Produtor', c);
 }
 
@@ -4213,6 +4248,7 @@ async function baixarCSVProducaoCompleta(produtorId, nomeProdutor){
 }
 
 async function exportarCSVFichaProdutorAdmin(produtorId){
+  registrarAcesso(produtorId, 'admin', 'baixar_csv');
   const p = ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores.find(x=>x.id===produtorId);
   await baixarCSVProducaoCompleta(produtorId, p&&p.nome);
 }
@@ -4220,6 +4256,7 @@ async function exportarCSVFichaProdutorAdmin(produtorId){
 async function exportarCSVColaborador(colabId){
   const c = MEUS_ACESSOS_COLABORADOR.find(x=>x.id===colabId);
   if(!c) return;
+  registrarAcesso(c.produtor_id, 'colaborador', 'baixar_csv');
   await baixarCSVProducaoCompleta(c.produtor_id, c.produtores&&c.produtores.nome);
 }
 
@@ -4350,6 +4387,7 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p){
 }
 
 async function gerarPDFFichaProdutorAdmin(produtorId){
+  registrarAcesso(produtorId, 'admin', 'gerar_pdf');
   const p = ADMIN_DADOS_ATUAIS && ADMIN_DADOS_ATUAIS.produtores.find(x=>x.id===produtorId);
   const nomeProdutor = (p && p.nome) || 'Produtor';
   const permissoesAdmin = { ve_animais:true, ve_reprodutivo:true, ve_sanitario:true, ve_producao:true, ve_estoque:true, ve_financeiro: !!(p && p.admin_financeiro_liberado) };
@@ -4359,6 +4397,7 @@ async function gerarPDFFichaProdutorAdmin(produtorId){
 async function gerarPDFColaborador(colabId){
   const c = MEUS_ACESSOS_COLABORADOR.find(x=>x.id===colabId);
   if(!c) return;
+  registrarAcesso(c.produtor_id, 'colaborador', 'gerar_pdf');
   const nomeProdutor = (c.produtores && c.produtores.nome) || 'Produtor';
   const { data: p } = await sb.from('produtores').select('*').eq('id', c.produtor_id).maybeSingle();
   await gerarPDFFichaProdutor(c.produtor_id, nomeProdutor, c, p);
