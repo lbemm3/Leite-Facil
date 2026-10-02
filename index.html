@@ -451,8 +451,11 @@ function imprimirRelatorio(janela, tituloHTML, conteudoHTML){
     // O <style> copiado do app trava a rolagem da página inteira de propósito (o app
     // controla a rolagem tela por tela, por dentro) — essa regra não faz sentido aqui
     // e precisa ser desfeita, senão o relatório fica cortado sem jeito de rolar.
-    + '<style>html, body{ height:auto !important; overflow:visible !important; } body{ max-width:900px; margin:0 auto; padding:24px 20px 60px } @media print{ body{ padding:0 } }</style>'
+    // ".botao-salvar-pdf" some na hora de imprimir/salvar — não faz sentido aparecer
+    // dentro do próprio PDF gerado.
+    + '<style>html, body{ height:auto !important; overflow:visible !important; } body{ max-width:900px; margin:0 auto; padding:24px 20px 60px } .botao-salvar-pdf{ position:sticky; top:12px; float:right; margin-bottom:10px; z-index:10 } @media print{ body{ padding:0 } .botao-salvar-pdf{ display:none !important } }</style>'
     + '</head><body>'
+    + '<button class="botao botao-primario botao-salvar-pdf" onclick="window.print()">'+iconeInline('documento',16)+' Salvar em PDF</button>'
     + '<h1 style="font-family:var(--fonte-titulo)">'+tituloHTML+'</h1>'
     + '<div class="legenda-muted">Gerado em '+formatarData(new Date().toISOString().slice(0,10))+'</div>'
     + conteudoHTML
