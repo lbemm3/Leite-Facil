@@ -3804,7 +3804,7 @@ async function renderAdmin(){
     { data: qualidadeRecente, error: erroQualidadeAdmin }
   ] = await Promise.all([
     sb.from('produtores').select('*').order('criado_em', { ascending:false }),
-    sb.from('animais').select('produtor_id'),
+    sb.from('animais').select('id, produtor_id'),
     sb.from('producao_leite').select('produtor_id, litros_manha, litros_tarde').gte('data', seteDiasAtras),
     sb.from('eventos_sanitarios').select('animal_id').gte('data_fim_carencia', hoje),
     sb.from('qualidade_leite').select('produtor_id, data, ccs, cbt, gordura, proteina').gte('data', somarDias(hoje, -90))
@@ -3814,30 +3814,50 @@ async function renderAdmin(){
     return;
   }
   const contagemAnimais = {};
+  const produtorDoAnimal = {};
   if(!erroAnimais && animaisTodos){
-    animaisTodos.forEach(a => { contagemAnimais[a.produtor_id] = (contagemAnimais[a.produtor_id] || 0) + 1; });
+    animaisTodos.forEach(a => { contagemAnimais[a.produtor_id] = (contagemAnimais[a.produtor_id] || 0) + 1; produtorDoAnimal[a.id] = a.produtor_id; });
   }
 
   let producaoTotal7dias = 0;
   const produtoresComProducao = new Set();
+  // Mesma soma de sempre, mas guardada por produtor também — é o que falta pra um
+  // relatório comparar produtores em vez de só mostrar o total da região.
+  const producaoPorProdutor = {};
   if(!erroProducao && producaoRecente){
     producaoRecente.forEach(r=>{
-      producaoTotal7dias += Number(r.litros_manha||0) + Number(r.litros_tarde||0);
+      const litros = Number(r.litros_manha||0) + Number(r.litros_tarde||0);
+      producaoTotal7dias += litros;
       produtoresComProducao.add(r.produtor_id);
+      producaoPorProdutor[r.produtor_id] = (producaoPorProdutor[r.produtor_id] || 0) + litros;
     });
   }
   const mediaPorProdutor = produtoresComProducao.size ? (producaoTotal7dias/produtoresComProducao.size) : 0;
   const animaisEmCarencia = (!erroCarencias && carenciasAtivas) ? new Set(carenciasAtivas.map(c=>c.animal_id)).size : 0;
   const totalAnimaisRegiao = Object.values(contagemAnimais).reduce((s,n)=>s+n,0);
 
+  // Carência por produtor (não só o total da região) — usa o mapa animal->produtor
+  // acima, sem precisar de nenhuma consulta nova ao banco.
+  const carenciaPorProdutor = {};
+  if(!erroCarencias && carenciasAtivas){
+    new Set(carenciasAtivas.map(c=>c.animal_id)).forEach(animalId=>{
+      const pid = produtorDoAnimal[animalId];
+      if(pid) carenciaPorProdutor[pid] = (carenciaPorProdutor[pid] || 0) + 1;
+    });
+  }
+
   let produtoresQualidadeAlerta = 0;
+  const qualidadePorProdutor = {};
   if(!erroQualidadeAdmin && qualidadeRecente){
     const porProdutor = {};
     qualidadeRecente.forEach(r => { (porProdutor[r.produtor_id] = porProdutor[r.produtor_id] || []).push(r); });
-    Object.values(porProdutor).forEach(regs => {
-      if(calcularStatusQualidade(regs, hoje).nivel !== 'ok') produtoresQualidadeAlerta++;
+    Object.keys(porProdutor).forEach(pid => {
+      const nivel = calcularStatusQualidade(porProdutor[pid], hoje).nivel;
+      qualidadePorProdutor[pid] = nivel;
+      if(nivel !== 'ok') produtoresQualidadeAlerta++;
     });
   }
+  const ROTULO_QUALIDADE_ADMIN = { ok:'Ok', atencao:'Atenção', alerta:'Alerta' };
 
   const cartoesIndicadores = '<div class="grade-estat" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin-bottom:20px">'
     + '<div class="cartao-estat"><div class="rot">Produtores</div><div class="num">'+data.length+'</div></div>'
@@ -3849,7 +3869,7 @@ async function renderAdmin(){
     + '</div>';
 
   const linhas = data.map(p=>
-    '<tr style="cursor:pointer" onclick="abrirFichaProdutorAdmin(\''+p.id+'\')"><td>'+escaparHTML(p.nome||'—')+(p.admin_financeiro_liberado ? ' <span title="Financeiro liberado" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--sucesso); margin-left:4px"></span>' : '')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+(contagemAnimais[p.id]||0)+'</td></tr>'
+    '<tr style="cursor:pointer" onclick="abrirFichaProdutorAdmin(\''+p.id+'\')"><td>'+escaparHTML(p.nome||'—')+(p.admin_financeiro_liberado ? ' <span title="Financeiro liberado" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--sucesso); margin-left:4px"></span>' : '')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+(contagemAnimais[p.id]||0)+'</td><td>'+(carenciaPorProdutor[p.id]||0)+'</td><td>'+(producaoPorProdutor[p.id] ? producaoPorProdutor[p.id].toFixed(0)+' L' : '—')+'</td><td>'+(ROTULO_QUALIDADE_ADMIN[qualidadePorProdutor[p.id]] || '—')+'</td></tr>'
   ).join('');
   document.getElementById('tela-admin').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Painel administrativo</div>'
@@ -3863,11 +3883,11 @@ async function renderAdmin(){
     + '</div>'
     + '<div class="cartao">'
       + (data.length
-        ? '<table class="tabela-admin"><thead><tr><th>Nome</th><th>Propriedade</th><th>Cidade</th><th>Telefone</th><th>Animais</th></tr></thead><tbody>'+linhas+'</tbody></table>'
+        ? '<div style="overflow-x:auto"><table class="tabela-admin"><thead><tr><th>Nome</th><th>Propriedade</th><th>Cidade</th><th>Telefone</th><th>Animais</th><th>Em carência</th><th>Produção (7d)</th><th>Qualidade (90d)</th></tr></thead><tbody>'+linhas+'</tbody></table></div>'
         : '<div class="legenda-muted" style="margin-bottom:0">Nenhum produtor cadastrado ainda.</div>')
     + '</div>';
 
-  ADMIN_DADOS_ATUAIS = { produtores:data, contagemAnimais, producaoTotal7dias, mediaPorProdutor, animaisEmCarencia, totalAnimaisRegiao };
+  ADMIN_DADOS_ATUAIS = { produtores:data, contagemAnimais, producaoTotal7dias, mediaPorProdutor, animaisEmCarencia, totalAnimaisRegiao, carenciaPorProdutor, producaoPorProdutor, qualidadePorProdutor, ROTULO_QUALIDADE_ADMIN };
 }
 
 let ADMIN_DADOS_ATUAIS = null;
@@ -4439,11 +4459,15 @@ async function gerarPDFColaborador(colabId){
 
 function exportarCSVAdmin(){
   if(!ADMIN_DADOS_ATUAIS) return;
-  const linhas = ADMIN_DADOS_ATUAIS.produtores.map(p=>({
+  const d = ADMIN_DADOS_ATUAIS;
+  const linhas = d.produtores.map(p=>({
     nome: p.nome||'', propriedade: p.propriedade||'', cidade: p.cidade||'', telefone: p.telefone||'',
-    animais: ADMIN_DADOS_ATUAIS.contagemAnimais[p.id]||0
+    animais: d.contagemAnimais[p.id]||0,
+    animais_em_carencia: d.carenciaPorProdutor[p.id]||0,
+    producao_7d_litros: d.producaoPorProdutor[p.id] ? d.producaoPorProdutor[p.id].toFixed(1) : '',
+    qualidade_90d: d.ROTULO_QUALIDADE_ADMIN[d.qualidadePorProdutor[p.id]] || ''
   }));
-  baixarCSV('leitefacil_produtores.csv', ['nome','propriedade','cidade','telefone','animais'], linhas);
+  baixarCSV('leitefacil_produtores.csv', ['nome','propriedade','cidade','telefone','animais','animais_em_carencia','producao_7d_litros','qualidade_90d'], linhas);
 }
 
 function gerarPDFAdmin(){
@@ -4451,10 +4475,14 @@ function gerarPDFAdmin(){
   if(!ADMIN_DADOS_ATUAIS) return;
   const d = ADMIN_DADOS_ATUAIS;
   let conteudo = '<div class="cartao">Produtores: <strong>'+d.produtores.length+'</strong> · Animais na região: <strong>'+d.totalAnimaisRegiao+'</strong> · Produção (7 dias): <strong>'+d.producaoTotal7dias.toFixed(0)+' L</strong> · Média/produtor: <strong>'+d.mediaPorProdutor.toFixed(0)+' L</strong> · Animais em carência agora: <strong>'+d.animaisEmCarencia+'</strong></div>';
-  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produtores cadastrados</h2>';
-  conteudo += '<table class="tabela-admin"><thead><tr><th>Nome</th><th>Propriedade</th><th>Cidade</th><th>Telefone</th><th>Animais</th></tr></thead><tbody>'
-    + d.produtores.map(p=>'<tr><td>'+escaparHTML(p.nome||'—')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+(d.contagemAnimais[p.id]||0)+'</td></tr>').join('')
-    + '</tbody></table>';
+  // Tabela comparativa, não só um diretório de contatos: cada produtor numa linha,
+  // com o que dá pra olhar lado a lado sem abrir a ficha de cada um — é o que falta
+  // pra esse relatório servir pra alguma análise de verdade.
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produtores — visão comparativa</h2>';
+  conteudo += '<table class="tabela-admin"><thead><tr><th>Nome</th><th>Propriedade</th><th>Cidade</th><th>Animais</th><th>Em carência</th><th>Produção (7d)</th><th>Qualidade (90d)</th></tr></thead><tbody>'
+    + d.produtores.map(p=>'<tr><td>'+escaparHTML(p.nome||'—')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+(d.contagemAnimais[p.id]||0)+'</td><td>'+(d.carenciaPorProdutor[p.id]||0)+'</td><td>'+(d.producaoPorProdutor[p.id] ? d.producaoPorProdutor[p.id].toFixed(0)+' L' : '—')+'</td><td>'+(d.ROTULO_QUALIDADE_ADMIN[d.qualidadePorProdutor[p.id]] || '—')+'</td></tr>').join('')
+    + '</tbody></table>'
+    + '<div class="legenda-muted" style="margin-top:6px">Produção é o total dos últimos 7 dias; qualidade é o pior nível (CCS/CBT/gordura/proteína) encontrado nos últimos 90 dias, pelos limites da IN 76/77 do MAPA. Para o histórico completo de um produtor, abra a ficha dele.</div>';
   imprimirRelatorio(janela, 'Relatório LeiteFácil — Painel administrativo', conteudo);
 }
 
