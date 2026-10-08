@@ -272,6 +272,7 @@
       <section class="painel-tela" id="tela-animais"></section>
       <section class="painel-tela" id="tela-perfil"></section>
       <section class="painel-tela" id="tela-producao"></section>
+      <section class="painel-tela" id="tela-pesagem"></section>
       <section class="painel-tela" id="tela-estoque"></section>
       <section class="painel-tela" id="tela-nutricao"></section>
       <section class="painel-tela" id="tela-financeiro"></section>
@@ -352,7 +353,8 @@ const ICONES = {
   documento: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>',
   sino: '<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   lapis: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
-  folha: '<path d="M20 4C10 4 4 10 4 18v2h2c8 0 14-6 14-16z"/><path d="M6 20c3-6 8-10 14-12"/>'
+  folha: '<path d="M20 4C10 4 4 10 4 18v2h2c8 0 14-6 14-16z"/><path d="M6 20c3-6 8-10 14-12"/>',
+  balanca: '<path d="M12 3v18"/><path d="M5 7h14"/><path d="M8 21h8"/><path d="M5 7l-3.2 7a3.2 3.2 0 0 0 6.4 0z"/><path d="M19 7l-3.2 7a3.2 3.2 0 0 0 6.4 0z"/>'
 };
 function iconeInline(nome, tamanho){ return ic(ICONES[nome] || '', tamanho); }
 function iniciais(nome){ return (nome||'').split(' ').filter(Boolean).slice(0,2).map(p=>p[0]).join('').toUpperCase(); }
@@ -600,6 +602,7 @@ function abasAtivas(){
     { id:'tela-propriedade', rot:'Propriedade', ic:'pino' },
     { id:'tela-animais', rot:'Meus animais', ic:'vaca' },
     { id:'tela-producao', rot:'Produção', ic:'gota' },
+    { id:'tela-pesagem', rot:'Pesagem', ic:'balanca' },
     { id:'tela-estoque', rot:'Estoque', ic:'caixa' },
     { id:'tela-nutricao', rot:'Nutrição', ic:'folha' },
     { id:'tela-financeiro', rot:'Financeiro', ic:'moeda' },
@@ -632,6 +635,7 @@ async function trocarAba(id){
   if(id === 'tela-propriedade') renderPropriedade();
   if(id === 'tela-animais') renderAnimais();
   if(id === 'tela-producao') renderProducao();
+  if(id === 'tela-pesagem') renderPesagem();
   if(id === 'tela-estoque') renderEstoque();
   if(id === 'tela-nutricao') renderNutricao();
   if(id === 'tela-financeiro') renderFinanceiro();
@@ -1038,11 +1042,15 @@ function abrirEdicaoAnimal(id){
     + '<div class="rotulo-secao">Manejo sanitário</div>'
     + '<div id="secao-sanitario"><div class="legenda-muted">Carregando histórico...</div></div>'
     + '<div class="linha-tracejada"></div>'
+    + '<div class="rotulo-secao">Pesagem</div>'
+    + '<div id="secao-pesagem"><div class="legenda-muted">Carregando histórico...</div></div>'
+    + '<div class="linha-tracejada"></div>'
     + '<div class="rotulo-secao">Curva de lactação (produção individual) <span class="legenda-muted" style="font-size:12px; margin:0">— opcional</span></div>'
     + '<div id="secao-producao-individual"><div class="legenda-muted">Carregando...</div></div>';
   abrirModal();
   renderHistoricoReprodutivo(a.id);
   renderHistoricoSanitario(a.id);
+  renderHistoricoPesagem(a.id);
   renderCurvaLactacao(a.id);
 }
 
@@ -2073,6 +2081,232 @@ function excluirProducao(data){
     if(error){ avisar(mensagemErroAmigavel(error, 'excluir')); return; }
     fecharModal();
     renderProducao();
+  }, { textoConfirmar:'Excluir' });
+}
+
+/* ======================= PESAGEM (bezerras, novilhas, secas e lactantes) =======================
+   Pedido da FEI (set/2026): acompanhar o peso dos animais, pesados mensalmente. A tela é em
+   lote (uma linha por animal, igual à ordenha por vaca), mas o produtor escolhe livremente quais
+   lotes pesar num dia — pode ser só as bezerras, só as lactantes, o rebanho todo, o que fizer
+   sentido pra rotina dele. O GMD (ganho médio diário) é calculado sozinho a partir da pesagem
+   anterior de cada animal, sem o produtor precisar fazer conta nenhuma. */
+let FILTRO_LOTE_PESAGEM = 'todos';
+let DATA_PESAGEM_ATUAL = new Date().toISOString().slice(0,10);
+
+// GMD = variação de peso dividida pelos dias corridos entre as duas pesagens. Função pura e
+// pequena de propósito, para poder ser testada sozinha em testes/testar-calculos.js.
+function calcularGMD(pesoAnterior, dataAnterior, pesoAtual, dataAtual){
+  if(pesoAnterior === null || pesoAnterior === undefined || !dataAnterior) return null;
+  if(pesoAtual === null || pesoAtual === undefined || !dataAtual) return null;
+  const dias = diasEntre(dataAnterior, dataAtual);
+  if(dias <= 0) return null;
+  return (Number(pesoAtual) - Number(pesoAnterior)) / dias;
+}
+
+function formatarGMD(gmd){
+  if(gmd === null || gmd === undefined) return '—';
+  return gmd.toLocaleString('pt-BR', { minimumFractionDigits:3, maximumFractionDigits:3 }) + ' kg/dia';
+}
+
+function botaoFiltroLotePesagem(chave, rotulo, contagem){
+  const ativo = FILTRO_LOTE_PESAGEM === chave;
+  return '<button onclick="filtrarPesagemPorLote(\''+chave+'\')" style="padding:7px 14px; border-radius:999px; border:1px solid '+(ativo?'var(--azul)':'var(--zinco-claro)')+'; background:'+(ativo?'var(--azul)':'var(--branco)')+'; color:'+(ativo?'var(--branco)':'var(--tinta)')+'; font-size:13px; font-weight:700; cursor:pointer">'+rotulo+' ('+contagem+')</button>';
+}
+
+function filtrarPesagemPorLote(chave){
+  FILTRO_LOTE_PESAGEM = chave;
+  renderTabelaPesagem();
+}
+
+async function renderPesagem(){
+  document.getElementById('tela-pesagem').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Pesagem</div>'
+    + '<div class="legenda-muted" style="margin:-8px 0 14px">Registre o peso dos animais pesados nessa data. Pese só os lotes que fizerem sentido pra sua rotina — não precisa ser o rebanho inteiro de uma vez.</div>'
+    + '<div class="grupo-campo" style="max-width:220px"><label for="campo-data-pesagem">Data da pesagem</label><input id="campo-data-pesagem" type="date" value="'+DATA_PESAGEM_ATUAL+'" onchange="mudarDataPesagem(this.value)"></div>'
+    + '<div id="filtros-lote-pesagem" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px"></div>'
+    + '<div id="tabela-pesagem-wrap"><div class="legenda-muted">Carregando animais...</div></div>';
+  renderTabelaPesagem();
+}
+
+function mudarDataPesagem(novaData){
+  if(!novaData) return;
+  DATA_PESAGEM_ATUAL = novaData;
+  renderTabelaPesagem();
+}
+
+async function renderTabelaPesagem(){
+  const wrap = document.getElementById('tabela-pesagem-wrap');
+  const filtros = document.getElementById('filtros-lote-pesagem');
+  if(!wrap) return;
+  wrap.innerHTML = '<div class="legenda-muted">Carregando animais...</div>';
+
+  const [{ data: animais, error: erroAnimais }, { data: eventosRepro, error: erroEventos }, { data: pesagens, error: erroPesagens }] = await Promise.all([
+    sb.from('animais').select('*').eq('produtor_id', usuarioAtual.id),
+    sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id),
+    sb.from('pesagens').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false })
+  ]);
+
+  if(erroAnimais || erroPesagens){
+    wrap.innerHTML = '<div class="legenda-muted">'+mensagemErroAmigavel(erroAnimais||erroPesagens, 'carregar os animais')+'</div>';
+    return;
+  }
+
+  const eventosPorAnimal = {};
+  (eventosRepro||[]).forEach(ev=>{ (eventosPorAnimal[ev.animal_id] = eventosPorAnimal[ev.animal_id] || []).push(ev); });
+
+  const todosAnimais = (animais||[])
+    .map(a => ({ ...a, lote: erroEventos ? (a.status||'novilha') : calcularLoteAnimal(a, eventosPorAnimal[a.id], DATA_PESAGEM_ATUAL) }))
+    .sort((x,y)=> String(x.identificacao).localeCompare(String(y.identificacao), 'pt-BR', {numeric:true}));
+
+  if(todosAnimais.length === 0){
+    wrap.innerHTML = '<div class="estado-vazio"><div class="ic">'+iconeInline('balanca',28)+'</div><p>Você ainda não tem animais cadastrados para pesar.</p></div>';
+    if(filtros) filtros.innerHTML = '';
+    return;
+  }
+
+  const contagens = { todos: todosAnimais.length };
+  Object.keys(STATUS_ANIMAL).forEach(k => { contagens[k] = todosAnimais.filter(a=>a.lote===k).length; });
+  if(filtros){
+    filtros.innerHTML = botaoFiltroLotePesagem('todos', 'Todos', contagens.todos)
+      + Object.keys(STATUS_ANIMAL).map(k => botaoFiltroLotePesagem(k, STATUS_ANIMAL[k].rot, contagens[k])).join('');
+  }
+
+  const animaisFiltrados = FILTRO_LOTE_PESAGEM === 'todos' ? todosAnimais : todosAnimais.filter(a => a.lote === FILTRO_LOTE_PESAGEM);
+
+  if(animaisFiltrados.length === 0){
+    wrap.innerHTML = '<div class="legenda-muted">Nenhum animal nesse lote.</div>';
+    return;
+  }
+
+  // Pesagem mais recente de cada animal ANTES da data escolhida (pra comparar e calcular o
+  // GMD) e a pesagem já lançada NESSA data, se houver.
+  const anteriorPorAnimal = {}, hojePorAnimal = {};
+  (pesagens||[]).forEach(p=>{
+    if(p.data < DATA_PESAGEM_ATUAL && !anteriorPorAnimal[p.animal_id]) anteriorPorAnimal[p.animal_id] = p; // já vem ordenado desc
+    if(p.data === DATA_PESAGEM_ATUAL) hojePorAnimal[p.animal_id] = p;
+  });
+
+  const linhas = animaisFiltrados.map(a=>{
+    const anterior = anteriorPorAnimal[a.id];
+    const hoje = hojePorAnimal[a.id];
+    const gmd = anterior && hoje ? calcularGMD(anterior.peso_kg, anterior.data, hoje.peso_kg, hoje.data) : null;
+    const infoAnterior = anterior
+      ? Number(anterior.peso_kg).toLocaleString('pt-BR')+' kg em '+formatarData(anterior.data)
+      : 'sem pesagem anterior';
+    return '<tr data-linha-pesagem="'+a.id+'">'
+      + '<td style="font-weight:700">Nº '+escaparHTML(a.identificacao)+'<div class="legenda-muted" style="margin:0; font-size:12px">'+(STATUS_ANIMAL[a.lote]?STATUS_ANIMAL[a.lote].rot:'—')+'</div></td>'
+      + '<td style="font-size:12.5px">'+infoAnterior+'</td>'
+      + '<td><input type="number" min="0" step="0.1" inputmode="decimal" value="'+(hoje ? hoje.peso_kg : '')+'" style="width:85px" onchange="salvarPesagem('+a.id+', this)"></td>'
+      + '<td id="gmd-pesagem-'+a.id+'" style="font-size:12.5px">'+formatarGMD(gmd)+'</td>'
+      + '</tr>';
+  }).join('');
+
+  wrap.innerHTML = '<div style="overflow-x:auto"><table class="tabela-admin"><thead><tr><th>Animal</th><th>Pesagem anterior</th><th>Peso agora (kg)</th><th>GMD</th></tr></thead><tbody>'+linhas+'</tbody></table></div>';
+}
+
+async function salvarPesagem(animalId, inputEl){
+  const valor = inputEl.value;
+  const celulaGmd = document.getElementById('gmd-pesagem-'+animalId);
+
+  if(valor === ''){
+    const { error } = await sb.from('pesagens').delete().eq('animal_id', animalId).eq('produtor_id', usuarioAtual.id).eq('data', DATA_PESAGEM_ATUAL);
+    if(error){ avisar(mensagemErroAmigavel(error, 'excluir')); return; }
+    if(celulaGmd) celulaGmd.textContent = '—';
+    return;
+  }
+
+  const peso_kg = Number(valor);
+  const { error } = await sb.from('pesagens').upsert({
+    animal_id: animalId, produtor_id: usuarioAtual.id, data: DATA_PESAGEM_ATUAL, peso_kg
+  }, { onConflict: 'animal_id,data' });
+
+  if(error){ avisar(mensagemErroAmigavel(error, 'salvar')); return; }
+
+  const { data: anteriores } = await sb.from('pesagens').select('peso_kg, data').eq('animal_id', animalId).lt('data', DATA_PESAGEM_ATUAL).order('data', { ascending:false }).limit(1);
+  const anterior = anteriores && anteriores[0];
+  const gmd = anterior ? calcularGMD(anterior.peso_kg, anterior.data, peso_kg, DATA_PESAGEM_ATUAL) : null;
+  if(celulaGmd) celulaGmd.textContent = formatarGMD(gmd);
+}
+
+/* ---- Histórico de pesagens dentro da ficha do animal (seção própria, com gráfico) ---- */
+async function renderHistoricoPesagem(animalId){
+  const container = document.getElementById('secao-pesagem');
+  if(!container) return;
+
+  const { data, error } = await sb.from('pesagens').select('*').eq('animal_id', animalId).order('data', { ascending:true });
+  const botaoAdicionar = '<button class="botao botao-secundario botao-bloco" onclick="abrirFormularioPesagem('+animalId+')">'+iconeInline('balanca',18)+' Adicionar pesagem</button>';
+
+  if(error){
+    container.innerHTML = botaoAdicionar + '<div class="legenda-muted" style="margin-top:10px">'+mensagemErroAmigavel(error, 'carregar as pesagens')+'</div>';
+    return;
+  }
+  if(!data || data.length === 0){
+    container.innerHTML = botaoAdicionar + '<div class="legenda-muted" style="margin-top:10px">Nenhuma pesagem registrada ainda para este animal.</div>';
+    return;
+  }
+
+  const maxPeso = Math.max(1, ...data.map(p=>Number(p.peso_kg)));
+  const barras = data.map(p=>{
+    const altura = Math.round((Number(p.peso_kg)/maxPeso)*80) + 4;
+    return '<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; min-width:8px">'
+      + '<div title="'+formatarData(p.data)+': '+Number(p.peso_kg).toLocaleString('pt-BR')+' kg" style="width:100%; max-width:14px; height:'+altura+'px; background:var(--pasto); border-radius:3px 3px 0 0"></div>'
+      + '</div>';
+  }).join('');
+  const graficoHTML = '<div class="cartao" style="margin:10px 0"><div class="legenda-muted" style="margin-bottom:8px">Evolução do peso (kg) ao longo do tempo.</div><div style="display:flex; align-items:flex-end; gap:3px; height:110px">'+barras+'</div></div>';
+
+  const lista = data.slice().reverse().map((p,iRev)=>{
+    const i = data.length - 1 - iRev;
+    const anterior = i>0 ? data[i-1] : null;
+    const gmd = anterior ? calcularGMD(anterior.peso_kg, anterior.data, p.peso_kg, p.data) : null;
+    return '<div class="cartao" style="display:flex; align-items:center; gap:12px; margin-bottom:8px">'
+      + '<div style="flex:1"><strong>'+formatarData(p.data)+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+Number(p.peso_kg).toLocaleString('pt-BR')+' kg'+(gmd!==null ? ' · GMD '+formatarGMD(gmd) : '')+(p.observacoes ? ' · '+escaparHTML(p.observacoes) : '')+'</div></div>'
+      + '<button class="botao-perigo-fino" style="margin-top:0" onclick="excluirPesagem('+p.id+','+animalId+')">'+iconeInline('lixo',15)+'</button>'
+      + '</div>';
+  }).join('');
+
+  container.innerHTML = botaoAdicionar + graficoHTML + lista;
+}
+
+function abrirFormularioPesagem(animalId){
+  const alvo = document.getElementById('secao-pesagem');
+  const hoje = new Date().toISOString().slice(0,10);
+  alvo.insertAdjacentHTML('beforeend',
+    '<div class="cartao" id="form-pesagem">'
+    + '<div class="grupo-campo"><label for="campo-data-nova-pesagem">Data</label><input id="campo-data-nova-pesagem" type="date" value="'+hoje+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-peso-nova-pesagem">Peso (kg)</label><input id="campo-peso-nova-pesagem" type="number" min="0" step="0.1" inputmode="decimal"></div>'
+    + '<div class="grupo-campo"><label for="campo-obs-nova-pesagem">Observações (opcional)</label><input id="campo-obs-nova-pesagem" type="text"></div>'
+    + '<div id="mensagem-pesagem" class="legenda-muted" style="min-height:18px"></div>'
+    + '<button class="botao botao-primario botao-bloco" onclick="salvarNovaPesagem('+animalId+')">Salvar pesagem</button>'
+    + '</div>'
+  );
+}
+
+async function salvarNovaPesagem(animalId){
+  const data = document.getElementById('campo-data-nova-pesagem').value;
+  const pesoEl = document.getElementById('campo-peso-nova-pesagem');
+  const observacoes = document.getElementById('campo-obs-nova-pesagem').value.trim();
+  const msg = document.getElementById('mensagem-pesagem');
+
+  if(!data){ msg.textContent = 'Preencha a data da pesagem.'; msg.style.color = 'var(--perigo)'; return; }
+  if(pesoEl.value === ''){ msg.textContent = 'Preencha o peso.'; msg.style.color = 'var(--perigo)'; return; }
+
+  msg.textContent = 'Salvando...';
+  msg.style.color = 'var(--tinta-suave)';
+
+  const { error } = await sb.from('pesagens').upsert({
+    animal_id: animalId, produtor_id: usuarioAtual.id, data, peso_kg: Number(pesoEl.value), observacoes: observacoes || null
+  }, { onConflict: 'animal_id,data' });
+
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
+
+  renderHistoricoPesagem(animalId);
+}
+
+function excluirPesagem(id, animalId){
+  confirmarAcao('Excluir esta pesagem?', async () => {
+    const { error } = await sb.from('pesagens').delete().eq('id', id);
+    if(error){ avisar(mensagemErroAmigavel(error, 'excluir')); return; }
+    renderHistoricoPesagem(animalId);
   }, { textoConfirmar:'Excluir' });
 }
 
