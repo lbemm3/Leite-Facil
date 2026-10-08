@@ -71,7 +71,7 @@ function carregarFuncoesReais(){
     'diasEntre', 'somarDias',
     'calcularLoteAnimal', 'resumoReprodutivoAnimal', 'calcularIndicadoresGrupo1',
     'mediaGeometrica', 'mediaSimples', 'registrosNoPeriodo', 'calcularStatusQualidade',
-    'calcularNovoSaldoEstoque'
+    'calcularNovoSaldoEstoque', 'calcularGMD'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -200,6 +200,13 @@ console.log('\n--- calcularStatusQualidade (limites legais IN 76/77 do MAPA) ---
   const forViaDaJanela = F.registrosNoPeriodo([{ data: '2026-01-01', ccs: 100000 }, { data: HOJE, ccs: 100000 }], HOJE, 90);
   verificar('registrosNoPeriodo ignora resultado fora da janela de dias pedida', forViaDaJanela.length, 1);
 }
+
+console.log('\n--- calcularGMD (ganho médio diário, módulo de Pesagem) ---');
+aproximado('GMD positivo: ganhou 30kg em 60 dias = 0,5 kg/dia', F.calcularGMD(200, '2026-07-01', 230, '2026-08-30'), 0.5, 0.001);
+aproximado('GMD negativo: perdeu peso entre as duas pesagens', F.calcularGMD(230, '2026-07-01', 220, '2026-08-01'), -10/31, 0.001);
+verificar('sem pesagem anterior, GMD fica nulo (não dá para calcular)', F.calcularGMD(null, null, 230, '2026-08-30'), null);
+verificar('sem a pesagem atual, GMD fica nulo', F.calcularGMD(200, '2026-07-01', null, null), null);
+verificar('as duas pesagens no mesmo dia não geram GMD (divisão por zero evitada)', F.calcularGMD(200, '2026-08-30', 202, '2026-08-30'), null);
 
 console.log('\n--- calcularNovoSaldoEstoque ---');
 verificar('entrada soma ao saldo atual', F.calcularNovoSaldoEstoque(10, 'entrada', 5), 15);
