@@ -409,6 +409,31 @@ create policy "Produtor gerencia sua alimentacao" on alimentacao_eventos for all
   using (auth.uid() = produtor_id);
 
 
+-- ============================== pesagens ==============================
+-- Pedido da FEI (out/2026): acompanhamento mensal do peso dos animais, em lote e
+-- flexível por lote (bezerra/novilha/lactante/seca) — o produtor escolhe quais
+-- lotes pesar em cada data, não precisa ser o rebanho inteiro de uma vez.
+create table pesagens (
+  id            uuid not null default gen_random_uuid(),
+  produtor_id   uuid not null,
+  animal_id     bigint not null references animais(id) on delete cascade,
+  data          date not null,
+  peso_kg       numeric not null,
+  observacoes   text,
+  criado_em     timestamptz not null default now(),
+  unique (animal_id, data)
+);
+
+alter table pesagens enable row level security;
+create policy "Admin ve pesagens" on pesagens for select to public
+  using (exists (select 1 from administradores a where a.user_id = auth.uid()));
+create policy "Colaborador ve pesagens liberado" on pesagens for select to public
+  using (exists (select 1 from colaboradores c where c.produtor_id = pesagens.produtor_id and c.user_id = auth.uid() and c.status = 'ativo' and c.ve_animais = true));
+create policy "Produtor gerencia suas pesagens" on pesagens for all to public
+  using (auth.uid() = produtor_id);
+-- Constraint pesagens_peso_positivo: peso_kg > 0 (adicionada em adicionar-pesagens.sql).
+
+
 -- ============================== inscricoes_push ==============================
 create table inscricoes_push (
   id            uuid not null default gen_random_uuid(),
@@ -499,5 +524,6 @@ create policy "So admin le os registros de acesso" on logs_acesso for select to 
 --   ciclos_pastejo: altura_entrada_cm, altura_saida_cm, dias_pastejo,
 --     estimativa_ms_ton_ha >= 0
 --   alimentacao_eventos: quantidade_kg, sobras_cocho_kg >= 0
+--   pesagens: peso_kg > 0 (adicionada em adicionar-pesagens.sql, não na Fase 2)
 --   produtores: area_total_hectares, area_alimentos_hectares >= 0
 -- =====================================================================
