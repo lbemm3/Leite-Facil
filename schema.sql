@@ -14,10 +14,11 @@
 -- também, para este arquivo nunca ficar desatualizado por muito tempo.
 --
 -- O que este arquivo NÃO cobre ainda (ficou de fora da consulta usada):
---   - GRANTs (quem tem select/insert/update/delete a nível de papel do
---     Postgres). Cada arquivo adicionar-*.sql já traz o GRANT da tabela
---     que ele cria, mas não há aqui uma checagem consolidada de todas as
---     todas as 18 tabelas de uma vez.
+--   - GRANTs: foram conferidos no banco real em 09/10/2026, com o script
+--     verificar-grants-e-rls.sql. O resultado está no bloco "GRANTS" no fim
+--     deste arquivo. Os CREATE TABLE abaixo continuam sem GRANT, de propósito.
+--   - Chaves primárias, chaves estrangeiras (exceto as poucas já escritas
+--     abaixo) e CHECKs: a consulta que gerou este retrato não trazia isso.
 --   - Colunas bigint (id de animais, colaboradores, eventos, etc.) usam
 --     algum mecanismo de geração automática (os inserts do app não
 --     informam id), mas o tipo exato (identity/serial) não veio nesta
@@ -331,9 +332,16 @@ create policy "Colaborador ve financeiro liberado" on financeiro_lancamentos for
   using (exists (select 1 from colaboradores c where c.produtor_id = financeiro_lancamentos.produtor_id and c.user_id = auth.uid() and c.status = 'ativo' and c.ve_financeiro = true));
 create policy "Produtor gerencia seu financeiro" on financeiro_lancamentos for all to public
   using (auth.uid() = produtor_id);
--- Observação: sem política de admin aqui — o acesso do admin ao Financeiro do
--- produtor passa pelo consentimento explícito (admin_financeiro_liberado em
--- produtores), não por uma política própria nesta tabela.
+create policy "Admin ve financeiro com consentimento" on financeiro_lancamentos for select to public
+  using (exists (select 1 from administradores a where a.user_id = auth.uid())
+         and exists (select 1 from produtores p where p.id = financeiro_lancamentos.produtor_id and p.admin_financeiro_liberado = true));
+-- Observação (09/10/2026): até esta data o banco real NÃO tinha política de admin
+-- nesta tabela (confirmado por verificar-grants-e-rls.sql). O consentimento
+-- (admin_financeiro_liberado em produtores) é só uma coluna: sem uma política de
+-- SELECT para o admin, o RLS devolvia vazio mesmo para quem liberou o acesso.
+-- A política "Admin ve financeiro com consentimento" acima foi escrita em
+-- corrigir-rls-admin-financeiro.sql e passa a valer quando esse arquivo for
+-- rodado no Supabase. Só leitura, e só de quem liberou. Total: 3 políticas.
 
 
 -- ============================== piquetes ==============================
@@ -465,9 +473,11 @@ create table avisos_enviados (
   chave         text not null,
   enviado_em    timestamptz not null default now()
 );
--- Nenhuma política apareceu na consulta de pg_policies para esta tabela: ou o RLS
--- está desligado nela (só a Edge Function, com a chave de serviço, mexe aqui — o
--- que dispensa RLS), ou uma política ficou faltando. Vale confirmar qual dos dois.
+alter table avisos_enviados enable row level security;
+-- Confirmado no banco real em 09/10/2026: RLS ligado e nenhuma política, de
+-- propósito. Com RLS ligado e sem política, anon e authenticated não leem nem
+-- gravam nada aqui (e também não têm GRANT). Só a Edge Function avisos-diarios
+-- mexe nesta tabela, com service_role (que tem SELECT/INSERT/UPDATE/DELETE).
 
 
 -- ============================== logs_erro ==============================
@@ -526,4 +536,28 @@ create policy "So admin le os registros de acesso" on logs_acesso for select to 
 --   alimentacao_eventos: quantidade_kg, sobras_cocho_kg >= 0
 --   pesagens: peso_kg > 0 (adicionada em adicionar-pesagens.sql, não na Fase 2)
 --   produtores: area_total_hectares, area_alimentos_hectares >= 0
+-- =====================================================================
+
+
+-- =====================================================================
+-- GRANTS — conferidos no banco real em 09/10/2026 (verificar-grants-e-rls.sql)
+-- S = select, I = insert, U = update, D = delete, - = sem o privilégio.
+--
+--   authenticated: SIUD em todas as tabelas, exceto:
+--     administradores   S---   (só leitura)
+--     logs_acesso       SI--
+--     logs_erro         SI--
+--     avisos_enviados   ----   (só a Edge Function usa)
+--   anon: nenhum privilégio em nenhuma tabela, exceto:
+--     logs_erro         SI--   (INSERT é o esperado, para gravar erros antes do
+--                              login; o SELECT é inofensivo, a política de
+--                              leitura dessa tabela é só do admin)
+--   service_role (Edge Functions):
+--     animais, eventos_reprodutivos, eventos_sanitarios, qualidade_leite:  S---
+--     inscricoes_push, avisos_enviados:                                    SIUD
+--     as demais tabelas:                                                   ----
+--
+-- Toda tabela nova precisa de GRANT explícito para authenticated (este projeto
+-- não libera isso sozinho). RLS e GRANT são coisas diferentes: sem o GRANT, o
+-- banco responde "permission denied" mesmo com a política certa.
 -- =====================================================================
