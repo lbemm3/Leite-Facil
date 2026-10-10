@@ -408,6 +408,42 @@ function preencherSelect(select, opcoes, selecionado){
   }).join('');
 }
 
+// O Supabase devolve no máximo 1000 linhas por consulta. Esta função busca em páginas até acabar,
+// para que um histórico grande (ex.: 20 vacas x vários meses) não seja cortado em silêncio.
+async function buscarTodasAsLinhas(montarConsulta){
+  const tamanho = 1000;
+  let todas = [];
+  for(let de = 0; ; de += tamanho){
+    const { data, error } = await montarConsulta().range(de, de + tamanho - 1);
+    if(error) return { data: null, error };
+    todas = todas.concat(data || []);
+    if(!data || data.length < tamanho) break;
+  }
+  return { data: todas, error: null };
+}
+
+// Arredonda para 1 casa decimal (evita totais como 123.30000000000001 no CSV).
+function arredondar1(n){
+  return Math.round((Number(n)||0) * 10) / 10;
+}
+
+// Linhas do CSV de produção: total do rebanho com 1 casa decimal e o número de vacas ordenhadas no dia
+// (vacas com algum leite lançado no registro individual; vazio nos dias sem registro individual).
+function montarLinhasCSVProducao(producao, individual, incluirMetodo){
+  const vacasPorData = {};
+  (individual||[]).forEach(r=>{
+    if(Number(r.litros_manha||0) + Number(r.litros_tarde||0) > 0){
+      (vacasPorData[r.data] = vacasPorData[r.data] || new Set()).add(r.animal_id);
+    }
+  });
+  return (producao||[]).map(r=>{
+    const m = Number(r.litros_manha||0), t = Number(r.litros_tarde||0);
+    const o = { data:r.data, litros_manha:m, litros_tarde:t, total:arredondar1(m + t), vacas_ordenhadas: vacasPorData[r.data] ? vacasPorData[r.data].size : '' };
+    if(incluirMetodo) o.metodo = r.metodo_registro || 'rebanho';
+    return o;
+  });
+}
+
 function baixarCSV(nomeArquivo, colunas, linhas){
   const cabecalho = colunas.join(';');
   const corpo = linhas.map(l => colunas.map(c => {
@@ -970,6 +1006,7 @@ function atualizarCampoDataPartoAnterior(){
   const hoje = new Date().toISOString().slice(0,10);
   document.getElementById('wrap-data-parto-anterior').innerHTML = marcado
     ? '<div class="grupo-campo"><label for="campo-data-parto-anterior">Data do último parto (aproximada, se não souber a exata)</label><input id="campo-data-parto-anterior" type="date" value="'+hoje+'"></div>'
+      + '<div class="grupo-campo"><label for="campo-total-partos-anteriores">Quantos partos ela já teve, contando esse último?</label><input id="campo-total-partos-anteriores" type="number" min="1" max="20" step="1" value="1"><div class="legenda-muted" style="font-size:12px; margin-top:4px">Se não souber, deixe 1. Esse número entra no cálculo da ordem de parto e evita distorcer a idade ao 1º parto.</div></div>'
     : '';
 }
 
@@ -990,12 +1027,21 @@ async function salvarNovoAnimal(){
   if(!identificacao){ msg.textContent = 'Preencha o número/brinco do animal.'; msg.style.color = 'var(--perigo)'; return; }
   if(jaPariu && !dataPartoAnterior){ msg.textContent = 'Preencha a data do último parto.'; msg.style.color = 'var(--perigo)'; return; }
 
+  // O parto lançado aqui é o último; os que vieram antes dele ficam em "partos_anteriores".
+  let partos_anteriores = 0;
+  if(jaPariu){
+    const elTotal = document.getElementById('campo-total-partos-anteriores');
+    const total = elTotal ? parseInt(elTotal.value, 10) : 1;
+    if(!Number.isInteger(total) || total < 1 || total > 20){ msg.textContent = 'Informe quantos partos ela já teve (de 1 a 20).'; msg.style.color = 'var(--perigo)'; return; }
+    partos_anteriores = total - 1;
+  }
+
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
 
   const { data: animalSalvo, error } = await sb.from('animais').insert({
     produtor_id: usuarioAtual.id, identificacao, grau_sangue, data_nascimento, status,
-    mae_nome, mae_brinco, pai_nome, avo_nome, avo_macho_nome
+    mae_nome, mae_brinco, pai_nome, avo_nome, avo_macho_nome, partos_anteriores
   }).select().single();
 
   if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
@@ -1021,6 +1067,7 @@ function abrirEdicaoAnimal(id){
     + '<div class="grupo-campo"><label for="campo-identificacao">Número / brinco</label><input id="campo-identificacao" type="text" value="'+escaparHTML(a.identificacao||'')+'"></div>'
     + '<div class="grupo-campo"><label for="campo-grau-sangue">Grau de sangue</label><input id="campo-grau-sangue" type="text" value="'+escaparHTML(a.grau_sangue||'')+'" placeholder="Ex.: 3/4 Holandês, 1/4 Jersey"></div>'
     + '<div class="grupo-campo"><label for="campo-nascimento">Data de nascimento</label><input id="campo-nascimento" type="date" value="'+(a.data_nascimento||'')+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-partos-anteriores">Partos anteriores aos registrados no app</label><input id="campo-partos-anteriores" type="number" min="0" max="19" step="1" value="'+(Number(a.partos_anteriores)||0)+'"><div class="legenda-muted" style="font-size:12px; margin-top:4px">Quantos partos a vaca teve antes do primeiro parto que aparece no histórico abaixo. Se o histórico estiver completo, deixe 0.</div></div>'
     + '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga); display:flex; align-items:center; justify-content:space-between; gap:10px">'
       + '<span class="legenda-muted" style="margin:0">Lote atual (calculado automaticamente)</span>'
       + '<span style="background:'+(STATUS_ANIMAL[a.lote]||{cor:'var(--zinco)'}).cor+'; color:var(--branco); font-size:11px; font-weight:800; padding:4px 10px; border-radius:999px; text-transform:uppercase">'+(STATUS_ANIMAL[a.lote]?STATUS_ANIMAL[a.lote].rot:'—')+'</span>'
@@ -1108,14 +1155,16 @@ function calcularIndicadoresGrupo1(animais, eventos, hojeIso){
 
   // Idade ao 1º parto: só para animais nascidos na propriedade (data de nascimento conhecida) cujo primeiro
   // parto não seja o "parto anterior à entrada no rebanho" lançado no cadastro — esse é aproximado e de um
-  // animal que já chegou adulto, não serve para medir precocidade.
+  // animal que já chegou adulto, não serve para medir precocidade. Também ficam de fora os animais com
+  // "partos anteriores" informados: o primeiro parto lançado no app, nesse caso, não é o primeiro de verdade.
   let somaIdadeDias = 0, elegiveisIdade = 0, excluidosIdade = 0;
   animais.forEach(a=>{
     const partos = (eventosPorAnimal[a.id]||[]).filter(e=>e.tipo==='parto').sort((x,y)=>x.data.localeCompare(y.data));
     if(!partos.length) return;
     const primeiro = partos[0];
     const entrouJaParida = (primeiro.observacoes||'').startsWith('Parto anterior à entrada no rebanho');
-    if(!a.data_nascimento || entrouJaParida){ excluidosIdade++; return; }
+    const temPartosAnteriores = Number(a.partos_anteriores||0) > 0;
+    if(!a.data_nascimento || entrouJaParida || temPartosAnteriores){ excluidosIdade++; return; }
     somaIdadeDias += diasEntre(a.data_nascimento, primeiro.data);
     elegiveisIdade++;
   });
@@ -1149,7 +1198,7 @@ function montarCartaoGrupo1(ind){
   const idade = ind.idadePrimeiroParto, cio = ind.repeticaoCio;
   return '<div class="cartao" style="display:flex; flex-wrap:wrap; justify-content:space-around; text-align:center; gap:10px">'
     + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Idade média ao 1º parto</div><div style="font-weight:700; font-size:18px">'+(idade.mediaMeses!==null ? idade.mediaMeses.toFixed(1)+' meses' : '—')+'</div>'
-      + (idade.elegiveis || idade.excluidos ? '<div class="legenda-muted" style="font-size:11px">'+idade.elegiveis+' animal(is) considerado(s)'+(idade.excluidos ? ', '+idade.excluidos+' fora (sem nascimento na propriedade ou entrou já parido)' : '')+'</div>' : '')
+      + (idade.elegiveis || idade.excluidos ? '<div class="legenda-muted" style="font-size:11px">'+idade.elegiveis+' animal(is) considerado(s)'+(idade.excluidos ? ', '+idade.excluidos+' fora (sem data de nascimento, entrou já parida ou já tinha partos anteriores)' : '')+'</div>' : '')
     + '</div>'
     + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Repetição de cio (após cobertura)</div><div style="font-weight:700; font-size:18px">'+(cio.taxaPct!==null ? cio.taxaPct.toFixed(0)+'%' : '—')+'</div>'
       + (cio.coberturas ? '<div class="legenda-muted" style="font-size:11px">'+cio.repeticoes+' de '+cio.coberturas+' cobertura(s)'+(cio.intervaloMedioDias ? ' · intervalo médio '+cio.intervaloMedioDias.toFixed(0)+' dias' : '')+'</div>' : '<div class="legenda-muted" style="font-size:11px">Nenhuma cobertura com prazo já completo</div>')
@@ -3415,7 +3464,7 @@ async function renderIndicadores(){
     { data: qualidade, error: erroQualidade }
   ] = await Promise.all([
     sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false }),
-    sb.from('animais').select('id, identificacao').eq('produtor_id', usuarioAtual.id),
+    sb.from('animais').select('id, identificacao, data_nascimento, partos_anteriores').eq('produtor_id', usuarioAtual.id),
     sb.from('eventos_reprodutivos').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:true }),
     sb.from('financeiro_lancamentos').select('*').eq('produtor_id', usuarioAtual.id),
     sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false })
@@ -3538,8 +3587,10 @@ async function exportarCSVProdutor(){
   const fim = document.getElementById('campo-relatorio-fim').value;
   const { data, error } = await sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true });
   if(error){ avisar(mensagemErroAmigavel(error, 'gerar o CSV')); return; }
-  const linhas = data.map(r=>({ data:r.data, litros_manha:r.litros_manha||0, litros_tarde:r.litros_tarde||0, total:(Number(r.litros_manha||0)+Number(r.litros_tarde||0)) }));
-  baixarCSV('leitefacil_producao_'+inicio+'_a_'+fim+'.csv', ['data','litros_manha','litros_tarde','total'], linhas);
+  const { data: individual, error: erroInd } = await buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }).order('animal_id', { ascending:true }));
+  if(erroInd){ avisar(mensagemErroAmigavel(erroInd, 'gerar o CSV')); return; }
+  const linhas = montarLinhasCSVProducao(data, individual, false);
+  baixarCSV('leitefacil_producao_'+inicio+'_a_'+fim+'.csv', ['data','litros_manha','litros_tarde','total','vacas_ordenhadas'], linhas);
 }
 
 async function gerarPDFProdutor(){
@@ -3634,9 +3685,11 @@ async function salvarEdicaoAnimal(id){
   const pai_nome = document.getElementById('campo-pai-nome').value.trim();
   const avo_nome = document.getElementById('campo-avo-nome').value.trim();
   const avo_macho_nome = document.getElementById('campo-avo-macho-nome').value.trim();
+  const partos_anteriores = parseInt(document.getElementById('campo-partos-anteriores').value || '0', 10);
   const msg = document.getElementById('mensagem-animal');
 
   if(!identificacao){ msg.textContent = 'Preencha o número/brinco do animal.'; msg.style.color = 'var(--perigo)'; return; }
+  if(!Number.isInteger(partos_anteriores) || partos_anteriores < 0 || partos_anteriores > 19){ msg.textContent = 'Partos anteriores deve ser um número de 0 a 19.'; msg.style.color = 'var(--perigo)'; return; }
 
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
@@ -3645,7 +3698,7 @@ async function salvarEdicaoAnimal(id){
   const status = calcularLoteAnimal({ data_nascimento }, eventosDoAnimal || []);
 
   const { error } = await sb.from('animais')
-    .update({ identificacao, grau_sangue, data_nascimento, status, mae_nome, mae_brinco, pai_nome, avo_nome, avo_macho_nome })
+    .update({ identificacao, grau_sangue, data_nascimento, status, mae_nome, mae_brinco, pai_nome, avo_nome, avo_macho_nome, partos_anteriores })
     .eq('id', id);
 
   if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
@@ -4244,7 +4297,7 @@ async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro, incluirR
   const inicioMes = hoje.slice(0,8) + '01';
   const consultas = [
     sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:false }),
-    sb.from('animais').select('id, identificacao, data_nascimento').eq('produtor_id', produtorId),
+    sb.from('animais').select('id, identificacao, data_nascimento, partos_anteriores').eq('produtor_id', produtorId),
     sb.from('eventos_reprodutivos').select('*').eq('produtor_id', produtorId).order('data', { ascending:true }),
     sb.from('qualidade_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:false })
   ];
@@ -4342,7 +4395,9 @@ async function mapaIdentificacaoAnimais(produtorId){
 const ordemNumerica = (a,b) => String(a).localeCompare(String(b), 'pt', { numeric:true });
 
 // Partos, último parto, DEL (dias desde o último parto, vazio se já secou) e IEP (dias entre os dois últimos partos).
-function resumoReprodutivoAnimal(evs, hojeIso){
+// "partosAnteriores" (opcional) é quantos partos a vaca teve antes do primeiro parto registrado no app; com ele
+// sai a ordem de parto (paridade) real. Sem ele, a paridade é só a contagem dos partos registrados.
+function resumoReprodutivoAnimal(evs, hojeIso, partosAnteriores){
   const partos = (evs||[]).filter(e=>e.tipo==='parto').sort((x,y)=>x.data.localeCompare(y.data));
   const ultimo = partos.length ? partos[partos.length-1] : null;
   const secouDepois = ultimo && (evs||[]).some(e=>e.tipo==='secagem' && e.data > ultimo.data);
@@ -4354,6 +4409,7 @@ function resumoReprodutivoAnimal(evs, hojeIso){
   const desfechos = abortos + partos.length;
   return {
     partos: partos.length,
+    paridade: partos.length ? (Number(partosAnteriores)||0) + partos.length : 0,
     ultimoParto: ultimo ? ultimo.data : null,
     del: (ultimo && !secouDepois) ? diasEntre(ultimo.data, hojeIso) : null,
     iep: partos.length >= 2 ? diasEntre(partos[partos.length-2].data, ultimo.data) : null,
@@ -4397,21 +4453,21 @@ function montarResumoPorAnimalHTML(animais, eventosPorAnimal, individual){
   const regsPor = {}; individual.forEach(r=>{ (regsPor[r.animal_id] = regsPor[r.animal_id] || []).push(r); });
   const linhas = [...animais].sort((a,b)=>ordemNumerica(a.identificacao, b.identificacao)).map(a=>{
     const evs = eventosPorAnimal[a.id] || [];
-    const rr = resumoReprodutivoAnimal(evs, hoje);
+    const rr = resumoReprodutivoAnimal(evs, hoje, a.partos_anteriores);
     const lote = calcularLoteAnimal(a, evs);
     const regs = regsPor[a.id] || [];
     const completos = regs.filter(r=>r.litros_manha!=null && r.litros_tarde!=null).map(r=>Number(r.litros_manha)+Number(r.litros_tarde));
     const vazio = '—';
     return '<tr><td>Nº '+escaparHTML(a.identificacao)+'</td><td>'+escaparHTML(a.grau_sangue||vazio)+'</td><td>'+(STATUS_ANIMAL[lote] ? STATUS_ANIMAL[lote].rot : vazio)+'</td>'
-      + '<td>'+(a.data_nascimento ? formatarData(a.data_nascimento) : vazio)+'</td><td>'+rr.partos+'</td><td>'+(rr.ultimoParto ? formatarData(rr.ultimoParto) : vazio)+'</td>'
+      + '<td>'+(a.data_nascimento ? formatarData(a.data_nascimento) : vazio)+'</td><td>'+rr.partos+'</td><td>'+(rr.paridade||vazio)+'</td><td>'+(rr.ultimoParto ? formatarData(rr.ultimoParto) : vazio)+'</td>'
       + '<td>'+(rr.del!=null ? rr.del : vazio)+'</td><td>'+(rr.iep!=null ? rr.iep : vazio)+'</td>'
       + '<td>'+(rr.abortos ? rr.abortos+(rr.taxaAbortoPct!=null ? ' ('+rr.taxaAbortoPct.toFixed(0)+'%)' : '') : '0')+'</td>'
       + '<td>'+(rr.natimortos ? rr.natimortos+(rr.taxaNatimortoPct!=null ? ' ('+rr.taxaNatimortoPct.toFixed(0)+'%)' : '') : '0')+'</td>'
       + '<td>'+regs.length+'</td><td>'+completos.length+'</td>'
       + '<td>'+(completos.length ? (completos.reduce((s,x)=>s+x,0)/completos.length).toFixed(1) : vazio)+'</td><td>'+(completos.length ? Math.max(...completos).toFixed(1) : vazio)+'</td></tr>';
   }).join('');
-  return '<table class="tabela-admin matriz"><thead><tr><th>Animal</th><th>Grau de sangue</th><th>Lote</th><th>Nascimento</th><th>Partos</th><th>Último parto</th><th>DEL</th><th>IEP</th><th>Abortos</th><th>Natimortos</th><th>Dias c/ registro</th><th>Dias completos</th><th>Média/dia (L)</th><th>Melhor dia (L)</th></tr></thead><tbody>'+linhas+'</tbody></table>'
-    + '<div class="legenda-muted" style="margin-top:6px">DEL = dias desde o último parto (vazio se a vaca já secou). IEP = dias entre os dois últimos partos. Abortos e natimortos contam a vida toda do animal, com a taxa entre parênteses (abortos sobre gestações com desfecho conhecido; natimortos sobre total de partos). Média e melhor dia consideram só os dias com as duas ordenhas lançadas.</div>';
+  return '<table class="tabela-admin matriz"><thead><tr><th>Animal</th><th>Grau de sangue</th><th>Lote</th><th>Nascimento</th><th>Partos</th><th>Ordem de parto</th><th>Último parto</th><th>DEL</th><th>IEP</th><th>Abortos</th><th>Natimortos</th><th>Dias c/ registro</th><th>Dias completos</th><th>Média/dia (L)</th><th>Melhor dia (L)</th></tr></thead><tbody>'+linhas+'</tbody></table>'
+    + '<div class="legenda-muted" style="margin-top:6px">Partos = registrados no app; ordem de parto = partos registrados mais os partos anteriores informados no cadastro. DEL = dias desde o último parto (vazio se a vaca já secou). IEP = dias entre os dois últimos partos. Abortos e natimortos contam a vida toda do animal, com a taxa entre parênteses (abortos sobre gestações com desfecho conhecido; natimortos sobre total de partos). Média e melhor dia consideram só os dias com as duas ordenhas lançadas.</div>';
 }
 
 // ---------- Excel para análise (uma aba por tabela, dados em formato "uma linha por observação") ----------
@@ -4465,7 +4521,7 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
   aba('Leia-me', [
     { aba:'Producao_por_vaca', o_que_e:'Uma linha por vaca por dia. del_na_data = dias desde o último parto registrado até aquele dia; partos_ate_a_data = quantos partos já tinha naquele dia; ordenhas_lancadas = 0, 1 ou 2.' },
     { aba:'Producao_rebanho', o_que_e:'Uma linha por dia, com o total do rebanho e os detalhes das ordenhas. soma_vacas_* vem dos lançamentos individuais; diferenca_total diferente de 0 indica que o total do rebanho não bate com a soma das vacas.' },
-    { aba:'Animais', o_que_e:'Cadastro atual: lote calculado, número de partos, último parto, DEL (vazio se secou) e IEP (dias entre os dois últimos partos).' },
+    { aba:'Animais', o_que_e:'Cadastro atual: lote calculado, partos registrados, partos anteriores informados, ordem de parto, último parto, DEL (vazio se secou) e IEP (dias entre os dois últimos partos).' },
     { aba:'Alimentacao', o_que_e:'Um lançamento por evento de alimentação, por lote (bezerra/novilha/lactante/seca). Quando o alimento é pasto, a coluna piquete traz o nome em vez do código interno.' },
     { aba:'Piquetes / Pastagem_ciclos', o_que_e:'Piquetes cadastrados e o histórico de ciclos de pastejo de cada um (espécie do pasto, altura de entrada/saída, dias de pastejo, estimativa de matéria seca).' },
     { aba:'Demais abas', o_que_e:'Reprodutivo, Sanitario, Qualidade e Financeiro (só se liberado) trazem todos os registros, com o número do animal no lugar do código interno.' },
@@ -4493,9 +4549,9 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
   }
   if(permissoes.ve_animais){
     aba('Animais', d.animais.map(a=>{
-      const evs = eventosPor[a.id] || [], rr = resumoReprodutivoAnimal(evs, hoje), lote = calcularLoteAnimal(a, evs);
+      const evs = eventosPor[a.id] || [], rr = resumoReprodutivoAnimal(evs, hoje, a.partos_anteriores), lote = calcularLoteAnimal(a, evs);
       const o = { animal:a.identificacao, grau_sangue:a.grau_sangue||'', data_nascimento:a.data_nascimento||'', mae_brinco:a.mae_brinco||'', lote_atual:(STATUS_ANIMAL[lote]?STATUS_ANIMAL[lote].rot:'') };
-      if(permissoes.ve_reprodutivo){ o.partos = rr.partos; o.ultimo_parto = rr.ultimoParto||''; o.del = rr.del==null?'':rr.del; o.iep = rr.iep==null?'':rr.iep; }
+      if(permissoes.ve_reprodutivo){ o.partos = rr.partos; o.partos_anteriores = Number(a.partos_anteriores)||0; o.ordem_de_parto = rr.paridade||''; o.ultimo_parto = rr.ultimoParto||''; o.del = rr.del==null?'':rr.del; o.iep = rr.iep==null?'':rr.iep; }
       return o;
     }));
   }
@@ -4528,9 +4584,11 @@ async function baixarExcelColaborador(colabId){
 async function baixarCSVProducaoCompleta(produtorId, nomeProdutor){
   const { data, error } = await sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
   if(error){ avisar(mensagemErroAmigavel(error, 'gerar o CSV')); return; }
-  const linhas = (data||[]).map(r=>({ data:r.data, litros_manha:r.litros_manha||0, litros_tarde:r.litros_tarde||0, total:(Number(r.litros_manha||0)+Number(r.litros_tarde||0)), metodo:r.metodo_registro||'rebanho' }));
+  const { data: individual, error: erroInd } = await buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', produtorId).order('data', { ascending:true }).order('animal_id', { ascending:true }));
+  if(erroInd){ avisar(mensagemErroAmigavel(erroInd, 'gerar o CSV')); return; }
+  const linhas = montarLinhasCSVProducao(data, individual, true);
   const nomeArquivo = 'leitefacil_producao_'+(nomeProdutor||'produtor').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_')+'.csv';
-  baixarCSV(nomeArquivo, ['data','litros_manha','litros_tarde','total','metodo'], linhas);
+  baixarCSV(nomeArquivo, ['data','litros_manha','litros_tarde','total','vacas_ordenhadas','metodo'], linhas);
 }
 
 async function exportarCSVFichaProdutorAdmin(produtorId){
