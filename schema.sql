@@ -109,7 +109,8 @@ create table animais (
   mae_brinco        text,
   pai_nome          text,
   avo_nome          text,
-  avo_macho_nome    text
+  avo_macho_nome    text,
+  partos_anteriores integer not null default 0  -- partos antes do 1º parto registrado no app (check 0 a 19)
 );
 
 alter table animais enable row level security;
