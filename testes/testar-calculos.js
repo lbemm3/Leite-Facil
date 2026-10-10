@@ -24,6 +24,7 @@ const CAMINHO_INDEX = path.join(__dirname, '..', 'index.html');
 function extrairTrecho(codigo, nome){
   let inicio = codigo.indexOf('function ' + nome + '(');
   let ehFuncao = inicio !== -1;
+  if(ehFuncao && codigo.slice(Math.max(0, inicio - 6), inicio) === 'async ') inicio -= 6; // funções async
   if(inicio === -1){
     inicio = codigo.indexOf('const ' + nome + ' ');
     if(inicio === -1) inicio = codigo.indexOf('const ' + nome + '=');
@@ -72,7 +73,7 @@ function carregarFuncoesReais(){
     'calcularLoteAnimal', 'resumoReprodutivoAnimal', 'calcularIndicadoresGrupo1',
     'mediaGeometrica', 'mediaSimples', 'registrosNoPeriodo', 'calcularStatusQualidade',
     'calcularNovoSaldoEstoque', 'calcularGMD',
-    'arredondar1', 'montarLinhasCSVProducao'
+    'arredondar1', 'montarLinhasCSVProducao', 'buscarTodasAsLinhas'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -267,14 +268,54 @@ verificar('entrada soma ao saldo atual', F.calcularNovoSaldoEstoque(10, 'entrada
 verificar('consumo subtrai do saldo atual', F.calcularNovoSaldoEstoque(10, 'consumo', 5), 5);
 verificar('consumo pode deixar o saldo negativo (o app não bloqueia isso hoje — o teste só registra a regra atual)', F.calcularNovoSaldoEstoque(3, 'consumo', 5), -2);
 
-console.log('\n' + '-'.repeat(50));
-console.log(total + ' verificações, ' + falhas + ' falha(s).');
-if(falhas > 0){
-  console.log('\nAlgum cálculo do app não bateu com o esperado. Não suba esta versão');
-  console.log('sem entender por que — pode ser um bug novo, ou os testes é que');
-  console.log('precisam ser atualizados porque a regra mudou de propósito.');
-  process.exit(1);
-} else {
-  console.log('\nTudo certo — os cálculos continuam batendo com o esperado.');
-  process.exit(0);
-}
+console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do Supabase) ---');
+(async () => {
+  // Consulta de mentira: guarda os pedidos feitos e devolve fatias de uma lista com n linhas.
+  function consultaFalsa(n, falharNaPagina){
+    const linhas = Array.from({ length: n }, (_, i) => ({ id: i + 1 }));
+    const pedidos = { ordens: [], faixas: [] };
+    const fabrica = () => {
+      const b = {
+        order(col){ pedidos.ordens.push(col); return b; },
+        range(de, ate){
+          pedidos.faixas.push([de, ate]);
+          if(falharNaPagina !== undefined && pedidos.faixas.length === falharNaPagina) return Promise.resolve({ data: null, error: { message: 'falhou' } });
+          return Promise.resolve({ data: linhas.slice(de, ate + 1), error: null });
+        }
+      };
+      return b;
+    };
+    return { fabrica, pedidos };
+  }
+  const roda = async (n, falhar) => { const c = consultaFalsa(n, falhar); const r = await F.buscarTodasAsLinhas(c.fabrica); return { r, c }; };
+
+  let x = await roda(2500);
+  verificar('2500 linhas voltam inteiras, em 3 pedidos', [x.r.data.length, x.c.pedidos.faixas.length], [2500, 3]);
+  verificar('as páginas pedem as faixas certas', x.c.pedidos.faixas, [[0, 999], [1000, 1999], [2000, 2999]]);
+  verificar('nenhuma linha repetida nem pulada', x.r.data.every((l, i) => l.id === i + 1), true);
+  verificar('pede desempate por id em todas as páginas', x.c.pedidos.ordens, ['id', 'id', 'id']);
+
+  x = await roda(2000);
+  verificar('número exato de páginas cheias: faz um pedido extra e termina sem erro', [x.r.data.length, x.c.pedidos.faixas.length], [2000, 3]);
+
+  x = await roda(40);
+  verificar('poucas linhas: um pedido só', [x.r.data.length, x.c.pedidos.faixas.length], [40, 1]);
+
+  x = await roda(0);
+  verificar('tabela vazia devolve lista vazia, sem erro', [x.r.data, x.r.error], [[], null]);
+
+  x = await roda(2500, 2);
+  verificar('erro numa página para tudo e devolve o erro (sem relatório pela metade)', [x.r.data, x.r.error && x.r.error.message], [null, 'falhou']);
+
+  console.log('\n' + '-'.repeat(50));
+  console.log(total + ' verificações, ' + falhas + ' falha(s).');
+  if(falhas > 0){
+    console.log('\nAlgum cálculo do app não bateu com o esperado. Não suba esta versão');
+    console.log('sem entender por que — pode ser um bug novo, ou os testes é que');
+    console.log('precisam ser atualizados porque a regra mudou de propósito.');
+    process.exit(1);
+  } else {
+    console.log('\nTudo certo — os cálculos continuam batendo com o esperado.');
+    process.exit(0);
+  }
+})();
