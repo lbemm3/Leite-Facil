@@ -414,7 +414,8 @@ async function buscarTodasAsLinhas(montarConsulta){
   const tamanho = 1000;
   let todas = [];
   for(let de = 0; ; de += tamanho){
-    const { data, error } = await montarConsulta().range(de, de + tamanho - 1);
+    // o desempate por id mantém a ordem estável entre as páginas (sem repetir nem pular linhas)
+    const { data, error } = await montarConsulta().order('id', { ascending:true }).range(de, de + tamanho - 1);
     if(error) return { data: null, error };
     todas = todas.concat(data || []);
     if(!data || data.length < tamanho) break;
@@ -1668,7 +1669,7 @@ function linhaCompacta(icone, titulo, subtitulo, valorDireita, onclickAttr, corB
 async function renderProducao(){
   document.getElementById('tela-producao').innerHTML = '<div class="legenda-muted">Carregando produção...</div>';
   const [{ data, error }, { data: dadosQualidade, error: erroQualidade }] = await Promise.all([
-    sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false }),
+    buscarTodasAsLinhas(() => sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false })),
     sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false })
   ]);
   if(error){
@@ -3463,7 +3464,7 @@ async function renderIndicadores(){
     { data: lancamentos, error: erroLancamentos },
     { data: qualidade, error: erroQualidade }
   ] = await Promise.all([
-    sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false }),
+    buscarTodasAsLinhas(() => sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false })),
     sb.from('animais').select('id, identificacao, data_nascimento, partos_anteriores').eq('produtor_id', usuarioAtual.id),
     sb.from('eventos_reprodutivos').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:true }),
     sb.from('financeiro_lancamentos').select('*').eq('produtor_id', usuarioAtual.id),
@@ -3585,7 +3586,7 @@ function blocoRelatorios(){
 async function exportarCSVProdutor(){
   const inicio = document.getElementById('campo-relatorio-inicio').value;
   const fim = document.getElementById('campo-relatorio-fim').value;
-  const { data, error } = await sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true });
+  const { data, error } = await buscarTodasAsLinhas(() => sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }));
   if(error){ avisar(mensagemErroAmigavel(error, 'gerar o CSV')); return; }
   const { data: individual, error: erroInd } = await buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }).order('animal_id', { ascending:true }));
   if(erroInd){ avisar(mensagemErroAmigavel(erroInd, 'gerar o CSV')); return; }
@@ -3599,14 +3600,14 @@ async function gerarPDFProdutor(){
   const fim = document.getElementById('campo-relatorio-fim').value;
 
   const [{ data: producao }, { data: animais }, { data: eventosRepro }, { data: eventosSan }, { data: lancamentos }, { data: qualidade }, { data: eventosReproCompletos }, { data: producaoIndividual }] = await Promise.all([
-    sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
+    buscarTodasAsLinhas(() => sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true })),
     sb.from('animais').select('*').eq('produtor_id', usuarioAtual.id),
     sb.from('eventos_reprodutivos').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('eventos_sanitarios').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data_aplicacao', inicio).lte('data_aplicacao', fim).order('data_aplicacao', { ascending:true }),
     sb.from('financeiro_lancamentos').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id),
-    sb.from('producao_leite_individual').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true })
+    buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }))
   ]);
   const idsPeriodo = {}; (animais||[]).forEach(a=>{ idsPeriodo[a.id] = a.identificacao; });
   (eventosRepro||[]).forEach(ev=>{ ev.animais = { identificacao: idsPeriodo[ev.animal_id] }; });
@@ -4091,10 +4092,10 @@ async function renderAdmin(){
     { data: qualidadeRecente, error: erroQualidadeAdmin }
   ] = await Promise.all([
     sb.from('produtores').select('*').order('criado_em', { ascending:false }),
-    sb.from('animais').select('id, produtor_id'),
-    sb.from('producao_leite').select('produtor_id, litros_manha, litros_tarde').gte('data', seteDiasAtras),
+    buscarTodasAsLinhas(() => sb.from('animais').select('id, produtor_id')),
+    buscarTodasAsLinhas(() => sb.from('producao_leite').select('produtor_id, litros_manha, litros_tarde').gte('data', seteDiasAtras)),
     sb.from('eventos_sanitarios').select('animal_id').gte('data_fim_carencia', hoje),
-    sb.from('qualidade_leite').select('produtor_id, data, ccs, cbt, gordura, proteina').gte('data', somarDias(hoje, -90))
+    buscarTodasAsLinhas(() => sb.from('qualidade_leite').select('produtor_id, data, ccs, cbt, gordura, proteina').gte('data', somarDias(hoje, -90)))
   ]);
   if(error){
     document.getElementById('tela-admin').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Painel administrativo</div><div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar os produtores')+'</div>';
@@ -4296,7 +4297,7 @@ async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro, incluirR
   const hoje = new Date().toISOString().slice(0,10);
   const inicioMes = hoje.slice(0,8) + '01';
   const consultas = [
-    sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:false }),
+    buscarTodasAsLinhas(() => sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:false })),
     sb.from('animais').select('id, identificacao, data_nascimento, partos_anteriores').eq('produtor_id', produtorId),
     sb.from('eventos_reprodutivos').select('*').eq('produtor_id', produtorId).order('data', { ascending:true }),
     sb.from('qualidade_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:false })
@@ -4485,7 +4486,7 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
   try{ await carregarSheetJS(); }
   catch(e){ avisar('Não foi possível carregar o gerador de Excel. Verifique a conexão com a internet e tente de novo.'); return; }
 
-  const q = (tabela, ordem) => sb.from(tabela).select('*').eq('produtor_id', produtorId).order(ordem, { ascending:true });
+  const q = (tabela, ordem) => buscarTodasAsLinhas(() => sb.from(tabela).select('*').eq('produtor_id', produtorId).order(ordem, { ascending:true }));
   const pedidos = { animais: q('animais','id') };
   if(permissoes.ve_reprodutivo) pedidos.eventos = q('eventos_reprodutivos','data');
   if(permissoes.ve_sanitario) pedidos.sanitario = q('eventos_sanitarios','data_aplicacao');
@@ -4582,7 +4583,7 @@ async function baixarExcelColaborador(colabId){
 }
 
 async function baixarCSVProducaoCompleta(produtorId, nomeProdutor){
-  const { data, error } = await sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
+  const { data, error } = await buscarTodasAsLinhas(() => sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true }));
   if(error){ avisar(mensagemErroAmigavel(error, 'gerar o CSV')); return; }
   const { data: individual, error: erroInd } = await buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', produtorId).order('data', { ascending:true }).order('animal_id', { ascending:true }));
   if(erroInd){ avisar(mensagemErroAmigavel(erroInd, 'gerar o CSV')); return; }
@@ -4615,8 +4616,8 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p, ja
   if(permissoes.ve_reprodutivo) consultas.eventosRepro = sb.from('eventos_reprodutivos').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
   if(permissoes.ve_sanitario) consultas.eventosSan = sb.from('eventos_sanitarios').select('*, animais(identificacao)').eq('produtor_id', produtorId).order('data_aplicacao', { ascending:true });
   if(permissoes.ve_producao){
-    consultas.producao = sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
-    consultas.producaoIndividual = sb.from('producao_leite_individual').select('*, animais(identificacao)').eq('produtor_id', produtorId).order('data', { ascending:true });
+    consultas.producao = buscarTodasAsLinhas(() => sb.from('producao_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true }));
+    consultas.producaoIndividual = buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('*, animais(identificacao)').eq('produtor_id', produtorId).order('data', { ascending:true }));
     consultas.qualidade = sb.from('qualidade_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
     consultas.alimentacao = sb.from('alimentacao_eventos').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
     consultas.piquetesRelatorio = sb.from('piquetes').select('*').eq('produtor_id', produtorId).order('nome', { ascending:true });
