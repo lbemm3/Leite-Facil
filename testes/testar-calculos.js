@@ -71,7 +71,8 @@ function carregarFuncoesReais(){
     'diasEntre', 'somarDias',
     'calcularLoteAnimal', 'resumoReprodutivoAnimal', 'calcularIndicadoresGrupo1',
     'mediaGeometrica', 'mediaSimples', 'registrosNoPeriodo', 'calcularStatusQualidade',
-    'calcularNovoSaldoEstoque', 'calcularGMD'
+    'calcularNovoSaldoEstoque', 'calcularGMD',
+    'arredondar1', 'montarLinhasCSVProducao'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -177,6 +178,59 @@ console.log('\n--- calcularIndicadoresGrupo1 (idade ao 1º parto e repetição d
   verificar('o animal que entrou já parido fica de fora', ind.idadePrimeiroParto.excluidos, 1);
   verificar('conta as coberturas com prazo já vencido (35 dias)', ind.repeticaoCio.coberturas, 2);
   verificar('detecta o cio dentro da janela como repetição', ind.repeticaoCio.repeticoes, 1);
+}
+
+console.log('\n--- partos anteriores (idade ao 1º parto e ordem de parto) ---');
+{
+  // Caso da FEI: vaca nascida na fazenda, com 3 partos antes do primeiro lançado no app.
+  const animais = [
+    { id: 1, data_nascimento: '2023-01-01', partos_anteriores: 0 },
+    { id: 2, data_nascimento: '2018-01-01', partos_anteriores: 3 },
+    { id: 3, data_nascimento: '2019-01-01' }                       // coluna ausente/nula conta como 0
+  ];
+  const eventos = [
+    { animal_id: 1, tipo:'parto', data:'2025-03-01', observacoes:null },
+    { animal_id: 2, tipo:'parto', data:'2026-02-01', observacoes:null },
+    { animal_id: 3, tipo:'parto', data:'2021-03-01', observacoes:null }
+  ];
+  const ind = F.calcularIndicadoresGrupo1(animais, eventos, HOJE);
+  verificar('animal com partos anteriores informados fica fora da idade ao 1º parto', ind.idadePrimeiroParto.elegiveis, 2);
+  verificar('o animal com partos anteriores conta como excluído', ind.idadePrimeiroParto.excluidos, 1);
+  const esperadoMeses = ((F.diasEntre('2023-01-01', '2025-03-01') + F.diasEntre('2019-01-01', '2021-03-01')) / 2) / 30.44;
+  aproximado('a média da idade ao 1º parto usa só os animais sem partos anteriores', ind.idadePrimeiroParto.mediaMeses, esperadoMeses, 0.001);
+
+  const rr = F.resumoReprodutivoAnimal([{ tipo:'parto', data:'2026-02-01' }], HOJE, 3);
+  verificar('ordem de parto = partos anteriores + partos registrados', rr.paridade, 4);
+  verificar('partos registrados continua sendo só o que está no histórico', rr.partos, 1);
+  verificar('sem informar partos anteriores, a ordem de parto é a contagem registrada',
+    F.resumoReprodutivoAnimal([{ tipo:'parto', data:'2025-01-01' }, { tipo:'parto', data:'2026-01-01' }], HOJE).paridade, 2);
+  verificar('sem nenhum parto registrado, a ordem de parto fica 0 mesmo com valor informado',
+    F.resumoReprodutivoAnimal([], HOJE, 3).paridade, 0);
+  verificar('o IEP não é inventado quando só há um parto registrado', rr.iep, null);
+}
+
+console.log('\n--- CSV de produção (arredondamento e número de vacas) ---');
+{
+  verificar('arredondar1 resolve a imprecisão de ponto flutuante (12.3 + 4.5)', F.arredondar1(12.3 + 4.5), 16.8);
+  verificar('arredondar1 limita a 1 casa decimal', F.arredondar1(123.34999), 123.3);
+  verificar('arredondar1 trata vazio como zero', F.arredondar1(null), 0);
+
+  const producao = [
+    { data:'2026-10-01', litros_manha:300.1, litros_tarde:200.2, metodo_registro:'individual' },
+    { data:'2026-10-02', litros_manha:100, litros_tarde:50, metodo_registro:'rebanho' }
+  ];
+  const individual = [
+    { data:'2026-10-01', animal_id:1, litros_manha:10, litros_tarde:8 },
+    { data:'2026-10-01', animal_id:2, litros_manha:0, litros_tarde:9 },
+    { data:'2026-10-01', animal_id:3, litros_manha:0, litros_tarde:0 },     // linha vazia: não conta como ordenhada
+    { data:'2026-10-01', animal_id:1, litros_manha:1, litros_tarde:1 }       // mesma vaca de novo: não conta duas vezes
+  ];
+  const linhas = F.montarLinhasCSVProducao(producao, individual, true);
+  verificar('o total do rebanho sai com 1 casa decimal', linhas[0].total, 500.3);
+  verificar('conta só as vacas com leite lançado, sem repetir a mesma vaca', linhas[0].vacas_ordenhadas, 2);
+  verificar('dia sem registro individual fica com vacas_ordenhadas vazio, não zero', linhas[1].vacas_ordenhadas, '');
+  verificar('o método de registro entra só quando pedido', [linhas[0].metodo, F.montarLinhasCSVProducao(producao, individual, false)[0].metodo], ['individual', undefined]);
+  verificar('sem registros individuais nenhum, o CSV continua saindo', F.montarLinhasCSVProducao(producao, null, false).length, 2);
 }
 
 console.log('\n--- calcularStatusQualidade (limites legais IN 76/77 do MAPA) ---');
