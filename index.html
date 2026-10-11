@@ -702,61 +702,57 @@ async function renderInicio(){
 // Avisos dispensados (baixa ou adiamento) do produtor, carregados a cada atualização do Início.
 let AVISOS_DISPENSADOS = [];
 let AVISO_EM_ADIAMENTO = null;
+// Chaves dos avisos que existem agora (antes de qualquer baixa ou adiamento). null = ainda não se sabe, ou alguma
+// parte não carregou; nesse caso nada é apagado como obsoleto.
+let AVISOS_VIGENTES = null;
+let GERACAO_AVISOS = 0;
 
 // Recarrega os avisos dispensados e redesenha os três blocos que dependem deles. Se a tabela não puder ser lida,
 // nada é escondido (melhor mostrar um aviso a mais do que sumir com um aviso importante).
 async function atualizarAvisosInicio(){
-  const { data, error } = await sb.from('avisos_dispensados').select('chave, descricao, ate').eq('produtor_id', usuarioAtual.id);
-  const lidoComSucesso = !error;
+  const geracao = ++GERACAO_AVISOS;
+  const { data, error } = await sb.from('avisos_dispensados').select('chave, descricao, ate, criado_em').eq('produtor_id', usuarioAtual.id);
   AVISOS_DISPENSADOS = error ? [] : (data || []);
-  AVISOS_RELEVANTES = AVISOS_DISPENSADOS.slice();
-  CHAVES_AVISOS_ATUAIS = { acoes: null, queda: false, qualidade: null };
-  await Promise.all([
-    renderAlertaQualidadeInicio().then(html=>{
+  AVISOS_VIGENTES = null;
+  renderLinkAvisosDispensados();
+  const [vigentesQualidade, vigentesAcoes] = await Promise.all([
+    renderAlertaQualidadeInicio().then(r=>{
       const el = document.getElementById('bloco-alerta-qualidade-inicio');
-      if(el) el.innerHTML = html;
+      if(el) el.innerHTML = r.html;
+      return r.vigentes;
     }),
     renderOQueFazerHoje()
   ]);
-  if(lidoComSucesso) await limparAvisosObsoletos();
+  if(geracao !== GERACAO_AVISOS) return;   // outra atualização começou enquanto esta carregava; esta já está velha
+  AVISOS_VIGENTES = (vigentesQualidade && vigentesAcoes) ? new Set([...vigentesQualidade, ...vigentesAcoes]) : null;
+  await limparAvisosObsoletos();
   renderLinkAvisosDispensados();
 }
 
-// Chaves dos avisos que existem agora (antes de aplicar baixas), preenchidas pelos dois blocos do Início.
-// "null" quer dizer que aquela parte não foi avaliada (falha ao carregar) e não pode ser usada para limpar nada.
-let CHAVES_AVISOS_ATUAIS = { acoes: null, queda: false, qualidade: null };
-let AVISOS_RELEVANTES = [];
-
-// Apaga as baixas e adiamentos obsoletos e deixa em AVISOS_RELEVANTES só o que vale mostrar na lista.
-// Erro ao apagar não atrapalha nada: o que sobrou é limpo na próxima vez.
+// Apaga do banco os registros que não servem mais para nada: adiamentos vencidos e baixas de avisos que
+// deixaram de existir (depois da carência). É melhor esforço: se falhar, tenta de novo na próxima vez.
 async function limparAvisosObsoletos(){
   const hoje = new Date().toISOString().slice(0,10);
-  const prefixos = [];
-  const chaves = new Set();
-  if(CHAVES_AVISOS_ATUAIS.acoes){
-    prefixos.push('parto|', 'secagem|', 'sem_cobertura|');
-    if(CHAVES_AVISOS_ATUAIS.queda) prefixos.push('queda|');
-    CHAVES_AVISOS_ATUAIS.acoes.forEach(c => chaves.add(c));
+  const { expirados, obsoletos } = classificarAvisosDispensados(AVISOS_DISPENSADOS, AVISOS_VIGENTES, hoje);
+  const apagarDoProdutor = () => sb.from('avisos_dispensados').delete().eq('produtor_id', usuarioAtual.id);
+  const removidos = new Set();
+  if(expirados.length){
+    // o filtro por data garante que um adiamento renovado há instantes não seja apagado por engano
+    const { error } = await apagarDoProdutor().in('chave', expirados).lte('ate', hoje);
+    if(!error) expirados.forEach(c => removidos.add(c));
   }
-  if(CHAVES_AVISOS_ATUAIS.qualidade){
-    prefixos.push('qualidade|');
-    CHAVES_AVISOS_ATUAIS.qualidade.forEach(c => chaves.add(c));
+  if(obsoletos.length){
+    const { error } = await apagarDoProdutor().in('chave', obsoletos);
+    if(!error) obsoletos.forEach(c => removidos.add(c));
   }
-  const { relevantes, remover } = classificarAvisosDispensados(AVISOS_DISPENSADOS, chaves, prefixos, hoje);
-  AVISOS_RELEVANTES = relevantes.filter(d => avisoDispensadoAtivo(d, hoje));
-  if(!remover.length) return;
-  const { error } = await sb.from('avisos_dispensados').delete().eq('produtor_id', usuarioAtual.id).in('chave', remover.map(d => d.chave));
-  if(!error){
-    const apagadas = new Set(remover.map(d => d.chave));
-    AVISOS_DISPENSADOS = AVISOS_DISPENSADOS.filter(d => !apagadas.has(d.chave));
-  }
+  if(removidos.size) AVISOS_DISPENSADOS = AVISOS_DISPENSADOS.filter(d => !removidos.has(d.chave));
 }
 
 function renderLinkAvisosDispensados(){
   const alvo = document.getElementById('bloco-avisos-dispensados');
   if(!alvo) return;
   const hoje = new Date().toISOString().slice(0,10);
-  const n = AVISOS_RELEVANTES.filter(d => avisoDispensadoAtivo(d, hoje)).length;
+  const n = classificarAvisosDispensados(AVISOS_DISPENSADOS, AVISOS_VIGENTES, hoje).visiveis.length;
   alvo.innerHTML = n
     ? '<div class="legenda-muted" style="text-align:center; font-size:12.5px; margin:-4px 0 14px">'+n+(n === 1 ? ' aviso com baixa ou adiado. ' : ' avisos com baixa ou adiados. ')
       + '<button style="color:var(--azul); font-weight:700; font-size:12.5px; text-decoration:underline" onclick="abrirAvisosDispensados()">Ver e reativar</button></div>'
@@ -806,7 +802,7 @@ async function confirmarAdiarAviso(){
 
 function abrirAvisosDispensados(){
   const hoje = new Date().toISOString().slice(0,10);
-  const ativos = AVISOS_RELEVANTES.filter(d => avisoDispensadoAtivo(d, hoje));
+  const ativos = classificarAvisosDispensados(AVISOS_DISPENSADOS, AVISOS_VIGENTES, hoje).visiveis;
   const linhas = ativos.map(d => '<div class="cartao" style="padding:10px 12px; margin-bottom:8px; display:flex; align-items:center; gap:10px">'
     + '<div style="flex:1; min-width:0"><div style="font-weight:700; font-size:13.5px">'+escaparHTML(d.descricao || d.chave)+'</div>'
     + '<div class="legenda-muted" style="margin-bottom:0; font-size:12px">'+(d.ate ? 'Adiado até '+formatarData(d.ate) : 'Com baixa')+'</div></div>'
@@ -827,6 +823,7 @@ async function reativarAviso(botao){
 }
 
 // Busca o que o painel precisa e monta o "O que fazer hoje". Se algo falhar, o bloco simplesmente não aparece.
+// Devolve o conjunto de chaves dos avisos que existem agora (ou null se não deu para saber).
 async function renderOQueFazerHoje(){
   const hoje = new Date().toISOString().slice(0,10);
   const [{ data: animais, error: erroAnimais }, { data: eventos, error: erroEventos }, { data: individual, error: erroInd }] = await Promise.all([
@@ -834,37 +831,40 @@ async function renderOQueFazerHoje(){
     buscarTodasAsLinhas(() => sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id)),
     buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', usuarioAtual.id).gte('data', somarDias(hoje, -10)))
   ]);
+  if(erroAnimais || erroEventos) return null;
+  const todos = calcularAcoesDoDia(animais || [], eventos || [], erroInd ? null : individual, hoje);
   const alvo = document.getElementById('bloco-o-que-fazer');
-  if(!alvo || erroAnimais || erroEventos) return;
-  const todosOsGrupos = calcularAcoesDoDia(animais || [], eventos || [], erroInd ? null : individual, hoje);
-  CHAVES_AVISOS_ATUAIS.acoes = new Set(todosOsGrupos.flatMap(g => g.itens.map(i => i.chave)));
-  CHAVES_AVISOS_ATUAIS.queda = !erroInd;
-  const grupos = filtrarAvisosDispensados(todosOsGrupos, AVISOS_DISPENSADOS, hoje).grupos;
-  alvo.innerHTML = montarCartaoAcoesDoDia(grupos, (animais || []).length > 0);
+  if(alvo){
+    const grupos = filtrarAvisosDispensados(todos, AVISOS_DISPENSADOS, hoje).grupos;
+    alvo.innerHTML = montarCartaoAcoesDoDia(grupos, (animais || []).length > 0);
+  }
+  // Sem a produção por vaca, a regra de queda não rodou e as chaves ficam incompletas: melhor não afirmar nada.
+  return erroInd ? null : chavesDosGrupos(todos);
 }
 
 async function renderAlertaQualidadeInicio(){
   const hoje = new Date().toISOString().slice(0,10);
   const desde = somarDias(hoje, -90);
   const { data, error } = await sb.from('qualidade_leite').select('data, ccs, cbt, gordura, proteina').eq('produtor_id', usuarioAtual.id).gte('data', desde).lte('data', hoje);
-  if(error) return '';
-  if(!data || !data.length){ CHAVES_AVISOS_ATUAIS.qualidade = new Set(); return ''; }
+  if(error || !data) return { html: '', vigentes: null };
+  if(!data.length) return { html: '', vigentes: new Set() };
   const status = calcularStatusQualidade(data, hoje);
-  if(status.nivel === 'ok'){ CHAVES_AVISOS_ATUAIS.qualidade = new Set(); return ''; }
+  if(status.nivel === 'ok') return { html: '', vigentes: new Set() };
   // Baixa ou adiamento feito pelo produtor: some até chegar um resultado de análise novo (a chave muda com a data do último resultado).
   const chaveQualidade = chaveAvisoQualidade(status.nivel, data);
-  CHAVES_AVISOS_ATUAIS.qualidade = new Set([chaveQualidade]);
-  if(AVISOS_DISPENSADOS.some(d => d.chave === chaveQualidade && avisoDispensadoAtivo(d, hoje))) return '';
+  const vigentes = new Set([chaveQualidade]);
+  if(AVISOS_DISPENSADOS.some(d => d.chave === chaveQualidade && avisoDispensadoAtivo(d, hoje))) return { html: '', vigentes };
   const cor = status.nivel === 'alerta' ? 'var(--perigo)' : 'var(--manteiga-escura)';
   const texto = status.nivel === 'alerta'
     ? 'A qualidade do leite (CCS, CBT, gordura ou proteína) dos últimos 90 dias está fora do limite legal (IN 76/77 do MAPA). Isso pode levar à suspensão da coleta pelo laticínio.'
     : 'A qualidade do leite (CCS, CBT, gordura ou proteína) dos últimos 90 dias está próxima do limite legal. Vale ficar atento.';
-  return '<div class="cartao" style="border-color:'+cor+'; display:flex; align-items:center; gap:14px; margin-bottom:14px">'
+  const html = '<div class="cartao" style="border-color:'+cor+'; display:flex; align-items:center; gap:14px; margin-bottom:14px">'
     + '<div class="avatar" style="background:'+cor+'; color:var(--branco)">'+iconeInline('frasco',20)+'</div>'
     + '<div style="flex:1"><strong>Atenção à qualidade do leite</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+texto+'</div>'
     + botoesAviso(chaveQualidade, 'Atenção à qualidade do leite', null)
     + '</div>'
     + '</div>';
+  return { html, vigentes };
 }
 
 function blocoAcessosColaborador(){
@@ -1590,33 +1590,41 @@ function filtrarAvisosDispensados(grupos, dispensados, hojeIso){
   return { grupos: filtrados, ocultos };
 }
 
+// Quantos dias um aviso dispensado fica guardado depois de o aviso original deixar de existir (a vaca pariu,
+// chegou um resultado novo de qualidade, etc.). A carência evita apagar uma baixa por causa de uma falha
+// passageira dos dados (por exemplo, um dia sem as duas ordenhas lançadas que faz a queda de produção sumir).
+const DIAS_CARENCIA_LIMPEZA_AVISOS = 7;
+
+// Conjunto das chaves dos avisos que existem agora, antes de qualquer baixa ou adiamento.
+function chavesDosGrupos(grupos){
+  const chaves = new Set();
+  (grupos||[]).forEach(g => (g.itens||[]).forEach(i => { if(i.chave) chaves.add(i.chave); }));
+  return chaves;
+}
+
+// Separa os registros de avisos_dispensados em três listas de acordo com o que ainda vale:
+//  - visiveis: baixas e adiamentos de avisos que ainda existem (é o que a lista "Ver e reativar" mostra);
+//  - expirados: adiamentos cujo prazo já passou (não têm mais efeito nenhum, podem ser apagados);
+//  - obsoletos: o aviso original não existe mais e o registro já tem carência vencida (podem ser apagados).
+// "vigentes" é o conjunto de chaves dos avisos que existem agora; null significa que não se sabe (ainda
+// carregando ou alguma parte falhou), e nesse caso nenhum registro é tratado como obsoleto.
+function classificarAvisosDispensados(dispensados, vigentes, hojeIso){
+  const visiveis = [], expirados = [], obsoletos = [];
+  (dispensados||[]).forEach(d=>{
+    if(!avisoDispensadoAtivo(d, hojeIso)){ expirados.push(d.chave); return; }
+    if(vigentes == null || vigentes.has(d.chave)){ visiveis.push(d); return; }
+    // O aviso não existe mais: some da lista agora, mas só é apagado depois da carência. Sem data de criação, não se apaga.
+    const idade = d.criado_em ? diasEntre(String(d.criado_em).slice(0,10), hojeIso) : null;
+    if(idade !== null && idade >= DIAS_CARENCIA_LIMPEZA_AVISOS) obsoletos.push(d.chave);
+  });
+  return { visiveis, expirados, obsoletos };
+}
+
 // Chave do aviso de qualidade do leite: muda quando entra um novo resultado de análise, então uma baixa vale
 // para os resultados atuais, mas um resultado novo ruim volta a avisar.
 function chaveAvisoQualidade(nivel, registros){
   const datas = (registros||[]).map(r => r.data).filter(Boolean).sort();
   return 'qualidade|' + nivel + '|' + (datas.length ? datas[datas.length - 1] : 'sem-data');
-}
-
-// Separa as baixas e os adiamentos guardados em: "relevantes" (aparecem na lista e no contador) e "remover"
-// (obsoletos, apagados pelo app). Recebe as chaves dos avisos que existem hoje e os prefixos das categorias
-// que foram de fato avaliadas nesta rodada (categoria que falhou ao carregar não conta, para não apagar por engano).
-//   - adiamento que já venceu: remover (se o aviso ainda existir, volta sozinho);
-//   - baixa ou adiamento de um aviso que existe hoje: relevante;
-//   - baixa definitiva de um aviso que não existe mais (situação resolvida): remover;
-//   - adiamento ainda no prazo de um aviso que não aparece agora: fica guardado e fora da lista, porque a
-//     situação pode voltar durante o prazo (ex.: queda de produção que oscila);
-//   - categoria que não foi avaliada: relevante, sem mexer.
-function classificarAvisosDispensados(dispensados, chavesAtuais, prefixosAvaliados, hojeIso){
-  const relevantes = [], remover = [];
-  (dispensados||[]).forEach(d => {
-    const temPrazo = d.ate != null && d.ate !== '';
-    if(temPrazo && hojeIso >= d.ate){ remover.push(d); return; }
-    const prefixo = String(d.chave).split('|')[0] + '|';
-    if(!(prefixosAvaliados||[]).includes(prefixo)){ relevantes.push(d); return; }
-    if(chavesAtuais && chavesAtuais.has(d.chave)){ relevantes.push(d); return; }
-    if(!temPrazo) remover.push(d);
-  });
-  return { relevantes, remover };
 }
 
 // Número de dias digitado no "Adiar": inteiro de 1 a 365; devolve null se for inválido.
