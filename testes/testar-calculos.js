@@ -80,7 +80,8 @@ function carregarFuncoesReais(){
     'DIAS_ALERTA_SEM_COBERTURA', 'DIAS_AVISO_SECAGEM', 'DIAS_AVISO_PARTO', 'DIAS_PARTO_ATRASADO_MAX',
     'QUEDA_PRODUCAO_PCT', 'MIN_LITROS_BASE_QUEDA', 'DIAS_BAIXA_QUEDA', 'MAX_DIAS_ADIAR',
     'calcularAcoesDoDia', 'montarCartaoAcoesDoDia',
-    'avisoDispensadoAtivo', 'filtrarAvisosDispensados', 'chaveAvisoQualidade', 'validarDiasAdiar', 'botoesAviso', 'classificarAvisosDispensados'
+    'avisoDispensadoAtivo', 'filtrarAvisosDispensados', 'chaveAvisoQualidade', 'validarDiasAdiar', 'botoesAviso',
+    'DIAS_CARENCIA_LIMPEZA_AVISOS', 'chavesDosGrupos', 'classificarAvisosDispensados'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -494,25 +495,6 @@ console.log('\n--- baixa e adiamento de avisos ---');
   const secagem = F.calcularAcoesDoDia([vaca], [{ animal_id: 7, tipo: 'parto', data: d(-300) }, { animal_id: 7, tipo: 'cobertura', data: d(65 - 283) }], null, H).find(g => g.codigo === 'secagem');
   verificar('secagem: a chave inclui a data de secar', secagem.itens[0].chave, 'secagem|7|' + d(5));
 
-  // limpeza automática das baixas obsoletas
-  const PX = ['parto|', 'secagem|', 'sem_cobertura|', 'queda|', 'qualidade|'];
-  const cl = (disp, chaves, prefixos) => F.classificarAvisosDispensados(disp, chaves, prefixos === undefined ? PX : prefixos, H);
-  let c = cl([{ chave: 'parto|1|x', ate: d(-1) }], new Set(['parto|1|x']));
-  verificar('adiamento vencido vai para remoção, mesmo se o aviso ainda existe', [c.remover.length, c.relevantes.length], [1, 0]);
-  c = cl([{ chave: 'parto|1|x', ate: null }], new Set(['parto|2|x']));
-  verificar('baixa definitiva de aviso que não existe mais é removida', [c.remover.length, c.relevantes.length], [1, 0]);
-  c = cl([{ chave: 'parto|1|x', ate: null }], new Set(['parto|1|x']));
-  verificar('baixa definitiva de aviso que continua existindo é mantida', [c.remover.length, c.relevantes.length], [0, 1]);
-  c = cl([{ chave: 'queda|7', ate: d(10) }], new Set());
-  verificar('adiamento dentro do prazo de aviso que sumiu: fica guardado, mas não é listado nem removido', [c.remover.length, c.relevantes.length], [0, 0]);
-  c = cl([{ chave: 'parto|1|x', ate: null }], null, ['secagem|']);
-  verificar('tipo de aviso não avaliado nesta abertura não é mexido', [c.remover.length, c.relevantes.length], [0, 1]);
-  c = cl([{ chave: 'qualidade|alerta|2026-09-15', ate: null }], new Set(['qualidade|alerta|2026-10-05']));
-  verificar('qualidade: resultado novo troca a chave e a baixa antiga é removida', [c.remover.length, c.relevantes.length], [1, 0]);
-  c = cl([{ chave: 'qualidade|alerta|2026-09-15', ate: null }], new Set(), PX);
-  verificar('qualidade voltou ao normal: a baixa antiga é removida', c.remover.length, 1);
-  verificar('sem registros, nada a fazer', cl([], new Set()).remover.length, 0);
-
   // qualidade do leite
   verificar('chave da qualidade usa o nível e a data do resultado mais recente', F.chaveAvisoQualidade('alerta', [{ data: '2026-08-01' }, { data: '2026-09-15' }, { data: '2026-07-01' }]), 'qualidade|alerta|2026-09-15');
   verificar('um resultado novo muda a chave (o aviso volta se continuar ruim)',
@@ -536,6 +518,75 @@ console.log('\n--- baixa e adiamento de avisos ---');
   verificar('sem prazo, o atributo fica vazio', F.botoesAviso('a', 'b', null).includes('data-baixa-dias=""'), true);
   const cartao = F.montarCartaoAcoesDoDia(g1, true);
   verificar('o cartão de ações mostra os botões em cada aviso', (cartao.match(/Dar baixa/g) || []).length >= 1 && cartao.includes('data-chave="parto|7|'), true);
+}
+
+console.log('\n--- limpeza dos avisos dispensados (lista só com o que ainda vale) ---');
+{
+  const H = '2026-10-10';
+  const d = n => F.somarDias(H, n);
+  const criadoHa = n => d(-n) + 'T12:00:00.000+00:00';           // como o Supabase devolve o criado_em
+  const reg = (chave, ate, criadoEmDias) => ({ chave, ate, criado_em: criadoHa(criadoEmDias === undefined ? 1 : criadoEmDias) });
+  const vig = (...chaves) => new Set(chaves);
+
+  // chavesDosGrupos
+  const grupos = [{ codigo: 'a', itens: [{ chave: 'k1' }, { chave: 'k2' }, { animal: 'sem chave' }] }, { codigo: 'b', itens: [{ chave: 'k3' }] }];
+  verificar('chavesDosGrupos junta as chaves de todos os grupos', [...F.chavesDosGrupos(grupos)], ['k1', 'k2', 'k3']);
+  verificar('chavesDosGrupos aceita lista vazia ou nula', [F.chavesDosGrupos([]).size, F.chavesDosGrupos(null).size], [0, 0]);
+
+  // baixa e adiamento de aviso que ainda existe: aparece na lista e não é apagado
+  let r = F.classificarAvisosDispensados([reg('a', null, 40), reg('b', d(5), 2)], vig('a', 'b'), H);
+  verificar('baixa e adiamento de avisos que ainda existem aparecem na lista', r.visiveis.map(x => x.chave), ['a', 'b']);
+  verificar('e não são apagados, por mais antigos que sejam', [r.expirados, r.obsoletos], [[], []]);
+
+  // adiamento vencido: apagado, mesmo que o aviso ainda exista
+  r = F.classificarAvisosDispensados([reg('a', d(-1), 10), reg('b', H, 10)], vig('a', 'b'), H);
+  verificar('adiamento vencido (ontem ou hoje) sai da lista e vai para apagar', [r.visiveis.length, r.expirados], [0, ['a', 'b']]);
+  r = F.classificarAvisosDispensados([reg('a', d(-1), 10)], null, H);
+  verificar('adiamento vencido é apagado mesmo sem saber quais avisos existem', r.expirados, ['a']);
+
+  // aviso que deixou de existir
+  r = F.classificarAvisosDispensados([reg('velho', null, 30)], vig('outro'), H);
+  verificar('baixa de aviso que não existe mais, com 30 dias, sai da lista e é apagada', [r.visiveis.length, r.obsoletos], [0, ['velho']]);
+  r = F.classificarAvisosDispensados([reg('novo', null, 3)], vig('outro'), H);
+  verificar('dentro da carência (3 dias), sai da lista mas ainda não é apagada', [r.visiveis.length, r.obsoletos], [0, []]);
+  verificar('a carência é de 7 dias', F.DIAS_CARENCIA_LIMPEZA_AVISOS, 7);
+  verificar('com 6 dias ainda espera', F.classificarAvisosDispensados([reg('x', null, 6)], vig(), H).obsoletos, []);
+  verificar('com exatamente 7 dias já apaga', F.classificarAvisosDispensados([reg('x', null, 7)], vig(), H).obsoletos, ['x']);
+  verificar('adiamento ainda no prazo, mas de aviso que não existe mais, também some depois da carência',
+    F.classificarAvisosDispensados([reg('x', d(20), 9)], vig(), H).obsoletos, ['x']);
+  verificar('sem data de criação, nunca se apaga como obsoleto', F.classificarAvisosDispensados([{ chave: 'x', ate: null }], vig(), H).obsoletos, []);
+
+  // não saber o que existe: não apagar nada como obsoleto, e mostrar tudo que está ativo
+  r = F.classificarAvisosDispensados([reg('a', null, 90), reg('b', d(4), 90)], null, H);
+  verificar('sem saber o que existe, a lista mostra todos os ativos', r.visiveis.map(x => x.chave), ['a', 'b']);
+  verificar('e nada é apagado como obsoleto', r.obsoletos, []);
+  verificar('lista vazia ou nula não dá erro', [F.classificarAvisosDispensados([], vig(), H), F.classificarAvisosDispensados(null, null, H)].map(x => x.visiveis.length), [0, 0]);
+
+  // cada registro cai em no máximo um grupo, e a lista original não é alterada
+  const original = [reg('a', null, 40), reg('b', d(-2), 40), reg('c', null, 40), reg('d', null, 2)];
+  const copia = JSON.stringify(original);
+  r = F.classificarAvisosDispensados(original, vig('a'), H);
+  verificar('cada registro cai em um só grupo (visível, expirado, obsoleto ou em carência)', [r.visiveis.map(x => x.chave), r.expirados, r.obsoletos], [['a'], ['b'], ['c']]);
+  verificar('a lista original não é alterada', JSON.stringify(original), copia);
+
+  // ligação com o painel real: a baixa dada a um parto previsto some quando o parto é registrado
+  const vaca = { id: 7, identificacao: '7', data_nascimento: '2020-01-01' };
+  const cobertura = { animal_id: 7, tipo: 'cobertura', data: d(10 - 283) };
+  const antes = F.chavesDosGrupos(F.calcularAcoesDoDia([vaca], [cobertura], null, H));
+  const chave = 'parto|7|' + d(10);
+  verificar('o aviso de parto existe e a baixa dele aparece na lista', F.classificarAvisosDispensados([reg(chave, null, 3)], antes, H).visiveis.length, 1);
+  const depois = F.chavesDosGrupos(F.calcularAcoesDoDia([vaca], [cobertura, { animal_id: 7, tipo: 'parto', data: d(9) }], null, d(11)));
+  verificar('depois que o parto é registrado, o aviso deixa de existir', depois.has(chave), false);
+  r = F.classificarAvisosDispensados([reg(chave, null, 12)], depois, d(11));
+  verificar('e a baixa antiga sai da lista e é apagada', [r.visiveis.length, r.obsoletos], [0, [chave]]);
+
+  // ligação com a qualidade: um resultado novo muda a chave e a baixa antiga fica obsoleta
+  const chaveAntiga = F.chaveAvisoQualidade('alerta', [{ data: '2026-09-15' }]);
+  const chaveNova = F.chaveAvisoQualidade('alerta', [{ data: '2026-09-15' }, { data: '2026-10-05' }]);
+  r = F.classificarAvisosDispensados([reg(chaveAntiga, null, 25)], vig(chaveNova), H);
+  verificar('resultado novo de qualidade: a baixa antiga some e é apagada', [r.visiveis.length, r.obsoletos], [0, [chaveAntiga]]);
+  r = F.classificarAvisosDispensados([reg(chaveAntiga, null, 25)], vig(chaveAntiga), H);
+  verificar('sem resultado novo, a baixa da qualidade continua na lista', r.visiveis.length, 1);
 }
 
 console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do Supabase) ---');
