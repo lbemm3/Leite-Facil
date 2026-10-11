@@ -692,12 +692,27 @@ async function renderInicio(){
     + '<div class="legenda-muted">Bem-vindo ao LeiteFácil.</div>'
     + blocoAcessosColaborador()
     + '<div id="bloco-alerta-qualidade-inicio"></div>'
+    + '<div id="bloco-o-que-fazer"></div>'
     + '<div id="bloco-alertas-inicio"><div class="legenda-muted">Carregando alertas...</div></div>';
   renderAlertaQualidadeInicio().then(html=>{
     const el = document.getElementById('bloco-alerta-qualidade-inicio');
     if(el) el.innerHTML = html;
   });
+  renderOQueFazerHoje();
   await renderAlertasNoInicio();
+}
+
+// Busca o que o painel precisa e monta o "O que fazer hoje". Se algo falhar, o bloco simplesmente não aparece.
+async function renderOQueFazerHoje(){
+  const hoje = new Date().toISOString().slice(0,10);
+  const [{ data: animais, error: erroAnimais }, { data: eventos, error: erroEventos }, { data: individual, error: erroInd }] = await Promise.all([
+    sb.from('animais').select('id, identificacao, data_nascimento, partos_anteriores').eq('produtor_id', usuarioAtual.id),
+    buscarTodasAsLinhas(() => sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id)),
+    buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', usuarioAtual.id).gte('data', somarDias(hoje, -10)))
+  ]);
+  const alvo = document.getElementById('bloco-o-que-fazer');
+  if(!alvo || erroAnimais || erroEventos) return;
+  alvo.innerHTML = montarCartaoAcoesDoDia(calcularAcoesDoDia(animais || [], eventos || [], erroInd ? null : individual, hoje), (animais || []).length > 0);
 }
 
 async function renderAlertaQualidadeInicio(){
@@ -1192,6 +1207,251 @@ function calcularIndicadoresGrupo1(animais, eventos, hojeIso){
     idadePrimeiroParto: { mediaMeses: elegiveisIdade ? (somaIdadeDias/elegiveisIdade)/30.44 : null, elegiveis: elegiveisIdade, excluidos: excluidosIdade },
     repeticaoCio: { coberturas: coberturasAvaliaveis, repeticoes, taxaPct: coberturasAvaliaveis ? (repeticoes/coberturasAvaliaveis)*100 : null, intervaloMedioDias: repeticoes ? somaIntervaloDias/repeticoes : null }
   };
+}
+
+// ---------- Conferência dos dados: avisos de lançamentos que parecem errados ----------
+const JANELA_CONFERENCIA_DIAS = 90;       // só olha os últimos 90 dias
+const JANELA_DIAS_SEM_LANCAMENTO = 30;    // dias sem lançamento: só os últimos 30
+const LIMITE_LITROS_ORDENHA = 40;         // litros de uma vaca numa só ordenha acima disso é muito raro
+const LIMITE_LITROS_VACA_DIA = 70;        // idem para o total do dia de uma vaca
+const MIN_VACAS_DIA_REPETIDO = 5;         // a partir de quantas vacas em comum "dia igual ao anterior" é suspeito
+const TOLERANCIA_TOTAL_DIA = 0.1;         // diferença aceita (em litros) entre o total do dia e a soma das vacas
+
+// Recebe a produção do rebanho, a individual (por vaca; null se não foi carregada), os animais, os eventos
+// reprodutivos e a data de hoje. Devolve uma lista de avisos { codigo, titulo, detalhe }; lista vazia = nada suspeito.
+// Os avisos são só alertas para o produtor conferir: nada é alterado nem bloqueado.
+function verificarQualidadeDados(producao, individual, animais, eventos, hojeIso){
+  const avisos = [];
+  const desde = somarDias(hojeIso, -JANELA_CONFERENCIA_DIAS);
+  const prod = (producao||[]).filter(r=>r.data >= desde);
+  const ind = individual ? individual.filter(r=>r.data >= desde) : null;
+  const dm = d => d.slice(8,10) + '/' + d.slice(5,7);
+  const listaDatas = (datas, max) => datas.slice(0, max).map(dm).join(', ') + (datas.length > max ? ' e mais ' + (datas.length - max) : '');
+  const idPor = {}; (animais||[]).forEach(a=>{ idPor[a.id] = a.identificacao; });
+  const nome = id => 'Nº ' + (idPor[id] != null ? idPor[id] : '?');
+  const total = r => Number(r.litros_manha||0) + Number(r.litros_tarde||0);
+
+  // 1) Dias sem lançamento (só avisa se o produtor lançou algo nos últimos 7 dias, senão é só app parado;
+  //    e só conta até anteontem, porque o dia de hoje ainda pode estar por lançar).
+  if(prod.length){
+    const comRegistro = new Set(prod.map(r=>r.data));
+    const ultimo = prod.reduce((m, r) => r.data > m ? r.data : m, '0000-00-00');
+    const primeiro = prod.reduce((m, r) => r.data < m ? r.data : m, '9999-99-99');
+    if(diasEntre(ultimo, hojeIso) <= 7){
+      const inicio = primeiro > somarDias(hojeIso, -JANELA_DIAS_SEM_LANCAMENTO) ? primeiro : somarDias(hojeIso, -JANELA_DIAS_SEM_LANCAMENTO);
+      const faltando = [];
+      for(let d = inicio; d <= somarDias(hojeIso, -2); d = somarDias(d, 1)){ if(!comRegistro.has(d)) faltando.push(d); }
+      if(faltando.length){
+        avisos.push({ codigo:'dias_sem_lancamento',
+          titulo: faltando.length + (faltando.length === 1 ? ' dia sem lançamento' : ' dias sem lançamento') + ' nos últimos ' + JANELA_DIAS_SEM_LANCAMENTO + ' dias',
+          detalhe: listaDatas(faltando, 8) + '. Se houve ordenha nesses dias, vale lançar para a produção e os indicadores ficarem corretos.' });
+      }
+    }
+  }
+
+  if(ind){
+    const porData = {};   // data -> { soma, vacas: { animal_id: 'manha|tarde' } }
+    ind.forEach(r=>{
+      const d = (porData[r.data] = porData[r.data] || { soma:0, vacas:{} });
+      d.soma += total(r);
+      d.vacas[r.animal_id] = String(r.litros_manha) + '|' + String(r.litros_tarde);
+    });
+    const datasInd = Object.keys(porData).sort();
+
+    // 2) Total do rebanho diferente da soma das vacas (dias lançados por vaca).
+    const divergentes = prod.filter(r => r.metodo_registro === 'individual' && porData[r.data] && Math.abs(total(r) - porData[r.data].soma) > TOLERANCIA_TOTAL_DIA)
+      .map(r=>r.data).sort();
+    if(divergentes.length){
+      avisos.push({ codigo:'total_diferente_da_soma',
+        titulo: 'Total do dia diferente da soma das vacas em ' + divergentes.length + (divergentes.length === 1 ? ' dia' : ' dias'),
+        detalhe: listaDatas(divergentes, 8) + '. Abra o dia na tela de Produção e salve de novo: o total passa a ser a soma das vacas.' });
+    }
+
+    // 3) Dia igual ao anterior: as mesmas vacas com exatamente os mesmos litros, sinal de lançamento repetido.
+    const repetidos = [];
+    for(let i = 1; i < datasInd.length; i++){
+      const a = porData[datasInd[i-1]], b = porData[datasInd[i]];
+      if(diasEntre(datasInd[i-1], datasInd[i]) !== 1 || b.soma <= 0) continue;
+      const comuns = Object.keys(b.vacas).filter(id => id in a.vacas);
+      if(comuns.length >= MIN_VACAS_DIA_REPETIDO && comuns.every(id => a.vacas[id] === b.vacas[id])){
+        repetidos.push({ dia: datasInd[i], anterior: datasInd[i-1], vacas: comuns.length });
+      }
+    }
+    if(repetidos.length){
+      avisos.push({ codigo:'dia_repetido',
+        titulo: repetidos.length === 1 ? 'Um dia igual ao anterior' : repetidos.length + ' dias iguais ao dia anterior',
+        detalhe: repetidos.slice(0, 5).map(x => dm(x.dia) + ' igual a ' + dm(x.anterior) + ' (' + x.vacas + ' vacas com os mesmos litros)').join('; ')
+          + '. Pode ter sido lançado duas vezes: confira qual dos dias é o real e corrija o outro.' });
+    }
+
+    // 4) Valores muito altos (ou negativos) numa vaca.
+    const suspeitos = ind.filter(r => Number(r.litros_manha||0) < 0 || Number(r.litros_tarde||0) < 0
+        || Number(r.litros_manha||0) > LIMITE_LITROS_ORDENHA || Number(r.litros_tarde||0) > LIMITE_LITROS_ORDENHA || total(r) > LIMITE_LITROS_VACA_DIA)
+      .sort((x,y)=>x.data.localeCompare(y.data));
+    if(suspeitos.length){
+      avisos.push({ codigo:'valor_implausivel',
+        titulo: suspeitos.length + (suspeitos.length === 1 ? ' lançamento por vaca com valor muito fora do comum' : ' lançamentos por vaca com valor muito fora do comum'),
+        detalhe: suspeitos.slice(0, 5).map(r => nome(r.animal_id) + ' em ' + dm(r.data) + ' (manhã ' + String(r.litros_manha != null ? r.litros_manha : '—') + ' L, tarde ' + String(r.litros_tarde != null ? r.litros_tarde : '—') + ' L)').join('; ')
+          + (suspeitos.length > 5 ? ' e mais ' + (suspeitos.length - 5) : '')
+          + '. Confira se não foi erro de digitação (por exemplo, vírgula no lugar errado).' });
+    }
+
+    // 5) Leite lançado antes do primeiro parto registrado, em vaca sem partos anteriores informados.
+    //    Fica de fora quem entrou já parida (a data desse parto é aproximada).
+    const partosPor = {};
+    (eventos||[]).filter(e=>e.tipo==='parto').forEach(e=>{ (partosPor[e.animal_id] = partosPor[e.animal_id] || []).push(e); });
+    const vacasComProblema = [];
+    (animais||[]).forEach(a=>{
+      if(Number(a.partos_anteriores||0) > 0) return;
+      const partos = (partosPor[a.id]||[]).sort((x,y)=>x.data.localeCompare(y.data));
+      if(!partos.length) return;
+      const primeiro = partos[0];
+      if((primeiro.observacoes||'').startsWith('Parto anterior à entrada no rebanho')) return;
+      const antes = ind.filter(r => r.animal_id === a.id && r.data < primeiro.data && total(r) > 0);
+      if(antes.length) vacasComProblema.push({ a, primeiro, dias: antes.length });
+    });
+    if(vacasComProblema.length){
+      avisos.push({ codigo:'leite_antes_do_parto',
+        titulo: vacasComProblema.length === 1 ? 'Uma vaca com leite lançado antes do primeiro parto' : vacasComProblema.length + ' vacas com leite lançado antes do primeiro parto',
+        detalhe: vacasComProblema.slice(0, 5).map(x => 'Nº ' + x.a.identificacao + ' (parto em ' + dm(x.primeiro.data) + ', leite em ' + x.dias + (x.dias === 1 ? ' dia' : ' dias') + ' anteriores)').join('; ')
+          + '. Confira as datas. Se ela já tinha parido antes, informe os partos anteriores na edição do animal.' });
+    }
+  }
+  return avisos;
+}
+
+// Cartão da Conferência dos dados (tela de Indicadores e ficha do produtor).
+function montarCartaoQualidadeDados(avisos, temDados){
+  if(!avisos.length){
+    return temDados
+      ? '<div class="cartao" style="border-color:var(--sucesso)"><div style="font-weight:700; color:var(--sucesso)">Nenhum problema encontrado nos últimos '+JANELA_CONFERENCIA_DIAS+' dias</div></div>'
+      : '';
+  }
+  return '<div class="cartao" style="border-color:var(--manteiga-escura)">'
+    + avisos.map(a => '<div style="margin-bottom:10px"><div style="font-weight:700">'+escaparHTML(a.titulo)+'</div><div class="legenda-muted" style="font-size:13px">'+escaparHTML(a.detalhe)+'</div></div>').join('')
+    + '<div class="legenda-muted" style="font-size:11px">São avisos para conferir, o app não altera nada sozinho. Olham os últimos '+JANELA_CONFERENCIA_DIAS+' dias.</div>'
+    + '</div>';
+}
+
+// ---------- "O que fazer hoje": ações sugeridas a partir dos dados que o app já tem ----------
+const DIAS_ALERTA_SEM_COBERTURA = 90;    // vaca em lactação sem cobertura registrada após tantos dias do parto
+const DIAS_AVISO_SECAGEM = 7;            // avisa a secagem recomendada com até 7 dias de antecedência
+const DIAS_AVISO_PARTO = 14;             // avisa o parto previsto com até 14 dias de antecedência
+const DIAS_PARTO_ATRASADO_MAX = 45;      // parto previsto que passou há mais que isso é tratado como dado antigo e não aparece
+const QUEDA_PRODUCAO_PCT = 25;           // queda mínima (em %) da produção de uma vaca para avisar
+const MIN_LITROS_BASE_QUEDA = 5;         // abaixo dessa média (L/dia) a queda percentual não é confiável
+
+// Recebe os animais, os eventos reprodutivos (animal_id, tipo, data), a produção por vaca dos últimos ~10 dias
+// (null se não foi carregada) e a data de hoje. Devolve grupos { codigo, titulo, itens: [{ animal, texto }] }
+// em ordem de importância. Não grava nada: são sugestões do que olhar hoje, sem campo novo no banco.
+function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
+  const dm = d => d.slice(8,10) + '/' + d.slice(5,7);
+  const eventosPor = {};
+  (eventos||[]).forEach(e=>{ (eventosPor[e.animal_id] = eventosPor[e.animal_id] || []).push(e); });
+  Object.values(eventosPor).forEach(l => l.sort((x,y)=>x.data.localeCompare(y.data)));
+
+  const partoProximo = [], secagem = [], semCobertura = [], quedaProducao = [];
+  const ordenar = (lista) => lista.sort((x,y)=>x.ordem - y.ordem);
+
+  (animais||[]).forEach(a=>{
+    const evs = eventosPor[a.id] || [];
+    if(!evs.length) return;
+    const partos = evs.filter(e=>e.tipo==='parto');
+    const ultimoParto = partos.length ? partos[partos.length-1] : null;
+    const lote = calcularLoteAnimal(a, evs, hojeIso);
+    const nome = 'Nº ' + a.identificacao;
+
+    // Último evento que muda a situação reprodutiva (secagem não conta): cobertura = prenhez presumida.
+    const relevantes = evs.filter(e=>e.tipo==='cobertura' || e.tipo==='cio' || e.tipo==='aborto' || e.tipo==='parto');
+    const ultimoRelevante = relevantes.length ? relevantes[relevantes.length-1] : null;
+    const prenhePresumida = !!ultimoRelevante && ultimoRelevante.tipo === 'cobertura';
+
+    if(prenhePresumida){
+      const partoPrevisto = somarDias(ultimoRelevante.data, DIAS_GESTACAO);
+      const faltam = diasEntre(hojeIso, partoPrevisto);
+      if(faltam >= 0 && faltam <= DIAS_AVISO_PARTO){
+        partoProximo.push({ ordem: faltam, animal: nome, texto: 'parto previsto em ' + dm(partoPrevisto) + (faltam === 0 ? ' (hoje)' : ' (em ' + faltam + (faltam === 1 ? ' dia)' : ' dias)')) });
+      } else if(faltam < 0 && -faltam <= DIAS_PARTO_ATRASADO_MAX){
+        partoProximo.push({ ordem: faltam, animal: nome, texto: 'o parto previsto era ' + dm(partoPrevisto) + ' (' + (-faltam) + (faltam === -1 ? ' dia' : ' dias') + ' atrás) e não foi registrado. Registre o parto ou o aborto, ou revise a cobertura' });
+      }
+
+      // Secagem: só para vaca que já pariu e ainda não teve a secagem registrada.
+      const secouDepois = !!ultimoParto && evs.some(e=>e.tipo==='secagem' && e.data > ultimoParto.data);
+      if(ultimoParto && !secouDepois && faltam >= 0){
+        const dataSecar = somarDias(partoPrevisto, -DIAS_SECA_ANTES_PARTO);
+        const ate = diasEntre(hojeIso, dataSecar);
+        if(ate >= 0 && ate <= DIAS_AVISO_SECAGEM){
+          secagem.push({ ordem: ate, animal: nome, texto: 'secagem recomendada em ' + dm(dataSecar) + (ate === 0 ? ' (hoje)' : ' (em ' + ate + (ate === 1 ? ' dia)' : ' dias)')) });
+        } else if(ate < 0){
+          secagem.push({ ordem: ate, animal: nome, texto: 'a data de secar (' + dm(dataSecar) + ') já passou e a secagem não foi registrada. Se já secou, registre; se ainda está sendo ordenhada, é hora de secar' });
+        }
+      }
+    }
+
+    // Vaca em lactação sem cobertura registrada há muito tempo desde o parto (ou desde o último aborto).
+    if(ultimoParto && !prenhePresumida && lote === 'lactante'){
+      const aborto = evs.filter(e=>e.tipo==='aborto' && e.data > ultimoParto.data).pop();
+      const base = aborto ? aborto.data : ultimoParto.data;
+      const temCoberturaDepois = evs.some(e=>e.tipo==='cobertura' && e.data > base);
+      const dias = diasEntre(base, hojeIso);
+      if(!temCoberturaDepois && dias >= DIAS_ALERTA_SEM_COBERTURA){
+        semCobertura.push({ ordem: -dias, animal: nome, texto: dias + ' dias desde ' + (aborto ? 'o aborto' : 'o parto') + ' (' + dm(base) + ') e nenhuma cobertura registrada' });
+      }
+    }
+  });
+
+  // Queda de produção: média dos últimos 3 dias contra a dos 7 dias anteriores, só com dias de duas ordenhas.
+  if(individual){
+    const idPor = {}; (animais||[]).forEach(a=>{ idPor[a.id] = a; });
+    const iniRec = somarDias(hojeIso, -3), iniBase = somarDias(hojeIso, -10), fimBase = somarDias(hojeIso, -4);
+    const porVaca = {};
+    individual.forEach(r=>{
+      if(r.litros_manha == null || r.litros_tarde == null) return;
+      const v = (porVaca[r.animal_id] = porVaca[r.animal_id] || { rec: [], base: [] });
+      const t = Number(r.litros_manha) + Number(r.litros_tarde);
+      if(r.data >= iniRec && r.data <= hojeIso) v.rec.push(t);
+      else if(r.data >= iniBase && r.data <= fimBase) v.base.push(t);
+    });
+    Object.keys(porVaca).forEach(id=>{
+      const a = idPor[id]; const v = porVaca[id];
+      if(!a || v.rec.length < 2 || v.base.length < 4) return;
+      if(calcularLoteAnimal(a, eventosPor[a.id] || [], hojeIso) !== 'lactante') return;   // vaca secando ou seca produz menos por razão normal
+      const mediaRec = v.rec.reduce((s,x)=>s+x,0) / v.rec.length;
+      const mediaBase = v.base.reduce((s,x)=>s+x,0) / v.base.length;
+      if(mediaBase < MIN_LITROS_BASE_QUEDA) return;
+      const queda = (1 - mediaRec / mediaBase) * 100;
+      if(queda >= QUEDA_PRODUCAO_PCT){
+        quedaProducao.push({ ordem: -queda, animal: 'Nº ' + a.identificacao,
+          texto: 'produção caiu ' + Math.round(queda) + '% (média de ' + mediaRec.toFixed(1) + ' L/dia nos últimos 3 dias, contra ' + mediaBase.toFixed(1) + ' L/dia na semana anterior). Vale ver se há mastite, cio, doença ou mudança de manejo' });
+      }
+    });
+  }
+
+  const grupos = [
+    { codigo:'parto', titulo:'Parto próximo ou atrasado', itens: ordenar(partoProximo) },
+    { codigo:'secagem', titulo:'Secagem', itens: ordenar(secagem) },
+    { codigo:'queda_producao', titulo:'Queda de produção', itens: ordenar(quedaProducao) },
+    { codigo:'sem_cobertura', titulo:'Sem cobertura há muito tempo', itens: ordenar(semCobertura) }
+  ];
+  return grupos.filter(g => g.itens.length).map(g => ({ codigo: g.codigo, titulo: g.titulo, itens: g.itens.map(i => ({ animal: i.animal, texto: i.texto })) }));
+}
+
+// Cartão "O que fazer hoje" da tela de Início. Sem nada a fazer, diz isso; sem animais cadastrados, não aparece.
+function montarCartaoAcoesDoDia(grupos, temAnimais){
+  if(!temAnimais) return '';
+  const titulo = '<div class="rotulo-secao">O que fazer hoje</div>';
+  if(!grupos.length){
+    return titulo + '<div class="cartao" style="padding:12px 14px"><div style="font-weight:700">Nada urgente hoje</div>'
+      + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Os avisos aparecem aqui quando houver parto ou secagem se aproximando, queda de produção de uma vaca ou vaca sem cobertura há muito tempo.</div></div>';
+  }
+  const MAX = 8;
+  return titulo + '<div class="cartao" style="border-color:var(--manteiga-escura)">'
+    + grupos.map(g => '<div style="margin-bottom:12px"><div style="font-weight:700; margin-bottom:4px">'+escaparHTML(g.titulo)+'</div>'
+      + g.itens.slice(0, MAX).map(i => '<div class="legenda-muted" style="font-size:13px; margin-bottom:3px"><strong>'+escaparHTML(i.animal)+'</strong>: '+escaparHTML(i.texto)+'</div>').join('')
+      + (g.itens.length > MAX ? '<div class="legenda-muted" style="font-size:12px">e mais '+(g.itens.length - MAX)+'</div>' : '')
+      + '</div>').join('')
+    + '<div class="legenda-muted" style="font-size:11px">Sugestões calculadas com o que foi lançado no app. Confira na ficha de cada animal.</div>'
+    + '</div>';
 }
 
 // HTML do cartão do Grupo 1, reaproveitado na tela de Indicadores e na ficha (tela e PDF).
@@ -2062,6 +2322,10 @@ async function salvarOrdenhaIndividualModal(data, animalId, inputAlterado){
   }, { onConflict: 'animal_id,data' });
 
   if(error){ avisar(mensagemErroAmigavel(error, 'salvar')); return; }
+
+  if(litros_manha > LIMITE_LITROS_ORDENHA || litros_tarde > LIMITE_LITROS_ORDENHA){
+    avisar('O valor foi salvo, mas confira: mais de '+LIMITE_LITROS_ORDENHA+' L numa só ordenha é muito raro. Pode ser erro de digitação.', 'Confira o valor');
+  }
 
   const statusInfo = statusOrdenhaIndividual({ litros_manha, litros_tarde });
   const totalEl = document.getElementById('total-ordenha-'+animalId);
@@ -3462,13 +3726,15 @@ async function renderIndicadores(){
     { data: animais, error: erroAnimais },
     { data: eventos, error: erroEventos },
     { data: lancamentos, error: erroLancamentos },
-    { data: qualidade, error: erroQualidade }
+    { data: qualidade, error: erroQualidade },
+    { data: individualRecente, error: erroIndividual }
   ] = await Promise.all([
     buscarTodasAsLinhas(() => sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false })),
     sb.from('animais').select('id, identificacao, data_nascimento, partos_anteriores').eq('produtor_id', usuarioAtual.id),
     sb.from('eventos_reprodutivos').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:true }),
     sb.from('financeiro_lancamentos').select('*').eq('produtor_id', usuarioAtual.id),
-    sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false })
+    sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false }),
+    buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', usuarioAtual.id).gte('data', somarDias(hoje, -JANELA_CONFERENCIA_DIAS)))
   ]);
 
   if(erroProducao || erroAnimais || erroEventos || erroLancamentos || erroQualidade){
@@ -3563,9 +3829,14 @@ async function renderIndicadores(){
       + '<div style="text-align:center; font-weight:700; color:'+corQual+'">'+textoQual+'</div>'
     + '</div>';
 
+  // Se a produção por vaca não carregar, o cartão só deixa de olhar o que depende dela (o resto da tela segue normal).
+  const avisosDados = verificarQualidadeDados(producao, erroIndividual ? null : individualRecente, animais, eventos, hoje);
+  const cartaoConferencia = montarCartaoQualidadeDados(avisosDados, (producao||[]).length > 0);
+  const blocoConferenciaDados = cartaoConferencia ? '<div class="rotulo-secao">Conferência dos dados</div>' + cartaoConferencia : '';
+
   document.getElementById('tela-indicadores').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Indicadores</div>'
-    + blocoProducao + blocoGrupo1 + blocoReprodutivo + blocoFinanceiro + blocoQualidade
+    + blocoConferenciaDados + blocoProducao + blocoGrupo1 + blocoReprodutivo + blocoFinanceiro + blocoQualidade
     + blocoRelatorios();
 }
 
@@ -4293,7 +4564,7 @@ function montarBlocoPerfilPropriedade(p){
 // lógica de renderIndicadores. O bloco de custo por litro (é financeiro) só aparece
 // quando mostrarCustoPorLitro é true — para o admin isso é sempre false; para um
 // colaborador, depende de ele ter permissão de ver o Financeiro daquele produtor.
-async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro, incluirReprodutivo = true){
+async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro, incluirReprodutivo = true, incluirConferencia = true){
   const hoje = new Date().toISOString().slice(0,10);
   const inicioMes = hoje.slice(0,8) + '01';
   const consultas = [
@@ -4303,6 +4574,8 @@ async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro, incluirR
     sb.from('qualidade_leite').select('*').eq('produtor_id', produtorId).order('data', { ascending:false })
   ];
   if(mostrarCustoPorLitro) consultas.push(sb.from('financeiro_lancamentos').select('*').eq('produtor_id', produtorId));
+  // A produção por vaca dos últimos 90 dias entra por último; fica na posição 4 (sem Financeiro) ou 5 (com Financeiro).
+  if(incluirConferencia) consultas.push(buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', produtorId).gte('data', somarDias(hoje, -JANELA_CONFERENCIA_DIAS))));
 
   const resultados = await Promise.all(consultas);
   const [{ data: producao, error: erroProducao }, { data: animais, error: erroAnimais }, { data: eventos, error: erroEventos }, { data: qualidade, error: erroQualidade }] = resultados;
@@ -4353,6 +4626,14 @@ async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro, incluirR
   const blocoGrupo1Ficha = '<div class="legenda-muted" style="margin:10px 0 4px; font-weight:700">Reprodutivo (indicadores gerais)</div>' + montarCartaoGrupo1(grupo1Ficha);
   const blocoReprodutivo = blocoGrupo1Ficha + (incluirReprodutivo ? blocoReprodutivoCompleto : '');
 
+  let blocoConferencia = '';
+  if(incluirConferencia){
+    const resInd = resultados[mostrarCustoPorLitro ? 5 : 4];
+    const avisosFicha = verificarQualidadeDados(producao, resInd.error ? null : resInd.data, animais, eventos, hoje);
+    const cartaoFicha = montarCartaoQualidadeDados(avisosFicha, (producao||[]).length > 0);
+    if(cartaoFicha) blocoConferencia = '<div class="legenda-muted" style="margin:10px 0 4px; font-weight:700">Conferência dos dados</div>' + cartaoFicha;
+  }
+
   let blocoFinanceiro = '';
   if(mostrarCustoPorLitro){
     const despesasMes = (lancamentos||[]).filter(l=>l.tipo==='despesa' && l.data >= inicioMes).reduce((s,l)=>s+Number(l.valor),0);
@@ -4380,7 +4661,7 @@ async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro, incluirR
       + '<div style="text-align:center; font-weight:700; color:'+corQual+'">'+textoQual+'</div>'
     + '</div>';
 
-  return blocoProducao + blocoReprodutivo + blocoFinanceiro + blocoQualidade;
+  return blocoConferencia + blocoProducao + blocoReprodutivo + blocoFinanceiro + blocoQualidade;
 }
 
 // Baixa o CSV com todo o histórico de produção (sem filtro de período) de um produtor.
@@ -4649,7 +4930,7 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p, ja
   conteudo += '<div class="cartao"><strong>Outras fontes de renda:</strong><br>'+(fontes.length ? fontes.map(formatarFonteRendaExibicao).join('<br>') : 'Nenhuma informada.')+'</div>';
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Indicadores</h2>';
-  conteudo += await montarBlocoIndicadores(produtorId, !!permissoes.ve_financeiro, false);
+  conteudo += await montarBlocoIndicadores(produtorId, !!permissoes.ve_financeiro, false, false);
 
   if(permissoes.ve_producao){
     const producao = dados.producao || [];
