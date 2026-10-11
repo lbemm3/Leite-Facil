@@ -693,13 +693,101 @@ async function renderInicio(){
     + blocoAcessosColaborador()
     + '<div id="bloco-alerta-qualidade-inicio"></div>'
     + '<div id="bloco-o-que-fazer"></div>'
+    + '<div id="bloco-avisos-dispensados"></div>'
     + '<div id="bloco-alertas-inicio"><div class="legenda-muted">Carregando alertas...</div></div>';
+  atualizarAvisosInicio();
+  await renderAlertasNoInicio();
+}
+
+// Avisos dispensados (baixa ou adiamento) do produtor, carregados a cada atualização do Início.
+let AVISOS_DISPENSADOS = [];
+let AVISO_EM_ADIAMENTO = null;
+
+// Recarrega os avisos dispensados e redesenha os três blocos que dependem deles. Se a tabela não puder ser lida,
+// nada é escondido (melhor mostrar um aviso a mais do que sumir com um aviso importante).
+async function atualizarAvisosInicio(){
+  const { data, error } = await sb.from('avisos_dispensados').select('chave, descricao, ate').eq('produtor_id', usuarioAtual.id);
+  AVISOS_DISPENSADOS = error ? [] : (data || []);
   renderAlertaQualidadeInicio().then(html=>{
     const el = document.getElementById('bloco-alerta-qualidade-inicio');
     if(el) el.innerHTML = html;
   });
   renderOQueFazerHoje();
-  await renderAlertasNoInicio();
+  renderLinkAvisosDispensados();
+}
+
+function renderLinkAvisosDispensados(){
+  const alvo = document.getElementById('bloco-avisos-dispensados');
+  if(!alvo) return;
+  const hoje = new Date().toISOString().slice(0,10);
+  const n = AVISOS_DISPENSADOS.filter(d => avisoDispensadoAtivo(d, hoje)).length;
+  alvo.innerHTML = n
+    ? '<div class="legenda-muted" style="text-align:center; font-size:12.5px; margin:-4px 0 14px">'+n+(n === 1 ? ' aviso com baixa ou adiado. ' : ' avisos com baixa ou adiados. ')
+      + '<button style="color:var(--azul); font-weight:700; font-size:12.5px; text-decoration:underline" onclick="abrirAvisosDispensados()">Ver e reativar</button></div>'
+    : '';
+}
+
+async function gravarAvisoDispensado(chave, descricao, ate){
+  const { error } = await sb.from('avisos_dispensados').upsert({ produtor_id: usuarioAtual.id, chave, descricao, ate }, { onConflict: 'produtor_id,chave' });
+  if(error){ avisar(mensagemErroAmigavel(error, 'dispensar o aviso')); return false; }
+  return true;
+}
+
+async function darBaixaAviso(botao){
+  const chave = botao.dataset.chave, descricao = botao.dataset.descricao;
+  const dias = Number(botao.dataset.baixaDias) || 0;
+  const hoje = new Date().toISOString().slice(0,10);
+  botao.disabled = true;
+  const ok = await gravarAvisoDispensado(chave, descricao, dias ? somarDias(hoje, dias) : null);
+  if(ok) await atualizarAvisosInicio(); else botao.disabled = false;
+}
+
+function abrirAdiarAviso(botao){
+  AVISO_EM_ADIAMENTO = { chave: botao.dataset.chave, descricao: botao.dataset.descricao };
+  const atalhos = [1, 3, 7, 15, 30].map(n => '<button class="botao botao-secundario" style="padding:5px 12px; font-size:12px; margin:0" onclick="document.getElementById(\'campo-dias-adiar\').value='+n+'">'+n+(n === 1 ? ' dia' : ' dias')+'</button>').join('');
+  document.getElementById('caixa-confirmacao').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Adiar aviso</div>'
+    + '<div class="legenda-muted" style="margin-bottom:10px">'+escaparHTML(AVISO_EM_ADIAMENTO.descricao)+'</div>'
+    + '<div class="grupo-campo"><label for="campo-dias-adiar">Adiar por quantos dias?</label><input id="campo-dias-adiar" type="number" min="1" max="'+MAX_DIAS_ADIAR+'" step="1" value="7"></div>'
+    + '<div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px">'+atalhos+'</div>'
+    + '<div id="mensagem-adiar" class="legenda-muted" style="min-height:18px"></div>'
+    + '<div style="display:flex; gap:10px"><button class="botao botao-secundario" style="flex:1" onclick="fecharConfirmacao()">Cancelar</button>'
+    + '<button class="botao botao-primario" style="flex:1" onclick="confirmarAdiarAviso()">Adiar</button></div>';
+  document.getElementById('camada-confirmacao').classList.add('ativo');
+}
+
+async function confirmarAdiarAviso(){
+  const msg = document.getElementById('mensagem-adiar');
+  const dias = validarDiasAdiar(document.getElementById('campo-dias-adiar').value);
+  if(dias === null){ msg.textContent = 'Informe um número inteiro de dias, de 1 a '+MAX_DIAS_ADIAR+'.'; msg.style.color = 'var(--perigo)'; return; }
+  if(!AVISO_EM_ADIAMENTO) return;
+  const hoje = new Date().toISOString().slice(0,10);
+  msg.textContent = 'Salvando...'; msg.style.color = 'var(--tinta-suave)';
+  const ok = await gravarAvisoDispensado(AVISO_EM_ADIAMENTO.chave, AVISO_EM_ADIAMENTO.descricao, somarDias(hoje, dias));
+  fecharConfirmacao();
+  if(ok) await atualizarAvisosInicio();
+}
+
+function abrirAvisosDispensados(){
+  const hoje = new Date().toISOString().slice(0,10);
+  const ativos = AVISOS_DISPENSADOS.filter(d => avisoDispensadoAtivo(d, hoje));
+  const linhas = ativos.map(d => '<div class="cartao" style="padding:10px 12px; margin-bottom:8px; display:flex; align-items:center; gap:10px">'
+    + '<div style="flex:1; min-width:0"><div style="font-weight:700; font-size:13.5px">'+escaparHTML(d.descricao || d.chave)+'</div>'
+    + '<div class="legenda-muted" style="margin-bottom:0; font-size:12px">'+(d.ate ? 'Adiado até '+formatarData(d.ate) : 'Com baixa')+'</div></div>'
+    + '<button class="botao botao-secundario" style="padding:5px 12px; font-size:12px; margin:0" data-chave="'+escaparHTML(d.chave)+'" onclick="reativarAviso(this)">Reativar</button>'
+    + '</div>').join('');
+  document.getElementById('conteudo-modal').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Avisos com baixa ou adiados</div>'
+    + (linhas || '<div class="legenda-muted">Nenhum aviso dispensado no momento.</div>');
+  abrirModal();
+}
+
+async function reativarAviso(botao){
+  botao.disabled = true;
+  const { error } = await sb.from('avisos_dispensados').delete().eq('produtor_id', usuarioAtual.id).eq('chave', botao.dataset.chave);
+  if(error){ botao.disabled = false; avisar(mensagemErroAmigavel(error, 'reativar o aviso')); return; }
+  await atualizarAvisosInicio();
+  abrirAvisosDispensados();
 }
 
 // Busca o que o painel precisa e monta o "O que fazer hoje". Se algo falhar, o bloco simplesmente não aparece.
@@ -712,7 +800,8 @@ async function renderOQueFazerHoje(){
   ]);
   const alvo = document.getElementById('bloco-o-que-fazer');
   if(!alvo || erroAnimais || erroEventos) return;
-  alvo.innerHTML = montarCartaoAcoesDoDia(calcularAcoesDoDia(animais || [], eventos || [], erroInd ? null : individual, hoje), (animais || []).length > 0);
+  const grupos = filtrarAvisosDispensados(calcularAcoesDoDia(animais || [], eventos || [], erroInd ? null : individual, hoje), AVISOS_DISPENSADOS, hoje).grupos;
+  alvo.innerHTML = montarCartaoAcoesDoDia(grupos, (animais || []).length > 0);
 }
 
 async function renderAlertaQualidadeInicio(){
@@ -722,13 +811,18 @@ async function renderAlertaQualidadeInicio(){
   if(error || !data || !data.length) return '';
   const status = calcularStatusQualidade(data, hoje);
   if(status.nivel === 'ok') return '';
+  // Baixa ou adiamento feito pelo produtor: some até chegar um resultado de análise novo (a chave muda com a data do último resultado).
+  const chaveQualidade = chaveAvisoQualidade(status.nivel, data);
+  if(AVISOS_DISPENSADOS.some(d => d.chave === chaveQualidade && avisoDispensadoAtivo(d, hoje))) return '';
   const cor = status.nivel === 'alerta' ? 'var(--perigo)' : 'var(--manteiga-escura)';
   const texto = status.nivel === 'alerta'
     ? 'A qualidade do leite (CCS, CBT, gordura ou proteína) dos últimos 90 dias está fora do limite legal (IN 76/77 do MAPA). Isso pode levar à suspensão da coleta pelo laticínio.'
     : 'A qualidade do leite (CCS, CBT, gordura ou proteína) dos últimos 90 dias está próxima do limite legal. Vale ficar atento.';
   return '<div class="cartao" style="border-color:'+cor+'; display:flex; align-items:center; gap:14px; margin-bottom:14px">'
     + '<div class="avatar" style="background:'+cor+'; color:var(--branco)">'+iconeInline('frasco',20)+'</div>'
-    + '<div style="flex:1"><strong>Atenção à qualidade do leite</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+texto+'</div></div>'
+    + '<div style="flex:1"><strong>Atenção à qualidade do leite</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+texto+'</div>'
+    + botoesAviso(chaveQualidade, 'Atenção à qualidade do leite', null)
+    + '</div>'
     + '</div>';
 }
 
@@ -1340,6 +1434,8 @@ const DIAS_AVISO_PARTO = 14;             // avisa o parto previsto com até 14 d
 const DIAS_PARTO_ATRASADO_MAX = 45;      // parto previsto que passou há mais que isso é tratado como dado antigo e não aparece
 const QUEDA_PRODUCAO_PCT = 25;           // queda mínima (em %) da produção de uma vaca para avisar
 const MIN_LITROS_BASE_QUEDA = 5;         // abaixo dessa média (L/dia) a queda percentual não é confiável
+const DIAS_BAIXA_QUEDA = 30;             // "dar baixa" num aviso de queda de produção esconde por 30 dias (a queda é uma situação do momento)
+const MAX_DIAS_ADIAR = 365;              // maior adiamento aceito, em dias
 
 // Recebe os animais, os eventos reprodutivos (animal_id, tipo, data), a produção por vaca dos últimos ~10 dias
 // (null se não foi carregada) e a data de hoje. Devolve grupos { codigo, titulo, itens: [{ animal, texto }] }
@@ -1370,9 +1466,9 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
       const partoPrevisto = somarDias(ultimoRelevante.data, DIAS_GESTACAO);
       const faltam = diasEntre(hojeIso, partoPrevisto);
       if(faltam >= 0 && faltam <= DIAS_AVISO_PARTO){
-        partoProximo.push({ ordem: faltam, animal: nome, texto: 'parto previsto em ' + dm(partoPrevisto) + (faltam === 0 ? ' (hoje)' : ' (em ' + faltam + (faltam === 1 ? ' dia)' : ' dias)')) });
+        partoProximo.push({ ordem: faltam, animal: nome, chave: 'parto|' + a.id + '|' + partoPrevisto, texto: 'parto previsto em ' + dm(partoPrevisto) + (faltam === 0 ? ' (hoje)' : ' (em ' + faltam + (faltam === 1 ? ' dia)' : ' dias)')) });
       } else if(faltam < 0 && -faltam <= DIAS_PARTO_ATRASADO_MAX){
-        partoProximo.push({ ordem: faltam, animal: nome, texto: 'o parto previsto era ' + dm(partoPrevisto) + ' (' + (-faltam) + (faltam === -1 ? ' dia' : ' dias') + ' atrás) e não foi registrado. Registre o parto ou o aborto, ou revise a cobertura' });
+        partoProximo.push({ ordem: faltam, animal: nome, chave: 'parto|' + a.id + '|' + partoPrevisto, texto: 'o parto previsto era ' + dm(partoPrevisto) + ' (' + (-faltam) + (faltam === -1 ? ' dia' : ' dias') + ' atrás) e não foi registrado. Registre o parto ou o aborto, ou revise a cobertura' });
       }
 
       // Secagem: só para vaca que já pariu e ainda não teve a secagem registrada.
@@ -1381,9 +1477,9 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
         const dataSecar = somarDias(partoPrevisto, -DIAS_SECA_ANTES_PARTO);
         const ate = diasEntre(hojeIso, dataSecar);
         if(ate >= 0 && ate <= DIAS_AVISO_SECAGEM){
-          secagem.push({ ordem: ate, animal: nome, texto: 'secagem recomendada em ' + dm(dataSecar) + (ate === 0 ? ' (hoje)' : ' (em ' + ate + (ate === 1 ? ' dia)' : ' dias)')) });
+          secagem.push({ ordem: ate, animal: nome, chave: 'secagem|' + a.id + '|' + dataSecar, texto: 'secagem recomendada em ' + dm(dataSecar) + (ate === 0 ? ' (hoje)' : ' (em ' + ate + (ate === 1 ? ' dia)' : ' dias)')) });
         } else if(ate < 0){
-          secagem.push({ ordem: ate, animal: nome, texto: 'a data de secar (' + dm(dataSecar) + ') já passou e a secagem não foi registrada. Se já secou, registre; se ainda está sendo ordenhada, é hora de secar' });
+          secagem.push({ ordem: ate, animal: nome, chave: 'secagem|' + a.id + '|' + dataSecar, texto: 'a data de secar (' + dm(dataSecar) + ') já passou e a secagem não foi registrada. Se já secou, registre; se ainda está sendo ordenhada, é hora de secar' });
         }
       }
     }
@@ -1395,7 +1491,7 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
       const temCoberturaDepois = evs.some(e=>e.tipo==='cobertura' && e.data > base);
       const dias = diasEntre(base, hojeIso);
       if(!temCoberturaDepois && dias >= DIAS_ALERTA_SEM_COBERTURA){
-        semCobertura.push({ ordem: -dias, animal: nome, texto: dias + ' dias desde ' + (aborto ? 'o aborto' : 'o parto') + ' (' + dm(base) + ') e nenhuma cobertura registrada' });
+        semCobertura.push({ ordem: -dias, animal: nome, chave: 'sem_cobertura|' + a.id + '|' + base, texto: dias + ' dias desde ' + (aborto ? 'o aborto' : 'o parto') + ' (' + dm(base) + ') e nenhuma cobertura registrada' });
       }
     }
   });
@@ -1421,7 +1517,7 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
       if(mediaBase < MIN_LITROS_BASE_QUEDA) return;
       const queda = (1 - mediaRec / mediaBase) * 100;
       if(queda >= QUEDA_PRODUCAO_PCT){
-        quedaProducao.push({ ordem: -queda, animal: 'Nº ' + a.identificacao,
+        quedaProducao.push({ ordem: -queda, animal: 'Nº ' + a.identificacao, chave: 'queda|' + a.id, baixaDias: DIAS_BAIXA_QUEDA,
           texto: 'produção caiu ' + Math.round(queda) + '% (média de ' + mediaRec.toFixed(1) + ' L/dia nos últimos 3 dias, contra ' + mediaBase.toFixed(1) + ' L/dia na semana anterior). Vale ver se há mastite, cio, doença ou mudança de manejo' });
       }
     });
@@ -1433,7 +1529,48 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
     { codigo:'queda_producao', titulo:'Queda de produção', itens: ordenar(quedaProducao) },
     { codigo:'sem_cobertura', titulo:'Sem cobertura há muito tempo', itens: ordenar(semCobertura) }
   ];
-  return grupos.filter(g => g.itens.length).map(g => ({ codigo: g.codigo, titulo: g.titulo, itens: g.itens.map(i => ({ animal: i.animal, texto: i.texto })) }));
+  return grupos.filter(g => g.itens.length).map(g => ({ codigo: g.codigo, titulo: g.titulo, itens: g.itens.map(i => ({ animal: i.animal, texto: i.texto, chave: i.chave, baixaDias: i.baixaDias || null, descricao: g.titulo + ': ' + i.animal })) }));
+}
+
+// ---------- Baixa e adiamento de avisos ----------
+// Cada aviso tem uma "chave" que identifica aquela ocorrência (vaca + data de referência), então um aviso novo
+// (outra vaca, outra gestação) volta a aparecer. Uma linha em avisos_dispensados com "ate" vazio é baixa definitiva;
+// com data, o aviso fica escondido até lá.
+function avisoDispensadoAtivo(d, hojeIso){
+  return !!d && (d.ate == null || d.ate === '' || hojeIso < d.ate);
+}
+
+// Tira dos grupos os avisos dispensados e devolve também quantos foram escondidos.
+function filtrarAvisosDispensados(grupos, dispensados, hojeIso){
+  const ativos = new Set((dispensados||[]).filter(d => avisoDispensadoAtivo(d, hojeIso)).map(d => d.chave));
+  let ocultos = 0;
+  const filtrados = (grupos||[]).map(g => ({ ...g, itens: g.itens.filter(i => { if(ativos.has(i.chave)){ ocultos++; return false; } return true; }) }))
+    .filter(g => g.itens.length);
+  return { grupos: filtrados, ocultos };
+}
+
+// Chave do aviso de qualidade do leite: muda quando entra um novo resultado de análise, então uma baixa vale
+// para os resultados atuais, mas um resultado novo ruim volta a avisar.
+function chaveAvisoQualidade(nivel, registros){
+  const datas = (registros||[]).map(r => r.data).filter(Boolean).sort();
+  return 'qualidade|' + nivel + '|' + (datas.length ? datas[datas.length - 1] : 'sem-data');
+}
+
+// Número de dias digitado no "Adiar": inteiro de 1 a 365; devolve null se for inválido.
+function validarDiasAdiar(valor){
+  if(valor === '' || valor === null || valor === undefined) return null;
+  const n = Number(valor);
+  return (Number.isInteger(n) && n >= 1 && n <= MAX_DIAS_ADIAR) ? n : null;
+}
+
+// Os dois botões de um aviso. Os dados vão em atributos (escapados) e as funções leem do botão.
+function botoesAviso(chave, descricao, baixaDias){
+  const dados = ' data-chave="'+escaparHTML(chave)+'" data-descricao="'+escaparHTML(descricao)+'" data-baixa-dias="'+(baixaDias ? Number(baixaDias) : '')+'"';
+  const estilo = 'style="padding:5px 14px; font-size:12px; margin:0"';
+  return '<div style="display:flex; gap:8px; margin-top:4px">'
+    + '<button class="botao botao-secundario" '+estilo+dados+' onclick="darBaixaAviso(this)">Dar baixa</button>'
+    + '<button class="botao botao-secundario" '+estilo+dados+' onclick="abrirAdiarAviso(this)">Adiar</button>'
+    + '</div>';
 }
 
 // Cartão "O que fazer hoje" da tela de Início. Sem nada a fazer, diz isso; sem animais cadastrados, não aparece.
@@ -1447,10 +1584,10 @@ function montarCartaoAcoesDoDia(grupos, temAnimais){
   const MAX = 8;
   return titulo + '<div class="cartao" style="border-color:var(--manteiga-escura)">'
     + grupos.map(g => '<div style="margin-bottom:12px"><div style="font-weight:700; margin-bottom:4px">'+escaparHTML(g.titulo)+'</div>'
-      + g.itens.slice(0, MAX).map(i => '<div class="legenda-muted" style="font-size:13px; margin-bottom:3px"><strong>'+escaparHTML(i.animal)+'</strong>: '+escaparHTML(i.texto)+'</div>').join('')
+      + g.itens.slice(0, MAX).map(i => '<div style="margin-bottom:10px"><div class="legenda-muted" style="font-size:13px; margin-bottom:0"><strong>'+escaparHTML(i.animal)+'</strong>: '+escaparHTML(i.texto)+'</div>'+(i.chave ? botoesAviso(i.chave, i.descricao || (g.titulo + ': ' + i.animal), i.baixaDias) : '')+'</div>').join('')
       + (g.itens.length > MAX ? '<div class="legenda-muted" style="font-size:12px">e mais '+(g.itens.length - MAX)+'</div>' : '')
       + '</div>').join('')
-    + '<div class="legenda-muted" style="font-size:11px">Sugestões calculadas com o que foi lançado no app. Confira na ficha de cada animal.</div>'
+    + '<div class="legenda-muted" style="font-size:11px">Sugestões calculadas com o que foi lançado no app. "Dar baixa" some com o aviso (na queda de produção, por '+DIAS_BAIXA_QUEDA+' dias); "Adiar" esconde pelo número de dias que você escolher.</div>'
     + '</div>';
 }
 
