@@ -78,7 +78,9 @@ function carregarFuncoesReais(){
     'MIN_VACAS_DIA_REPETIDO', 'TOLERANCIA_TOTAL_DIA', 'escaparHTML',
     'verificarQualidadeDados', 'montarCartaoQualidadeDados',
     'DIAS_ALERTA_SEM_COBERTURA', 'DIAS_AVISO_SECAGEM', 'DIAS_AVISO_PARTO', 'DIAS_PARTO_ATRASADO_MAX',
-    'QUEDA_PRODUCAO_PCT', 'MIN_LITROS_BASE_QUEDA', 'calcularAcoesDoDia', 'montarCartaoAcoesDoDia'
+    'QUEDA_PRODUCAO_PCT', 'MIN_LITROS_BASE_QUEDA', 'DIAS_BAIXA_QUEDA', 'MAX_DIAS_ADIAR',
+    'calcularAcoesDoDia', 'montarCartaoAcoesDoDia',
+    'avisoDispensadoAtivo', 'filtrarAvisosDispensados', 'chaveAvisoQualidade', 'validarDiasAdiar', 'botoesAviso'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -442,6 +444,79 @@ console.log('\n--- calcularAcoesDoDia ("o que fazer hoje") ---');
   verificar('o texto do cartão é escapado', html.includes('T &lt;b&gt;') && html.includes('a &amp; b'), true);
   const muitos = [{ codigo: 'x', titulo: 'T', itens: Array.from({ length: 11 }, (_, i) => ({ animal: 'Nº ' + i, texto: 't' })) }];
   verificar('mais de 8 itens num grupo mostra "e mais 3"', F.montarCartaoAcoesDoDia(muitos, true).includes('e mais 3'), true);
+}
+
+console.log('\n--- baixa e adiamento de avisos ---');
+{
+  const H = '2026-10-10';
+  const d = n => F.somarDias(H, n);
+
+  // avisoDispensadoAtivo
+  verificar('baixa definitiva (sem data) está ativa', F.avisoDispensadoAtivo({ chave: 'a', ate: null }, H), true);
+  verificar('adiado até amanhã continua escondido hoje', F.avisoDispensadoAtivo({ chave: 'a', ate: d(1) }, H), true);
+  verificar('no dia da data de adiamento o aviso volta', F.avisoDispensadoAtivo({ chave: 'a', ate: H }, H), false);
+  verificar('depois da data de adiamento o aviso volta', F.avisoDispensadoAtivo({ chave: 'a', ate: d(-3) }, H), false);
+  verificar('sem registro nenhum, nada está dispensado', F.avisoDispensadoAtivo(undefined, H), false);
+
+  // filtrarAvisosDispensados
+  const grupos = [
+    { codigo: 'parto', titulo: 'Parto', itens: [{ animal: 'Nº 1', texto: 't', chave: 'parto|1|x' }, { animal: 'Nº 2', texto: 't', chave: 'parto|2|x' }] },
+    { codigo: 'secagem', titulo: 'Secagem', itens: [{ animal: 'Nº 3', texto: 't', chave: 'secagem|3|x' }] }
+  ];
+  let f = F.filtrarAvisosDispensados(grupos, [{ chave: 'parto|1|x', ate: null }], H);
+  verificar('baixa tira só o aviso dispensado', f.grupos[0].itens.map(i => i.animal), ['Nº 2']);
+  verificar('conta quantos foram escondidos', f.ocultos, 1);
+  f = F.filtrarAvisosDispensados(grupos, [{ chave: 'secagem|3|x', ate: d(5) }], H);
+  verificar('grupo que fica sem itens some', f.grupos.map(g => g.codigo), ['parto']);
+  f = F.filtrarAvisosDispensados(grupos, [{ chave: 'secagem|3|x', ate: d(-1) }], H);
+  verificar('adiamento vencido: o aviso volta', f.grupos.length, 2);
+  f = F.filtrarAvisosDispensados(grupos, [{ chave: 'parto|1|outra-gestacao', ate: null }], H);
+  verificar('baixa de outra ocorrência (outra data) não esconde este aviso', [f.grupos[0].itens.length, f.ocultos], [2, 0]);
+  verificar('sem dispensados, os grupos passam intactos', F.filtrarAvisosDispensados(grupos, [], H).grupos, grupos);
+  verificar('filtrar não altera a lista original', grupos[0].itens.length, 2);
+
+  // chaves geradas pelo painel: estáveis ao longo dos dias, para a baixa continuar valendo
+  const vaca = { id: 7, identificacao: '7', data_nascimento: '2020-01-01' };
+  const evs = [{ animal_id: 7, tipo: 'cobertura', data: d(10 - 283) }];
+  const g1 = F.calcularAcoesDoDia([vaca], evs, null, H);
+  const g2 = F.calcularAcoesDoDia([vaca], evs, null, d(2));
+  verificar('o aviso de parto tem chave com a vaca e a data prevista', g1[0].itens[0].chave, 'parto|7|' + d(10));
+  verificar('a chave não muda de um dia para o outro (a baixa continua valendo)', g2[0].itens[0].chave, g1[0].itens[0].chave);
+  verificar('o item traz uma descrição para a lista de avisos dispensados', g1[0].itens[0].descricao, 'Parto próximo ou atrasado: Nº 7');
+  verificar('aviso comum não tem prazo de baixa fixo', g1[0].itens[0].baixaDias, null);
+  const evsLact = [{ animal_id: 7, tipo: 'parto', data: d(-100) }, { animal_id: 7, tipo: 'cobertura', data: d(-30) }];
+  const ind = []; for(let i = 4; i <= 10; i++) ind.push({ data: d(-i), animal_id: 7, litros_manha: 14, litros_tarde: 11 });
+  for(let i = 1; i <= 3; i++) ind.push({ data: d(-i), animal_id: 7, litros_manha: 10, litros_tarde: 8 });
+  const q = F.calcularAcoesDoDia([vaca], evsLact, ind, H).find(g => g.codigo === 'queda_producao');
+  verificar('queda de produção: a baixa vale por 30 dias', [q.itens[0].chave, q.itens[0].baixaDias], ['queda|7', 30]);
+  const semCob = F.calcularAcoesDoDia([vaca], [{ animal_id: 7, tipo: 'parto', data: d(-100) }], null, H).find(g => g.codigo === 'sem_cobertura');
+  verificar('sem cobertura: a chave inclui a data do parto (nova lactação, novo aviso)', semCob.itens[0].chave, 'sem_cobertura|7|' + d(-100));
+  const secagem = F.calcularAcoesDoDia([vaca], [{ animal_id: 7, tipo: 'parto', data: d(-300) }, { animal_id: 7, tipo: 'cobertura', data: d(65 - 283) }], null, H).find(g => g.codigo === 'secagem');
+  verificar('secagem: a chave inclui a data de secar', secagem.itens[0].chave, 'secagem|7|' + d(5));
+
+  // qualidade do leite
+  verificar('chave da qualidade usa o nível e a data do resultado mais recente', F.chaveAvisoQualidade('alerta', [{ data: '2026-08-01' }, { data: '2026-09-15' }, { data: '2026-07-01' }]), 'qualidade|alerta|2026-09-15');
+  verificar('um resultado novo muda a chave (o aviso volta se continuar ruim)',
+    F.chaveAvisoQualidade('alerta', [{ data: '2026-09-15' }]) !== F.chaveAvisoQualidade('alerta', [{ data: '2026-09-15' }, { data: '2026-10-05' }]), true);
+  verificar('mudar o nível também muda a chave', F.chaveAvisoQualidade('atencao', [{ data: '2026-09-15' }]) !== F.chaveAvisoQualidade('alerta', [{ data: '2026-09-15' }]), true);
+  verificar('sem datas, a chave ainda existe', F.chaveAvisoQualidade('alerta', []), 'qualidade|alerta|sem-data');
+
+  // dias do adiamento
+  verificar('7 dias é aceito', F.validarDiasAdiar('7'), 7);
+  verificar('365 dias é o máximo', F.validarDiasAdiar(365), 365);
+  verificar('366 dias é recusado', F.validarDiasAdiar('366'), null);
+  verificar('0 e negativos são recusados', [F.validarDiasAdiar('0'), F.validarDiasAdiar('-3')], [null, null]);
+  verificar('decimais são recusados', F.validarDiasAdiar('2.5'), null);
+  verificar('vazio e texto são recusados', [F.validarDiasAdiar(''), F.validarDiasAdiar('abc'), F.validarDiasAdiar(null)], [null, null, null]);
+
+  // botões
+  const html = F.botoesAviso('parto|1|"x"', 'Parto: <Nº 1>', 30);
+  verificar('os dois botões existem', html.includes('Dar baixa') && html.includes('Adiar'), true);
+  verificar('os dados do aviso são escapados nos atributos', html.includes('data-chave="parto|1|&quot;x&quot;"') && html.includes('data-descricao="Parto: &lt;Nº 1&gt;"'), true);
+  verificar('o prazo de baixa vai no botão quando existe', html.includes('data-baixa-dias="30"'), true);
+  verificar('sem prazo, o atributo fica vazio', F.botoesAviso('a', 'b', null).includes('data-baixa-dias=""'), true);
+  const cartao = F.montarCartaoAcoesDoDia(g1, true);
+  verificar('o cartão de ações mostra os botões em cada aviso', (cartao.match(/Dar baixa/g) || []).length >= 1 && cartao.includes('data-chave="parto|7|'), true);
 }
 
 console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do Supabase) ---');
