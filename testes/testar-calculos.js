@@ -80,7 +80,7 @@ function carregarFuncoesReais(){
     'DIAS_ALERTA_SEM_COBERTURA', 'DIAS_AVISO_SECAGEM', 'DIAS_AVISO_PARTO', 'DIAS_PARTO_ATRASADO_MAX',
     'QUEDA_PRODUCAO_PCT', 'MIN_LITROS_BASE_QUEDA', 'DIAS_BAIXA_QUEDA', 'MAX_DIAS_ADIAR',
     'calcularAcoesDoDia', 'montarCartaoAcoesDoDia',
-    'avisoDispensadoAtivo', 'filtrarAvisosDispensados', 'chaveAvisoQualidade', 'validarDiasAdiar', 'botoesAviso'
+    'avisoDispensadoAtivo', 'filtrarAvisosDispensados', 'chaveAvisoQualidade', 'validarDiasAdiar', 'botoesAviso', 'classificarAvisosDispensados'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -493,6 +493,25 @@ console.log('\n--- baixa e adiamento de avisos ---');
   verificar('sem cobertura: a chave inclui a data do parto (nova lactação, novo aviso)', semCob.itens[0].chave, 'sem_cobertura|7|' + d(-100));
   const secagem = F.calcularAcoesDoDia([vaca], [{ animal_id: 7, tipo: 'parto', data: d(-300) }, { animal_id: 7, tipo: 'cobertura', data: d(65 - 283) }], null, H).find(g => g.codigo === 'secagem');
   verificar('secagem: a chave inclui a data de secar', secagem.itens[0].chave, 'secagem|7|' + d(5));
+
+  // limpeza automática das baixas obsoletas
+  const PX = ['parto|', 'secagem|', 'sem_cobertura|', 'queda|', 'qualidade|'];
+  const cl = (disp, chaves, prefixos) => F.classificarAvisosDispensados(disp, chaves, prefixos === undefined ? PX : prefixos, H);
+  let c = cl([{ chave: 'parto|1|x', ate: d(-1) }], new Set(['parto|1|x']));
+  verificar('adiamento vencido vai para remoção, mesmo se o aviso ainda existe', [c.remover.length, c.relevantes.length], [1, 0]);
+  c = cl([{ chave: 'parto|1|x', ate: null }], new Set(['parto|2|x']));
+  verificar('baixa definitiva de aviso que não existe mais é removida', [c.remover.length, c.relevantes.length], [1, 0]);
+  c = cl([{ chave: 'parto|1|x', ate: null }], new Set(['parto|1|x']));
+  verificar('baixa definitiva de aviso que continua existindo é mantida', [c.remover.length, c.relevantes.length], [0, 1]);
+  c = cl([{ chave: 'queda|7', ate: d(10) }], new Set());
+  verificar('adiamento dentro do prazo de aviso que sumiu: fica guardado, mas não é listado nem removido', [c.remover.length, c.relevantes.length], [0, 0]);
+  c = cl([{ chave: 'parto|1|x', ate: null }], null, ['secagem|']);
+  verificar('tipo de aviso não avaliado nesta abertura não é mexido', [c.remover.length, c.relevantes.length], [0, 1]);
+  c = cl([{ chave: 'qualidade|alerta|2026-09-15', ate: null }], new Set(['qualidade|alerta|2026-10-05']));
+  verificar('qualidade: resultado novo troca a chave e a baixa antiga é removida', [c.remover.length, c.relevantes.length], [1, 0]);
+  c = cl([{ chave: 'qualidade|alerta|2026-09-15', ate: null }], new Set(), PX);
+  verificar('qualidade voltou ao normal: a baixa antiga é removida', c.remover.length, 1);
+  verificar('sem registros, nada a fazer', cl([], new Set()).remover.length, 0);
 
   // qualidade do leite
   verificar('chave da qualidade usa o nível e a data do resultado mais recente', F.chaveAvisoQualidade('alerta', [{ data: '2026-08-01' }, { data: '2026-09-15' }, { data: '2026-07-01' }]), 'qualidade|alerta|2026-09-15');
