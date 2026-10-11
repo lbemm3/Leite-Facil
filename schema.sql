@@ -481,6 +481,26 @@ alter table avisos_enviados enable row level security;
 -- mexe nesta tabela, com service_role (que tem SELECT/INSERT/UPDATE/DELETE).
 
 
+-- ============================== avisos_dispensados ==============================
+-- Avisos da tela de Início (O que fazer hoje, qualidade do leite) que o produtor
+-- deu baixa ou adiou. Criada em 11/10/2026 por criar-avisos-dispensados.sql, que
+-- também cria a chave primária (id, identity) e a restrição única (produtor_id, chave).
+-- "ate" vazio = baixa definitiva dessa ocorrência; com data = escondido até lá.
+create table avisos_dispensados (
+  id            bigint not null,
+  produtor_id   uuid not null,
+  chave         text not null,
+  descricao     text,
+  ate           date,
+  criado_em     timestamptz not null default now()
+);
+
+alter table avisos_dispensados enable row level security;
+create policy "Produtor gerencia seus avisos dispensados" on avisos_dispensados for all to public
+  using (auth.uid() = produtor_id)
+  with check (auth.uid() = produtor_id);
+
+
 -- ============================== logs_erro ==============================
 -- Monitoramento de erros (Fase 1 do diagnóstico técnico): qualquer erro de
 -- JavaScript não tratado no app é gravado aqui automaticamente.
