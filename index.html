@@ -1298,6 +1298,8 @@ const DIAS_CICLO_ESTRO = 21;
 const DIAS_BEZERRA_ATE_NOVILHA = 180;
 const DIAS_SECA_ANTES_PARTO = 60;
 const DIAS_ALERTA_VAZIA_SEM_COBERTURA = 30; // vaca diagnosticada vazia e ainda sem nova cobertura após tantos dias
+const DIAS_ALERTA_SEM_DIAGNOSTICO = 60;     // cobertura sem diagnóstico de gestação após tantos dias entra no aviso
+const DIAS_MAX_AVISO_SEM_DIAGNOSTICO = 180; // depois disso o parto já está perto e pedir diagnóstico perde o sentido
 const DIAS_MAX_DIAGNOSTICO = 300;           // diagnóstico de gestação além disso depois da cobertura é quase certamente erro de digitação
 const DIAS_JANELA_REPETICAO_CIO = 35; // cio após a cobertura dentro desse prazo conta como "repetição" (volta ao cio)
 
@@ -1379,7 +1381,26 @@ function calcularIndicadoresGrupo1(animais, eventos, hojeIso){
     });
   });
 
+  // Diagnóstico de gestação: entre as coberturas já diagnosticadas, quantas confirmaram prenhez. E quantas coberturas
+  // em aberto estão há tempo demais sem diagnóstico (mesma janela do aviso do "O que fazer hoje").
+  let diagPrenhe = 0, diagVazia = 0, aguardandoDiagnostico = 0;
+  Object.keys(eventosPorAnimal).forEach(animalId=>{
+    const evs = eventosPorAnimal[animalId];
+    evs.forEach(e=>{
+      if(e.tipo !== 'cobertura') return;
+      if(e.diagnostico_gestacao === 'prenhe') diagPrenhe++;
+      else if(e.diagnostico_gestacao === 'vazia') diagVazia++;
+    });
+    const aberta = coberturaEmAberto(evs);
+    if(aberta && situacaoGestacaoCobertura(aberta) === 'presumida'){
+      const dias = diasEntre(aberta.data, hojeIso);
+      if(dias >= DIAS_ALERTA_SEM_DIAGNOSTICO && dias <= DIAS_MAX_AVISO_SEM_DIAGNOSTICO) aguardandoDiagnostico++;
+    }
+  });
+  const diagTotal = diagPrenhe + diagVazia;
+
   return {
+    diagnosticoGestacao: { prenhes: diagPrenhe, vazias: diagVazia, taxaConcepcaoPct: diagTotal ? (diagPrenhe/diagTotal)*100 : null, aguardando: aguardandoDiagnostico },
     idadePrimeiroParto: { mediaMeses: elegiveisIdade ? (somaIdadeDias/elegiveisIdade)/30.44 : null, elegiveis: elegiveisIdade, excluidos: excluidosIdade },
     repeticaoCio: { coberturas: coberturasAvaliaveis, repeticoes, taxaPct: coberturasAvaliaveis ? (repeticoes/coberturasAvaliaveis)*100 : null, intervaloMedioDias: repeticoes ? somaIntervaloDias/repeticoes : null }
   };
@@ -1528,7 +1549,7 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
   (eventos||[]).forEach(e=>{ (eventosPor[e.animal_id] = eventosPor[e.animal_id] || []).push(e); });
   Object.values(eventosPor).forEach(l => l.sort((x,y)=>x.data.localeCompare(y.data)));
 
-  const partoProximo = [], secagem = [], semCobertura = [], quedaProducao = [];
+  const partoProximo = [], secagem = [], semCobertura = [], semDiagnostico = [], quedaProducao = [];
   const ordenar = (lista) => lista.sort((x,y)=>x.ordem - y.ordem);
 
   (animais||[]).forEach(a=>{
@@ -1544,6 +1565,14 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
     const ultimoRelevante = relevantes.length ? relevantes[relevantes.length-1] : null;
     const situacao = situacaoGestacaoCobertura(ultimoRelevante);
     const prenhePresumida = situacao === 'presumida' || situacao === 'confirmada';   // diagnosticada vazia não conta como prenhe
+
+    // Cobertura sem diagnóstico há tempo suficiente: vale confirmar se a vaca emprenhou.
+    if(situacao === 'presumida'){
+      const diasCobertura = diasEntre(ultimoRelevante.data, hojeIso);
+      if(diasCobertura >= DIAS_ALERTA_SEM_DIAGNOSTICO && diasCobertura <= DIAS_MAX_AVISO_SEM_DIAGNOSTICO){
+        semDiagnostico.push({ ordem: -diasCobertura, animal: nome, chave: 'sem_diagnostico|' + a.id + '|' + ultimoRelevante.data, texto: 'coberta em ' + dm(ultimoRelevante.data) + ' (' + diasCobertura + ' dias) e sem diagnóstico de gestação. Vale confirmar se está prenhe e registrar o resultado na ficha da vaca' });
+      }
+    }
 
     if(prenhePresumida){
       const partoPrevisto = somarDias(ultimoRelevante.data, DIAS_GESTACAO);
@@ -1618,7 +1647,8 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
     { codigo:'parto', titulo:'Parto próximo ou atrasado', itens: ordenar(partoProximo) },
     { codigo:'secagem', titulo:'Secagem', itens: ordenar(secagem) },
     { codigo:'queda_producao', titulo:'Queda de produção', itens: ordenar(quedaProducao) },
-    { codigo:'sem_cobertura', titulo:'Sem cobertura há muito tempo', itens: ordenar(semCobertura) }
+    { codigo:'sem_cobertura', titulo:'Sem cobertura há muito tempo', itens: ordenar(semCobertura) },
+    { codigo:'sem_diagnostico', titulo:'Cobertura sem diagnóstico de gestação', itens: ordenar(semDiagnostico) }
   ];
   return grupos.filter(g => g.itens.length).map(g => ({ codigo: g.codigo, titulo: g.titulo, itens: g.itens.map(i => ({ animal: i.animal, texto: i.texto, chave: i.chave, baixaDias: i.baixaDias || null, descricao: g.titulo + ': ' + i.animal })) }));
 }
@@ -1714,13 +1744,16 @@ function montarCartaoAcoesDoDia(grupos, temAnimais){
 
 // HTML do cartão do Grupo 1, reaproveitado na tela de Indicadores e na ficha (tela e PDF).
 function montarCartaoGrupo1(ind){
-  const idade = ind.idadePrimeiroParto, cio = ind.repeticaoCio;
+  const idade = ind.idadePrimeiroParto, cio = ind.repeticaoCio, diag = ind.diagnosticoGestacao;
   return '<div class="cartao" style="display:flex; flex-wrap:wrap; justify-content:space-around; text-align:center; gap:10px">'
     + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Idade média ao 1º parto</div><div style="font-weight:700; font-size:18px">'+(idade.mediaMeses!==null ? idade.mediaMeses.toFixed(1)+' meses' : '—')+'</div>'
       + (idade.elegiveis || idade.excluidos ? '<div class="legenda-muted" style="font-size:11px">'+idade.elegiveis+' animal(is) considerado(s)'+(idade.excluidos ? ', '+idade.excluidos+' fora (sem data de nascimento, entrou já parida ou já tinha partos anteriores)' : '')+'</div>' : '')
     + '</div>'
     + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Repetição de cio (após cobertura)</div><div style="font-weight:700; font-size:18px">'+(cio.taxaPct!==null ? cio.taxaPct.toFixed(0)+'%' : '—')+'</div>'
       + (cio.coberturas ? '<div class="legenda-muted" style="font-size:11px">'+cio.repeticoes+' de '+cio.coberturas+' cobertura(s)'+(cio.intervaloMedioDias ? ' · intervalo médio '+cio.intervaloMedioDias.toFixed(0)+' dias' : '')+'</div>' : '<div class="legenda-muted" style="font-size:11px">Nenhuma cobertura com prazo já completo</div>')
+    + '</div>'
+    + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Concepção (diagnóstico de gestação)</div><div style="font-weight:700; font-size:18px">'+(diag.taxaConcepcaoPct!==null ? diag.taxaConcepcaoPct.toFixed(0)+'%' : '—')+'</div>'
+      + '<div class="legenda-muted" style="font-size:11px">'+((diag.prenhes + diag.vazias) ? diag.prenhes+' prenhe(s), '+diag.vazias+' vazia(s)' : 'Nenhum diagnóstico registrado')+(diag.aguardando ? ' · '+diag.aguardando+' cobertura(s) aguardando diagnóstico' : '')+'</div>'
     + '</div>'
   + '</div>';
 }
