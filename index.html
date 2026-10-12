@@ -828,7 +828,7 @@ async function renderOQueFazerHoje(){
   const hoje = new Date().toISOString().slice(0,10);
   const [{ data: animais, error: erroAnimais }, { data: eventos, error: erroEventos }, { data: individual, error: erroInd }] = await Promise.all([
     sb.from('animais').select('id, identificacao, data_nascimento, partos_anteriores').eq('produtor_id', usuarioAtual.id),
-    buscarTodasAsLinhas(() => sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id)),
+    buscarTodasAsLinhas(() => sb.from('eventos_reprodutivos').select('animal_id, tipo, data, diagnostico_gestacao, diagnostico_data').eq('produtor_id', usuarioAtual.id)),
     buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', usuarioAtual.id).gte('data', somarDias(hoje, -10)))
   ]);
   if(erroAnimais || erroEventos) return null;
@@ -896,7 +896,7 @@ async function montarFichaProdutorHTML(produtorId, permissoes){
   if(permissoes.ve_animais){
     const [{ data: animais }, { data: eventosReproDoProdutor }] = await Promise.all([
       sb.from('animais').select('*').eq('produtor_id', produtorId).order('criado_em', { ascending:false }),
-      sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', produtorId)
+      sb.from('eventos_reprodutivos').select('animal_id, tipo, data, diagnostico_gestacao, diagnostico_data').eq('produtor_id', produtorId)
     ]);
     const eventosPorAnimalColab = {};
     (eventosReproDoProdutor||[]).forEach(ev => {
@@ -1052,6 +1052,7 @@ function calcularLoteAnimal(animal, eventosDoAnimal, hojeIso){
   const coberturasDepois = eventosDepoisDoParto.filter(e => e.tipo === 'cobertura').sort((a,b)=>a.data.localeCompare(b.data));
   if(coberturasDepois.length){
     const ultimaCobertura = coberturasDepois[coberturasDepois.length - 1];
+    if(situacaoGestacaoCobertura(ultimaCobertura) === 'vazia') return 'lactante';   // diagnosticada vazia: não vai parir, segue em lactação
     const previsaoParto = somarDias(ultimaCobertura.data, DIAS_GESTACAO);
     const inicioPeriodoSeco = somarDias(previsaoParto, -DIAS_SECA_ANTES_PARTO);
     if(hoje >= inicioPeriodoSeco) return 'seca';
@@ -1064,7 +1065,7 @@ async function renderAnimais(){
   document.getElementById('tela-animais').innerHTML = '<div class="legenda-muted">Carregando animais...</div>';
   const [{ data, error }, { data: eventosRepro, error: erroEventos }] = await Promise.all([
     sb.from('animais').select('*').eq('produtor_id', usuarioAtual.id).order('criado_em', { ascending:false }),
-    sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id)
+    sb.from('eventos_reprodutivos').select('animal_id, tipo, data, diagnostico_gestacao, diagnostico_data').eq('produtor_id', usuarioAtual.id)
   ]);
   if(error){
     document.getElementById('tela-animais').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Meus animais</div><div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar seus animais')+'</div>';
@@ -1296,7 +1297,47 @@ const DIAS_LACTACAO_ATE_SECAGEM = 305;
 const DIAS_CICLO_ESTRO = 21;
 const DIAS_BEZERRA_ATE_NOVILHA = 180;
 const DIAS_SECA_ANTES_PARTO = 60;
+const DIAS_ALERTA_VAZIA_SEM_COBERTURA = 30; // vaca diagnosticada vazia e ainda sem nova cobertura após tantos dias
+const DIAS_MAX_DIAGNOSTICO = 300;           // diagnóstico de gestação além disso depois da cobertura é quase certamente erro de digitação
 const DIAS_JANELA_REPETICAO_CIO = 35; // cio após a cobertura dentro desse prazo conta como "repetição" (volta ao cio)
+
+// ---------- Diagnóstico de gestação (guardado na própria cobertura) ----------
+// Cada cobertura pode ter o resultado do diagnóstico: diagnostico_gestacao ('prenhe' | 'vazia') e
+// diagnostico_data. Sem diagnóstico, a prenhez continua "presumida" (como sempre foi). Fica na cobertura,
+// e não num evento novo, para que o último evento da vaca continue sendo a cobertura em todo o resto do app.
+function situacaoGestacaoCobertura(cob){
+  if(!cob || cob.tipo !== 'cobertura') return null;
+  if(cob.diagnostico_gestacao === 'vazia') return 'vazia';
+  if(cob.diagnostico_gestacao === 'prenhe') return 'confirmada';
+  return 'presumida';
+}
+
+// A cobertura "em aberto" é a que ainda é o último evento que muda a situação reprodutiva da vaca
+// (sem parto, aborto ou cio depois). Só nela faz sentido registrar ou alterar o diagnóstico.
+function coberturaEmAberto(eventos){
+  const rel = (eventos||[]).filter(e=>e.tipo==='cobertura' || e.tipo==='cio' || e.tipo==='aborto' || e.tipo==='parto')
+    .sort((x,y)=>x.data.localeCompare(y.data));
+  const ultimo = rel.length ? rel[rel.length-1] : null;
+  return (ultimo && ultimo.tipo === 'cobertura') ? ultimo : null;
+}
+
+// Devolve o texto do erro, ou null se o diagnóstico é aceitável.
+function validarDiagnosticoGestacao(cob, resultado, dataDiag, hojeIso){
+  if(!cob || cob.tipo !== 'cobertura') return 'O diagnóstico só pode ser registrado numa cobertura.';
+  if(resultado !== 'prenhe' && resultado !== 'vazia') return 'Escolha o resultado: prenhe ou vazia.';
+  if(!dataDiag) return 'Preencha a data do diagnóstico.';
+  if(dataDiag <= cob.data) return 'A data do diagnóstico deve ser depois da data da cobertura.';
+  if(dataDiag > hojeIso) return 'A data do diagnóstico não pode ser no futuro.';
+  if(diasEntre(cob.data, dataDiag) > DIAS_MAX_DIAGNOSTICO) return 'A data do diagnóstico está muito distante da cobertura. Confira o ano.';
+  return null;
+}
+
+function formatarDetalhesCobertura(ev){
+  const sit = situacaoGestacaoCobertura(ev);
+  if(sit === 'confirmada') return 'Prenhe, confirmada em ' + formatarData(ev.diagnostico_data);
+  if(sit === 'vazia') return 'Vazia, diagnosticada em ' + formatarData(ev.diagnostico_data);
+  return '';
+}
 
 // Grupo 1 — indicadores reprodutivos do projeto com a UEM: idade ao 1º parto e frequência de repetição de cio.
 // Recebe todos os eventos do produtor (não só os últimos 20) e a lista de animais.
@@ -1501,7 +1542,8 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
     // Último evento que muda a situação reprodutiva (secagem não conta): cobertura = prenhez presumida.
     const relevantes = evs.filter(e=>e.tipo==='cobertura' || e.tipo==='cio' || e.tipo==='aborto' || e.tipo==='parto');
     const ultimoRelevante = relevantes.length ? relevantes[relevantes.length-1] : null;
-    const prenhePresumida = !!ultimoRelevante && ultimoRelevante.tipo === 'cobertura';
+    const situacao = situacaoGestacaoCobertura(ultimoRelevante);
+    const prenhePresumida = situacao === 'presumida' || situacao === 'confirmada';   // diagnosticada vazia não conta como prenhe
 
     if(prenhePresumida){
       const partoPrevisto = somarDias(ultimoRelevante.data, DIAS_GESTACAO);
@@ -1526,7 +1568,15 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
     }
 
     // Vaca em lactação sem cobertura registrada há muito tempo desde o parto (ou desde o último aborto).
-    if(ultimoParto && !prenhePresumida && lote === 'lactante'){
+    if(ultimoParto && situacao === 'vazia' && lote === 'lactante' && ultimoRelevante.diagnostico_data){
+      const baseVazia = ultimoRelevante.diagnostico_data;
+      const diasVazia = diasEntre(baseVazia, hojeIso);
+      if(diasVazia >= DIAS_ALERTA_VAZIA_SEM_COBERTURA){
+        semCobertura.push({ ordem: -diasVazia, animal: nome, chave: 'vazia_sem_cobertura|' + a.id + '|' + baseVazia, texto: 'diagnosticada vazia em ' + dm(baseVazia) + ' (' + diasVazia + ' dias) e nenhuma nova cobertura registrada' });
+      }
+    }
+
+    if(ultimoParto && !prenhePresumida && situacao !== 'vazia' && lote === 'lactante'){
       const aborto = evs.filter(e=>e.tipo==='aborto' && e.data > ultimoParto.data).pop();
       const base = aborto ? aborto.data : ultimoParto.data;
       const temCoberturaDepois = evs.some(e=>e.tipo==='cobertura' && e.data > base);
@@ -1693,8 +1743,10 @@ async function renderHistoricoReprodutivo(animalId){
   let previsaoHTML = '';
   if(data.length > 0){
     const maisRecente = data[0];
-    if(maisRecente.tipo === 'cobertura'){
-      previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de parto:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_GESTACAO))+'</div>';
+    if(maisRecente.tipo === 'cobertura' && situacaoGestacaoCobertura(maisRecente) === 'vazia'){
+      previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Diagnosticada vazia</strong> em '+formatarData(maisRecente.diagnostico_data)+'. Sem previsão de parto; aguardando nova cobertura.</div>';
+    } else if(maisRecente.tipo === 'cobertura'){
+      previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de parto:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_GESTACAO))+(situacaoGestacaoCobertura(maisRecente) === 'confirmada' ? ' <span class="legenda-muted" style="margin:0">(gestação confirmada)</span>' : ' <span class="legenda-muted" style="margin:0">(gestação ainda não confirmada)</span>')+'</div>';
     } else if(maisRecente.tipo === 'parto'){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de secagem:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_LACTACAO_ATE_SECAGEM))+'</div>';
     } else if(maisRecente.tipo === 'cio'){
@@ -1712,10 +1764,16 @@ async function renderHistoricoReprodutivo(animalId){
       + '</div>'
     : '';
 
+  EVENTOS_REPRO_FICHA = {};
+  data.forEach(ev => { EVENTOS_REPRO_FICHA[ev.id] = ev; });
+  const coberturaAberta = coberturaEmAberto(data);
   const lista = data.map(ev=>{
-    const detalhesParto = ev.tipo === 'parto' ? formatarDetalhesParto(ev) : (ev.tipo === 'aborto' ? formatarDetalhesAborto(ev) : '');
+    const detalhesParto = ev.tipo === 'parto' ? formatarDetalhesParto(ev) : (ev.tipo === 'aborto' ? formatarDetalhesAborto(ev) : (ev.tipo === 'cobertura' ? formatarDetalhesCobertura(ev) : ''));
+    const botaoDiagnostico = (coberturaAberta && coberturaAberta.id === ev.id)
+      ? '<button class="botao botao-secundario" style="margin-top:6px; padding:6px 12px; font-size:13px" onclick="abrirDiagnosticoGestacao('+ev.id+','+animalId+')">'+(ev.diagnostico_gestacao ? 'Alterar diagnóstico' : 'Registrar diagnóstico de gestação')+'</button>'
+      : '';
     return '<div class="cartao" style="display:flex; align-items:center; gap:12px; margin-bottom:8px">'
-    + '<div style="flex:1"><strong>'+TIPOS_EVENTO[ev.tipo]+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(ev.data)+(detalhesParto ? ' · '+detalhesParto : '')+(ev.observacoes ? ' · '+escaparHTML(ev.observacoes) : '')+'</div></div>'
+    + '<div style="flex:1"><strong>'+TIPOS_EVENTO[ev.tipo]+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(ev.data)+(detalhesParto ? ' · '+detalhesParto : '')+(ev.observacoes ? ' · '+escaparHTML(ev.observacoes) : '')+'</div>'+botaoDiagnostico+'</div>'
     + '<button class="botao-perigo-fino" style="margin-top:0" onclick="excluirEventoReprodutivo('+ev.id+','+animalId+')">'+iconeInline('lixo',15)+'</button>'
     + '</div>';
   }).join('');
@@ -1839,9 +1897,9 @@ async function salvarEventoReprodutivo(animalId){
   const tipo = document.getElementById('campo-tipo-evento').value;
   const data = document.getElementById('campo-data-evento').value;
   if((tipo === 'cio' || tipo === 'cobertura') && data){
-    const { data: ultimos } = await sb.from('eventos_reprodutivos').select('tipo,data').eq('animal_id', animalId).order('data', { ascending:false }).limit(1);
+    const { data: ultimos } = await sb.from('eventos_reprodutivos').select('tipo,data,diagnostico_gestacao,diagnostico_data').eq('animal_id', animalId).order('data', { ascending:false }).limit(1);
     const ultimo = ultimos && ultimos[0];
-    if(ultimo && ultimo.tipo === 'cobertura' && data > ultimo.data){
+    if(ultimo && ultimo.tipo === 'cobertura' && situacaoGestacaoCobertura(ultimo) !== 'vazia' && data > ultimo.data){   // vazia diagnosticada: novo cio ou cobertura é o esperado
       perguntarGestacaoEmAberto(animalId, tipo);
       return;
     }
@@ -1948,6 +2006,50 @@ async function executarSalvarEventoReprodutivo(animalId){
     avisar('Parto salvo e bezerra Nº '+brincoBezerra+' cadastrada automaticamente no rebanho!');
   }
 
+  renderHistoricoReprodutivo(animalId);
+}
+
+let EVENTOS_REPRO_FICHA = {};
+
+function abrirDiagnosticoGestacao(eventoId, animalId){
+  const cob = EVENTOS_REPRO_FICHA[eventoId];
+  if(!cob) return;
+  const atual = cob.diagnostico_gestacao || 'prenhe';
+  document.getElementById('caixa-confirmacao').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Diagnóstico de gestação</div>'
+    + '<div class="legenda-muted" style="margin-bottom:14px">Cobertura de '+formatarData(cob.data)+'.</div>'
+    + '<div class="grupo-campo"><label for="campo-diag-resultado">Resultado</label><select id="campo-diag-resultado">'
+      + '<option value="prenhe"'+(atual==='prenhe'?' selected':'')+'>Prenhe</option>'
+      + '<option value="vazia"'+(atual==='vazia'?' selected':'')+'>Vazia (não emprenhou)</option>'
+    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-diag-data">Data do diagnóstico</label><input id="campo-diag-data" type="date" value="'+escaparHTML(cob.diagnostico_data || '')+'"></div>'
+    + '<div id="mensagem-diag" class="legenda-muted" style="min-height:18px"></div>'
+    + '<div style="display:flex; gap:10px">'
+      + '<button class="botao botao-secundario" style="flex:1" onclick="fecharConfirmacao()">Cancelar</button>'
+      + '<button class="botao botao-primario" style="flex:1" onclick="salvarDiagnosticoGestacao('+eventoId+','+animalId+')">Salvar</button>'
+    + '</div>'
+    + (cob.diagnostico_gestacao ? '<button class="botao-perigo-fino" style="margin-top:12px" onclick="removerDiagnosticoGestacao('+eventoId+','+animalId+')">Remover diagnóstico</button>' : '');
+  document.getElementById('camada-confirmacao').classList.add('ativo');
+}
+
+async function salvarDiagnosticoGestacao(eventoId, animalId){
+  const cob = EVENTOS_REPRO_FICHA[eventoId];
+  const msg = document.getElementById('mensagem-diag');
+  const resultado = document.getElementById('campo-diag-resultado').value;
+  const dataDiag = document.getElementById('campo-diag-data').value;
+  const erroValidacao = validarDiagnosticoGestacao(cob, resultado, dataDiag, new Date().toISOString().slice(0,10));
+  if(erroValidacao){ msg.textContent = erroValidacao; msg.style.color = 'var(--perigo)'; return; }
+  msg.textContent = 'Salvando...'; msg.style.color = 'var(--tinta-suave)';
+  const { error } = await sb.from('eventos_reprodutivos').update({ diagnostico_gestacao: resultado, diagnostico_data: dataDiag }).eq('id', eventoId);
+  if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar o diagnóstico'); msg.style.color = 'var(--perigo)'; return; }
+  fecharConfirmacao();
+  renderHistoricoReprodutivo(animalId);
+}
+
+async function removerDiagnosticoGestacao(eventoId, animalId){
+  const { error } = await sb.from('eventos_reprodutivos').update({ diagnostico_gestacao: null, diagnostico_data: null }).eq('id', eventoId);
+  if(error){ const m = document.getElementById('mensagem-diag'); m.textContent = mensagemErroAmigavel(error, 'remover o diagnóstico'); m.style.color = 'var(--perigo)'; return; }
+  fecharConfirmacao();
   renderHistoricoReprodutivo(animalId);
 }
 
@@ -2437,7 +2539,7 @@ async function renderTabelaOrdenhaIndividualModal(data){
 
   const [{ data: animais, error: erroAnimais }, { data: eventosRepro, error: erroEventos }] = await Promise.all([
     sb.from('animais').select('*').eq('produtor_id', usuarioAtual.id),
-    sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id)
+    sb.from('eventos_reprodutivos').select('animal_id, tipo, data, diagnostico_gestacao, diagnostico_data').eq('produtor_id', usuarioAtual.id)
   ]);
   if(erroAnimais || erroEventos){
     container.innerHTML = '<div class="legenda-muted">Não foi possível carregar os animais.</div>';
@@ -2664,7 +2766,7 @@ async function renderTabelaPesagem(){
 
   const [{ data: animais, error: erroAnimais }, { data: eventosRepro, error: erroEventos }, { data: pesagens, error: erroPesagens }] = await Promise.all([
     sb.from('animais').select('*').eq('produtor_id', usuarioAtual.id),
-    sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id),
+    sb.from('eventos_reprodutivos').select('animal_id, tipo, data, diagnostico_gestacao, diagnostico_data').eq('produtor_id', usuarioAtual.id),
     sb.from('pesagens').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false })
   ]);
 
@@ -2855,6 +2957,7 @@ async function buscarAlertasCalendario(){
 
   Object.values(ultimoEventoPorAnimal).forEach(ev => {
     if(ev.tipo === 'cobertura'){
+      if(situacaoGestacaoCobertura(ev) === 'vazia') return;   // diagnosticada vazia: não há parto a prever
       alertas.push({ data: somarDias(ev.data, DIAS_GESTACAO), titulo: 'Previsão de parto', animal: mapaAnimais[ev.animal_id] });
     } else if(ev.tipo === 'parto'){
       alertas.push({ data: somarDias(ev.data, DIAS_LACTACAO_ATE_SECAGEM), titulo: 'Previsão de secagem', animal: mapaAnimais[ev.animal_id] });
@@ -4085,7 +4188,7 @@ async function gerarPDFProdutor(){
     sb.from('eventos_sanitarios').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data_aplicacao', inicio).lte('data_aplicacao', fim).order('data_aplicacao', { ascending:true }),
     sb.from('financeiro_lancamentos').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
     sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }),
-    sb.from('eventos_reprodutivos').select('animal_id, tipo, data').eq('produtor_id', usuarioAtual.id),
+    sb.from('eventos_reprodutivos').select('animal_id, tipo, data, diagnostico_gestacao, diagnostico_data').eq('produtor_id', usuarioAtual.id),
     buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('*, animais(identificacao)').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }))
   ]);
   const idsPeriodo = {}; (animais||[]).forEach(a=>{ idsPeriodo[a.id] = a.identificacao; });
@@ -4137,7 +4240,7 @@ async function gerarPDFProdutor(){
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Eventos reprodutivos no período</h2>';
   conteudo += (eventosRepro&&eventosRepro.length)
-    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Evento</th></tr></thead><tbody>'+eventosRepro.map(ev=>'<tr><td>'+formatarData(ev.data)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+TIPOS_EVENTO[ev.tipo]+(ev.tipo==='parto' && formatarDetalhesParto(ev) ? ' — '+formatarDetalhesParto(ev) : '')+'</td></tr>').join('')+'</tbody></table>'
+    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Evento</th></tr></thead><tbody>'+eventosRepro.map(ev=>'<tr><td>'+formatarData(ev.data)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+TIPOS_EVENTO[ev.tipo]+(ev.tipo==='parto' && formatarDetalhesParto(ev) ? ' — '+formatarDetalhesParto(ev) : '')+(ev.tipo==='cobertura' && formatarDetalhesCobertura(ev) ? ' — '+formatarDetalhesCobertura(ev) : '')+'</td></tr>').join('')+'</tbody></table>'
     : '<div class="legenda-muted">Nenhum evento no período.</div>';
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Manejo sanitário no período</h2>';
@@ -4174,7 +4277,7 @@ async function salvarEdicaoAnimal(id){
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
 
-  const { data: eventosDoAnimal } = await sb.from('eventos_reprodutivos').select('tipo, data').eq('animal_id', id);
+  const { data: eventosDoAnimal } = await sb.from('eventos_reprodutivos').select('tipo, data, diagnostico_gestacao, diagnostico_data').eq('animal_id', id);
   const status = calcularLoteAnimal({ data_nascimento }, eventosDoAnimal || []);
 
   const { error } = await sb.from('animais')
@@ -5189,7 +5292,7 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p, ja
     const eventosRepro = dados.eventosRepro || [];
     conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Eventos reprodutivos (histórico completo)</h2>';
     conteudo += eventosRepro.length
-      ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Evento</th></tr></thead><tbody>'+eventosRepro.map(ev=>'<tr><td>'+formatarData(ev.data)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+TIPOS_EVENTO[ev.tipo]+(ev.tipo==='parto' && formatarDetalhesParto(ev) ? ' — '+formatarDetalhesParto(ev) : '')+'</td></tr>').join('')+'</tbody></table>'
+      ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Evento</th></tr></thead><tbody>'+eventosRepro.map(ev=>'<tr><td>'+formatarData(ev.data)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+TIPOS_EVENTO[ev.tipo]+(ev.tipo==='parto' && formatarDetalhesParto(ev) ? ' — '+formatarDetalhesParto(ev) : '')+(ev.tipo==='cobertura' && formatarDetalhesCobertura(ev) ? ' — '+formatarDetalhesCobertura(ev) : '')+'</td></tr>').join('')+'</tbody></table>'
       : '<div class="legenda-muted">Nenhum evento registrado.</div>';
   }
 
