@@ -81,7 +81,9 @@ function carregarFuncoesReais(){
     'QUEDA_PRODUCAO_PCT', 'MIN_LITROS_BASE_QUEDA', 'DIAS_BAIXA_QUEDA', 'MAX_DIAS_ADIAR',
     'calcularAcoesDoDia', 'montarCartaoAcoesDoDia',
     'avisoDispensadoAtivo', 'filtrarAvisosDispensados', 'chaveAvisoQualidade', 'validarDiasAdiar', 'botoesAviso',
-    'DIAS_CARENCIA_LIMPEZA_AVISOS', 'chavesDosGrupos', 'classificarAvisosDispensados'
+    'DIAS_CARENCIA_LIMPEZA_AVISOS', 'chavesDosGrupos', 'classificarAvisosDispensados',
+    'DIAS_ALERTA_VAZIA_SEM_COBERTURA', 'DIAS_MAX_DIAGNOSTICO', 'situacaoGestacaoCobertura', 'coberturaEmAberto',
+    'validarDiagnosticoGestacao', 'formatarDetalhesCobertura', 'formatarData'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -587,6 +589,71 @@ console.log('\n--- limpeza dos avisos dispensados (lista só com o que ainda val
   verificar('resultado novo de qualidade: a baixa antiga some e é apagada', [r.visiveis.length, r.obsoletos], [0, [chaveAntiga]]);
   r = F.classificarAvisosDispensados([reg(chaveAntiga, null, 25)], vig(chaveAntiga), H);
   verificar('sem resultado novo, a baixa da qualidade continua na lista', r.visiveis.length, 1);
+}
+
+console.log('\n--- diagnóstico de gestação (prenhe, vazia ou ainda sem confirmação) ---');
+{
+  const H = '2026-10-10';
+  const d = n => F.somarDias(H, n);
+  const grupo = (r, cod) => r.find(g => g.codigo === cod);
+  const vaca = { id: 1, identificacao: '1', data_nascimento: '2020-01-01' };
+  const parto = { animal_id: 1, tipo: 'parto', data: d(-200) };
+  const cobSem = (n) => ({ id: 10, animal_id: 1, tipo: 'cobertura', data: d(n) });
+  const cobDiag = (n, res, nd) => ({ id: 10, animal_id: 1, tipo: 'cobertura', data: d(n), diagnostico_gestacao: res, diagnostico_data: d(nd) });
+
+  verificar('cobertura sem diagnóstico: prenhez presumida', F.situacaoGestacaoCobertura(cobSem(-50)), 'presumida');
+  verificar('diagnóstico prenhe: confirmada', F.situacaoGestacaoCobertura(cobDiag(-50, 'prenhe', -10)), 'confirmada');
+  verificar('diagnóstico vazia: vazia', F.situacaoGestacaoCobertura(cobDiag(-50, 'vazia', -10)), 'vazia');
+  verificar('evento que não é cobertura não tem situação', F.situacaoGestacaoCobertura(parto), null);
+  verificar('sem evento nenhum, situação nula', F.situacaoGestacaoCobertura(null), null);
+
+  // Cobertura em aberto
+  verificar('cobertura sem nada depois está em aberto', F.coberturaEmAberto([parto, cobSem(-50)]).id, 10);
+  verificar('cobertura seguida de cio não está mais em aberto', F.coberturaEmAberto([parto, cobSem(-50), { tipo: 'cio', data: d(-20) }]), null);
+  verificar('cobertura seguida de parto não está em aberto', F.coberturaEmAberto([cobSem(-300), { tipo: 'parto', data: d(-10) }]), null);
+  verificar('sem eventos, nada em aberto', F.coberturaEmAberto([]), null);
+
+  // Validação do diagnóstico
+  const cb = cobSem(-60);
+  verificar('diagnóstico válido passa', F.validarDiagnosticoGestacao(cb, 'prenhe', d(-20), H), null);
+  verificar('diagnóstico hoje passa', F.validarDiagnosticoGestacao(cb, 'vazia', H, H), null);
+  verificar('sem resultado é recusado', !!F.validarDiagnosticoGestacao(cb, '', d(-20), H), true);
+  verificar('resultado inventado é recusado', !!F.validarDiagnosticoGestacao(cb, 'talvez', d(-20), H), true);
+  verificar('sem data é recusado', !!F.validarDiagnosticoGestacao(cb, 'prenhe', '', H), true);
+  verificar('data no dia da cobertura é recusada', !!F.validarDiagnosticoGestacao(cb, 'prenhe', d(-60), H), true);
+  verificar('data antes da cobertura é recusada', !!F.validarDiagnosticoGestacao(cb, 'prenhe', d(-70), H), true);
+  verificar('data no futuro é recusada', !!F.validarDiagnosticoGestacao(cb, 'prenhe', d(1), H), true);
+  verificar('data a mais de 300 dias da cobertura é recusada', !!F.validarDiagnosticoGestacao(cobSem(-400), 'prenhe', d(-50), H), true);
+  verificar('só vale numa cobertura', !!F.validarDiagnosticoGestacao(parto, 'prenhe', d(-20), H), true);
+
+  // Texto na lista de eventos
+  verificar('texto da cobertura prenhe', F.formatarDetalhesCobertura(cobDiag(-50, 'prenhe', -10)), 'Prenhe, confirmada em ' + F.formatarData(d(-10)));
+  verificar('texto da cobertura vazia', F.formatarDetalhesCobertura(cobDiag(-50, 'vazia', -10)), 'Vazia, diagnosticada em ' + F.formatarData(d(-10)));
+  verificar('cobertura sem diagnóstico não ganha texto', F.formatarDetalhesCobertura(cobSem(-50)), '');
+
+  // Efeito no "O que fazer hoje": parto previsto em 5 dias (cobertura há 278)
+  const aco = (evs) => F.calcularAcoesDoDia([vaca], evs, null, H);
+  const cobPerto = (res, nd) => ({ id: 10, animal_id: 1, tipo: 'cobertura', data: d(-278), diagnostico_gestacao: res, diagnostico_data: nd == null ? null : d(nd) });
+  verificar('sem diagnóstico, o parto previsto aparece (como antes)', !!grupo(aco([cobPerto(null)]), 'parto'), true);
+  verificar('diagnosticada prenhe, o parto previsto aparece', !!grupo(aco([cobPerto('prenhe', -200)]), 'parto'), true);
+  verificar('diagnosticada vazia, o parto previsto NÃO aparece', !!grupo(aco([cobPerto('vazia', -200)]), 'parto'), false);
+  verificar('vaca coberta já parida, diagnosticada vazia, não gera aviso de secagem', !!grupo(aco([{ animal_id: 1, tipo: 'parto', data: d(-400) }, cobPerto('vazia', -200)]), 'secagem'), false);
+
+  // Vazia sem nova cobertura
+  const evVazia = (diasDesdeDiag) => [parto, cobDiag(-100, 'vazia', -diasDesdeDiag)];
+  verificar('vazia há 29 dias ainda não avisa', !!grupo(aco(evVazia(29)), 'sem_cobertura'), false);
+  const gv = grupo(aco(evVazia(30)), 'sem_cobertura');
+  verificar('vazia há 30 dias avisa', !!gv, true);
+  verificar('o aviso cita o diagnóstico de vazia e os dias', gv && gv.itens[0].texto.includes('diagnosticada vazia') && gv.itens[0].texto.includes('30 dias'), true);
+  verificar('a chave do aviso de vazia identifica o diagnóstico', gv && gv.itens[0].chave, 'vazia_sem_cobertura|1|' + d(-30));
+  verificar('vazia: só um aviso por vaca (não duplica com o de sem cobertura)', gv && gv.itens.length, 1);
+  verificar('nova cobertura depois da vazia encerra o aviso', !!grupo(aco([parto, cobDiag(-100, 'vazia', -60), { id: 11, animal_id: 1, tipo: 'cobertura', data: d(-20) }]), 'sem_cobertura'), false);
+
+  // Lote
+  const hojeLote = H;
+  verificar('vaca coberta e prenhe, a 30 dias do parto, vai para seca', F.calcularLoteAnimal(vaca, [{ tipo: 'parto', data: d(-400) }, cobPerto('prenhe', -200)], hojeLote), 'seca');
+  verificar('vaca diagnosticada vazia continua lactante, mesmo com a data de secar vencida', F.calcularLoteAnimal(vaca, [{ tipo: 'parto', data: d(-400) }, cobPerto('vazia', -200)], hojeLote), 'lactante');
+  verificar('sem diagnóstico, o lote é o de sempre (seca)', F.calcularLoteAnimal(vaca, [{ tipo: 'parto', data: d(-400) }, cobPerto(null)], hojeLote), 'seca');
 }
 
 console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do Supabase) ---');
