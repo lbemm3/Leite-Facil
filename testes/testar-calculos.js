@@ -82,8 +82,8 @@ function carregarFuncoesReais(){
     'calcularAcoesDoDia', 'montarCartaoAcoesDoDia',
     'avisoDispensadoAtivo', 'filtrarAvisosDispensados', 'chaveAvisoQualidade', 'validarDiasAdiar', 'botoesAviso',
     'DIAS_CARENCIA_LIMPEZA_AVISOS', 'chavesDosGrupos', 'classificarAvisosDispensados',
-    'DIAS_ALERTA_VAZIA_SEM_COBERTURA', 'DIAS_MAX_DIAGNOSTICO', 'situacaoGestacaoCobertura', 'coberturaEmAberto',
-    'validarDiagnosticoGestacao', 'formatarDetalhesCobertura', 'formatarData'
+    'DIAS_ALERTA_VAZIA_SEM_COBERTURA', 'DIAS_ALERTA_SEM_DIAGNOSTICO', 'DIAS_MAX_AVISO_SEM_DIAGNOSTICO', 'DIAS_MAX_DIAGNOSTICO', 'situacaoGestacaoCobertura', 'coberturaEmAberto',
+    'validarDiagnosticoGestacao', 'formatarDetalhesCobertura', 'formatarData', 'montarCartaoGrupo1'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -654,6 +654,46 @@ console.log('\n--- diagnóstico de gestação (prenhe, vazia ou ainda sem confir
   verificar('vaca coberta e prenhe, a 30 dias do parto, vai para seca', F.calcularLoteAnimal(vaca, [{ tipo: 'parto', data: d(-400) }, cobPerto('prenhe', -200)], hojeLote), 'seca');
   verificar('vaca diagnosticada vazia continua lactante, mesmo com a data de secar vencida', F.calcularLoteAnimal(vaca, [{ tipo: 'parto', data: d(-400) }, cobPerto('vazia', -200)], hojeLote), 'lactante');
   verificar('sem diagnóstico, o lote é o de sempre (seca)', F.calcularLoteAnimal(vaca, [{ tipo: 'parto', data: d(-400) }, cobPerto(null)], hojeLote), 'seca');
+
+  // Cobertura sem diagnóstico (aviso do "O que fazer hoje")
+  const cobHa = (dias, extra) => Object.assign({ id: 10, animal_id: 1, tipo: 'cobertura', data: d(-dias) }, extra || {});
+  verificar('cobertura há 59 dias sem diagnóstico ainda não avisa', !!grupo(aco([cobHa(59)]), 'sem_diagnostico'), false);
+  const gsd = grupo(aco([cobHa(60)]), 'sem_diagnostico');
+  verificar('cobertura há 60 dias sem diagnóstico avisa', !!gsd, true);
+  verificar('o aviso diz a data e os dias da cobertura', gsd && gsd.itens[0].texto.includes('coberta em') && gsd.itens[0].texto.includes('(60 dias)'), true);
+  verificar('a chave identifica a vaca e a cobertura', gsd && gsd.itens[0].chave, 'sem_diagnostico|1|' + d(-60));
+  verificar('cobertura há 180 dias ainda avisa', !!grupo(aco([cobHa(180)]), 'sem_diagnostico'), true);
+  verificar('cobertura há 181 dias não avisa (parto já perto)', !!grupo(aco([cobHa(181)]), 'sem_diagnostico'), false);
+  verificar('já diagnosticada prenhe: não avisa', !!grupo(aco([cobHa(90, { diagnostico_gestacao: 'prenhe', diagnostico_data: d(-40) })]), 'sem_diagnostico'), false);
+  verificar('já diagnosticada vazia: não avisa', !!grupo(aco([cobHa(90, { diagnostico_gestacao: 'vazia', diagnostico_data: d(-40) })]), 'sem_diagnostico'), false);
+  verificar('cobertura seguida de cio não avisa (já se sabe que não pegou)', !!grupo(aco([cobHa(90), { animal_id: 1, tipo: 'cio', data: d(-60) }]), 'sem_diagnostico'), false);
+  verificar('uma cobertura nova depois da antiga: avisa só pela nova', grupo(aco([cobHa(120), { id: 11, animal_id: 1, tipo: 'cobertura', data: d(-70) }]), 'sem_diagnostico').itens.length, 1);
+  verificar('novilha (sem parto) coberta também entra no aviso', !!grupo(aco([cobHa(100)]), 'sem_diagnostico'), true);
+  verificar('o grupo aparece depois dos outros na tela (por último)', aco([parto, cobHa(100)]).map(g => g.codigo).pop(), 'sem_diagnostico');
+
+  // Indicador de concepção
+  const indic = (evs) => F.calcularIndicadoresGrupo1([vaca], evs, H).diagnosticoGestacao;
+  verificar('sem nenhum diagnóstico, taxa nula', indic([cobHa(100)]).taxaConcepcaoPct, null);
+  verificar('3 prenhes e 1 vazia: 75%', indic([
+    cobHa(400, { id: 1, diagnostico_gestacao: 'prenhe', diagnostico_data: d(-350) }),
+    cobHa(300, { id: 2, diagnostico_gestacao: 'prenhe', diagnostico_data: d(-250) }),
+    cobHa(200, { id: 3, diagnostico_gestacao: 'vazia', diagnostico_data: d(-150) }),
+    cobHa(100, { id: 4, diagnostico_gestacao: 'prenhe', diagnostico_data: d(-50) })]).taxaConcepcaoPct, 75);
+  verificar('conta prenhes e vazias separadamente', [indic([
+    cobHa(200, { id: 3, diagnostico_gestacao: 'vazia', diagnostico_data: d(-150) }),
+    cobHa(100, { id: 4, diagnostico_gestacao: 'prenhe', diagnostico_data: d(-50) })]).prenhes, indic([
+    cobHa(200, { id: 3, diagnostico_gestacao: 'vazia', diagnostico_data: d(-150) })]).vazias], [1, 1]);
+  verificar('cobertura em aberto há 90 dias sem diagnóstico conta como aguardando', indic([cobHa(90)]).aguardando, 1);
+  verificar('cobertura há 30 dias ainda não conta como aguardando', indic([cobHa(30)]).aguardando, 0);
+  verificar('cobertura antiga seguida de parto não conta como aguardando', indic([cobHa(300), { animal_id: 1, tipo: 'parto', data: d(-20) }]).aguardando, 0);
+  verificar('cobertura seguida de cio (repetiu) não conta como aguardando', indic([cobHa(100), { animal_id: 1, tipo: 'cio', data: d(-60) }]).aguardando, 0);
+  verificar('o indicador não mexe nos outros (repetição de cio segue igual)', F.calcularIndicadoresGrupo1([vaca], [cobHa(100)], H).repeticaoCio.coberturas, 1);
+
+  // Cartão
+  const cartao = (evs) => F.montarCartaoGrupo1(F.calcularIndicadoresGrupo1([vaca], evs, H));
+  verificar('cartão mostra a taxa e as contagens', cartao([cobHa(200, { id: 3, diagnostico_gestacao: 'vazia', diagnostico_data: d(-150) }), cobHa(100, { id: 4, diagnostico_gestacao: 'prenhe', diagnostico_data: d(-50) })]).includes('50%') && cartao([cobHa(100, { diagnostico_gestacao: 'prenhe', diagnostico_data: d(-50) })]).includes('1 prenhe(s), 0 vazia(s)'), true);
+  verificar('cartão sem diagnóstico diz que não há registro', cartao([cobHa(10)]).includes('Nenhum diagnóstico registrado'), true);
+  verificar('cartão avisa quantas coberturas aguardam diagnóstico', cartao([cobHa(90)]).includes('1 cobertura(s) aguardando diagnóstico'), true);
 }
 
 console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do Supabase) ---');
