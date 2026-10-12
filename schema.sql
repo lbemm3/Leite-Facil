@@ -139,7 +139,13 @@ create table eventos_reprodutivos (
   sexo_bezerro            text,                   -- só quando tipo = 'parto'
   bezerra_animal_id       bigint,                 -- só quando tipo = 'parto' e a fêmea foi ao rebanho
   natimorto               boolean not null default false, -- só quando tipo = 'parto'
-  meses_gestacao_aborto   numeric                 -- só quando tipo = 'aborto'
+  meses_gestacao_aborto   numeric,                -- só quando tipo = 'aborto'
+  diagnostico_gestacao    text,                   -- só quando tipo = 'cobertura': 'prenhe' | 'vazia'
+  diagnostico_data        date,                   -- data do diagnóstico (junto com o resultado)
+  constraint eventos_reprodutivos_diagnostico_valido check (
+    (diagnostico_gestacao is null and diagnostico_data is null)
+    or (diagnostico_gestacao is not null and diagnostico_gestacao in ('prenhe', 'vazia') and diagnostico_data is not null and tipo = 'cobertura')
+  )
 );
 
 alter table eventos_reprodutivos enable row level security;
