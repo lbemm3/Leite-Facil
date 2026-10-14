@@ -83,7 +83,8 @@ function carregarFuncoesReais(){
     'avisoDispensadoAtivo', 'filtrarAvisosDispensados', 'chaveAvisoQualidade', 'validarDiasAdiar', 'botoesAviso',
     'DIAS_CARENCIA_LIMPEZA_AVISOS', 'chavesDosGrupos', 'classificarAvisosDispensados',
     'DIAS_ALERTA_VAZIA_SEM_COBERTURA', 'DIAS_ALERTA_SEM_DIAGNOSTICO', 'DIAS_MAX_AVISO_SEM_DIAGNOSTICO', 'DIAS_MAX_DIAGNOSTICO', 'situacaoGestacaoCobertura', 'coberturaEmAberto',
-    'validarDiagnosticoGestacao', 'formatarDetalhesCobertura', 'formatarData', 'montarCartaoGrupo1'
+    'validarDiagnosticoGestacao', 'formatarDetalhesCobertura', 'formatarData', 'montarCartaoGrupo1',
+    'ehInicioLactacao', 'TIPOS_SERVICO', 'TIPOS_SERVICO_CURTO', 'normalizarTipoServico', 'opcoesTipoServicoHTML', 'linhaConcepcaoPorServico'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -348,6 +349,10 @@ console.log('\n--- verificarQualidadeDados (conferência dos dados lançados) --
   verificar('parto anterior à entrada no rebanho (data aproximada) não gera aviso', codigos(F.verificarQualidadeDados([], ind, vacas, eventosAnterior, H)), []);
   const eventosCedo = [{ animal_id: 1, tipo: 'parto', data: dia(11), observacoes: null }];
   verificar('leite só depois do parto não gera aviso', codigos(F.verificarQualidadeDados([], ind, vacas, eventosCedo, H)), []);
+  const inducaoTarde = [{ animal_id: 1, tipo: 'inducao_lactacao', data: dia(5), observacoes: null }];
+  av = F.verificarQualidadeDados([], ind, vacas, inducaoTarde, H);
+  verificar('leite antes do início da ordenha de uma indução de lactação também gera aviso, falando em indução', [codigos(av), av[0] && av[0].detalhe.includes('indução em')], [['leite_antes_do_parto'], true]);
+  verificar('leite só depois da indução não gera aviso', codigos(F.verificarQualidadeDados([], ind, vacas, [{ animal_id: 1, tipo: 'inducao_lactacao', data: dia(11), observacoes: null }], H)), []);
 
   // janela de 90 dias
   const velho = [{ data: F.somarDias(H, -100), animal_id: 1, litros_manha: 90, litros_tarde: 5 }];
@@ -689,11 +694,78 @@ console.log('\n--- diagnóstico de gestação (prenhe, vazia ou ainda sem confir
   verificar('cobertura seguida de cio (repetiu) não conta como aguardando', indic([cobHa(100), { animal_id: 1, tipo: 'cio', data: d(-60) }]).aguardando, 0);
   verificar('o indicador não mexe nos outros (repetição de cio segue igual)', F.calcularIndicadoresGrupo1([vaca], [cobHa(100)], H).repeticaoCio.coberturas, 1);
 
+
+  // Tipo de serviço
+  verificar('os três tipos de serviço têm nome', Object.keys(F.TIPOS_SERVICO), ['inseminacao', 'iatf', 'monta_natural']);
+  verificar('valor conhecido é aceito', F.normalizarTipoServico('iatf'), 'iatf');
+  verificar('vazio vira não informado', F.normalizarTipoServico(''), null);
+  verificar('valor inventado vira não informado', F.normalizarTipoServico('touro'), null);
+  verificar('nome herdado do objeto (constructor) não passa', F.normalizarTipoServico('constructor'), null);
+  verificar('sem valor vira não informado', F.normalizarTipoServico(undefined), null);
+  verificar('texto da cobertura traz o serviço', F.formatarDetalhesCobertura(cobHa(50, { tipo_servico: 'iatf' })), 'IATF');
+  verificar('texto da cobertura junta serviço e diagnóstico', F.formatarDetalhesCobertura(cobHa(50, { tipo_servico: 'monta_natural', diagnostico_gestacao: 'prenhe', diagnostico_data: d(-10) })), 'Monta natural · Prenhe, confirmada em ' + F.formatarData(d(-10)));
+  verificar('serviço inválido gravado no banco não aparece', F.formatarDetalhesCobertura(cobHa(50, { tipo_servico: 'xyz' })), '');
+  verificar('as opções do formulário começam em "Não informado" e marcam a atual', [F.opcoesTipoServicoHTML('iatf').startsWith('<option value="">Não informado</option>'), F.opcoesTipoServicoHTML('iatf').includes('value="iatf" selected')], [true, true]);
+
+  const cobS = (id, servico, res) => cobHa(100 + id, { id, tipo_servico: servico, diagnostico_gestacao: res, diagnostico_data: d(-50 - id) });
+  const evsS = [cobS(1, 'inseminacao', 'prenhe'), cobS(2, 'inseminacao', 'prenhe'), cobS(3, 'inseminacao', 'vazia'), cobS(4, 'monta_natural', 'prenhe'), cobS(5, null, 'vazia'), cobS(6, 'iatf', null)];
+  const ps = F.calcularIndicadoresGrupo1([vaca], evsS, H).diagnosticoGestacao.porServico;
+  verificar('inseminação: 2 prenhes, 1 vazia, 67%', [ps.inseminacao.prenhes, ps.inseminacao.vazias, Math.round(ps.inseminacao.taxaPct)], [2, 1, 67]);
+  verificar('monta natural: 1 de 1, 100%', [ps.monta_natural.prenhes, ps.monta_natural.vazias, ps.monta_natural.taxaPct], [1, 0, 100]);
+  verificar('IATF sem diagnóstico não tem taxa', [ps.iatf.prenhes + ps.iatf.vazias, ps.iatf.taxaPct], [0, null]);
+  verificar('cobertura sem serviço informado fica fora da comparação, mas entra na taxa geral', F.calcularIndicadoresGrupo1([vaca], evsS, H).diagnosticoGestacao.vazias, 2);
+  const linha = F.linhaConcepcaoPorServico(ps);
+  verificar('linha por serviço mostra só os que têm diagnóstico', [linha.includes('Inseminação 67% (2 de 3)'), linha.includes('Monta natural 100% (1 de 1)'), linha.includes('IATF')], [true, true, false]);
+  verificar('sem serviço informado em nenhum diagnóstico, a linha não aparece', F.linhaConcepcaoPorServico(F.calcularIndicadoresGrupo1([vaca], [cobS(5, null, 'vazia')], H).diagnosticoGestacao.porServico), '');
+  verificar('o cartão inclui a linha por serviço', F.montarCartaoGrupo1(F.calcularIndicadoresGrupo1([vaca], evsS, H)).includes('Por tipo de serviço:'), true);
+
   // Cartão
   const cartao = (evs) => F.montarCartaoGrupo1(F.calcularIndicadoresGrupo1([vaca], evs, H));
   verificar('cartão mostra a taxa e as contagens', cartao([cobHa(200, { id: 3, diagnostico_gestacao: 'vazia', diagnostico_data: d(-150) }), cobHa(100, { id: 4, diagnostico_gestacao: 'prenhe', diagnostico_data: d(-50) })]).includes('50%') && cartao([cobHa(100, { diagnostico_gestacao: 'prenhe', diagnostico_data: d(-50) })]).includes('1 prenhe(s), 0 vazia(s)'), true);
   verificar('cartão sem diagnóstico diz que não há registro', cartao([cobHa(10)]).includes('Nenhum diagnóstico registrado'), true);
   verificar('cartão avisa quantas coberturas aguardam diagnóstico', cartao([cobHa(90)]).includes('1 cobertura(s) aguardando diagnóstico'), true);
+}
+
+console.log('\n--- indução de lactação (lactação sem gestação nem parto) ---');
+{
+  const H = '2026-10-10';
+  const d = n => F.somarDias(H, n);
+  const vaca = { id: 1, identificacao: '9', data_nascimento: '2022-01-01' };
+  const ind = (dias, extra) => Object.assign({ id: 30, animal_id: 1, tipo: 'inducao_lactacao', data: d(-dias) }, extra || {});
+  const aco = (evs) => F.calcularAcoesDoDia([vaca], evs, null, H);
+  const grupo = (r, cod) => r.find(g => g.codigo === cod);
+
+  verificar('parto e indução abrem lactação, o resto não', [F.ehInicioLactacao({ tipo: 'parto' }), F.ehInicioLactacao({ tipo: 'inducao_lactacao' }), F.ehInicioLactacao({ tipo: 'cobertura' }), F.ehInicioLactacao(null)], [true, true, false, false]);
+
+  // Lote
+  verificar('novilha com indução há 30 dias vira lactante', F.calcularLoteAnimal(vaca, [ind(30)], H), 'lactante');
+  verificar('sem a indução, a mesma novilha continua novilha', F.calcularLoteAnimal(vaca, [], H), 'novilha');
+  verificar('indução seguida de secagem: seca', F.calcularLoteAnimal(vaca, [ind(200), { tipo: 'secagem', data: d(-5) }], H), 'seca');
+  verificar('induzida e depois coberta, a 53 dias do parto previsto: seca', F.calcularLoteAnimal(vaca, [ind(300), { tipo: 'cobertura', data: d(-230) }], H), 'seca');
+  verificar('induzida e coberta há pouco: segue lactante', F.calcularLoteAnimal(vaca, [ind(100), { tipo: 'cobertura', data: d(-30) }], H), 'lactante');
+
+  // DEL, partos e paridade
+  const r1 = F.resumoReprodutivoAnimal([ind(40)], H, 0);
+  verificar('DEL conta desde a indução', r1.del, 40);
+  verificar('indução não conta como parto, nem na paridade, nem no IEP', [r1.partos, r1.paridade, r1.ultimoParto, r1.iep], [0, 0, null, null]);
+  const r2 = F.resumoReprodutivoAnimal([{ tipo: 'parto', data: d(-500), natimorto: false }, ind(40)], H, 0);
+  verificar('parto antigo e indução depois: o DEL vem da indução, mas só 1 parto conta', [r2.del, r2.partos, r2.iep], [40, 1, null]);
+  verificar('indução seguida de secagem: sem DEL', F.resumoReprodutivoAnimal([ind(200), { tipo: 'secagem', data: d(-5) }], H, 0).del, null);
+
+  // Indicadores: indução não vira primeiro parto
+  const g1 = F.calcularIndicadoresGrupo1([vaca], [ind(40)], H);
+  verificar('idade ao 1º parto não considera a indução', [g1.idadePrimeiroParto.elegiveis, g1.idadePrimeiroParto.excluidos], [0, 0]);
+
+  // O que fazer hoje
+  verificar('induzida há 100 dias sem cobertura NÃO recebe o aviso de "sem cobertura"', !!grupo(aco([ind(100)]), 'sem_cobertura'), false);
+  verificar('indução depois de uma cobertura em aberto encerra o parto previsto', !!grupo(aco([{ id: 5, animal_id: 1, tipo: 'cobertura', data: d(-278) }, ind(5)]), 'parto'), false);
+  const gs = grupo(aco([ind(300), { id: 5, animal_id: 1, tipo: 'cobertura', data: d(-230) }]), 'secagem');
+  verificar('induzida e coberta: o aviso de secagem funciona (data de secar já passou)', !!gs && gs.itens[0].texto.includes('já passou'), true);
+  verificar('induzida e coberta há 70 dias sem diagnóstico: entra no aviso de diagnóstico', !!grupo(aco([ind(200), { id: 5, animal_id: 1, tipo: 'cobertura', data: d(-70) }]), 'sem_diagnostico'), true);
+  verificar('aborto não abre lactação', F.calcularLoteAnimal(vaca, [{ tipo: 'aborto', data: d(-30) }], H), 'novilha');
+  verificar('vaca com parto e aborto depois: o DEL continua contado do parto', F.resumoReprodutivoAnimal([{ tipo: 'parto', data: d(-100) }, { tipo: 'aborto', data: d(-30) }], H, 0).del, 100);
+  verificar('induzida, coberta e com secagem registrada depois da indução: sem aviso de secagem', !!grupo(aco([ind(300), { id: 5, animal_id: 1, tipo: 'cobertura', data: d(-230) }, { tipo: 'secagem', animal_id: 1, data: d(-3) }]), 'secagem'), false);
+  verificar('coberta e depois induzida: a cobertura deixa de estar em aberto', F.coberturaEmAberto([{ id: 5, tipo: 'cobertura', data: d(-100) }, ind(10)]), null);
 }
 
 console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do Supabase) ---');
