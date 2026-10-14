@@ -1035,7 +1035,7 @@ let FILTRO_LOTE_ATUAL = 'todos';
 function calcularLoteAnimal(animal, eventosDoAnimal, hojeIso){
   const hoje = hojeIso || new Date().toISOString().slice(0,10);
   const eventos = (eventosDoAnimal || []).slice().sort((a,b)=>a.data.localeCompare(b.data));
-  const partos = eventos.filter(e=>e.tipo==='parto');
+  const partos = eventos.filter(ehInicioLactacao);   // parto ou indução de lactação: o que abre uma lactação
 
   if(partos.length === 0){
     if(!animal.data_nascimento) return 'novilha'; // sem data de nascimento informada, não dá para saber se é bezerra
@@ -1289,6 +1289,7 @@ const TIPOS_EVENTO = {
   cio: 'Cio',
   cobertura: 'Cobertura / Inseminação',
   parto: 'Parto',
+  inducao_lactacao: 'Indução de lactação',
   aborto: 'Aborto / perda gestacional',
   secagem: 'Secagem'
 };
@@ -1314,10 +1315,24 @@ function situacaoGestacaoCobertura(cob){
   return 'presumida';
 }
 
+// Tipo de serviço da cobertura (opcional). Cobertura sem a informação conta como "não informado".
+const TIPOS_SERVICO = { inseminacao: 'Inseminação artificial', iatf: 'IATF', monta_natural: 'Monta natural' };
+const TIPOS_SERVICO_CURTO = { inseminacao: 'Inseminação', iatf: 'IATF', monta_natural: 'Monta natural' };
+
+// Aceita só os valores conhecidos; vazio ou qualquer outra coisa vira null (não informado).
+function normalizarTipoServico(valor){
+  return (valor && Object.prototype.hasOwnProperty.call(TIPOS_SERVICO, valor)) ? valor : null;
+}
+
+// Indução de lactação: protocolo hormonal que faz uma vaca ou novilha vazia entrar em lactação sem gestação nem parto.
+// A data do evento é a do início da ordenha. Para o app ela abre uma lactação (lote, DEL, previsão de secagem) como um
+// parto abriria, mas não é parto: não conta em partos, paridade, IEP, idade ao 1º parto, natimortos nem gera bezerro.
+function ehInicioLactacao(e){ return !!e && (e.tipo === 'parto' || e.tipo === 'inducao_lactacao'); }
+
 // A cobertura "em aberto" é a que ainda é o último evento que muda a situação reprodutiva da vaca
 // (sem parto, aborto ou cio depois). Só nela faz sentido registrar ou alterar o diagnóstico.
 function coberturaEmAberto(eventos){
-  const rel = (eventos||[]).filter(e=>e.tipo==='cobertura' || e.tipo==='cio' || e.tipo==='aborto' || e.tipo==='parto')
+  const rel = (eventos||[]).filter(e=>e.tipo==='cobertura' || e.tipo==='cio' || e.tipo==='aborto' || e.tipo==='parto' || e.tipo==='inducao_lactacao')
     .sort((x,y)=>x.data.localeCompare(y.data));
   const ultimo = rel.length ? rel[rel.length-1] : null;
   return (ultimo && ultimo.tipo === 'cobertura') ? ultimo : null;
@@ -1335,10 +1350,19 @@ function validarDiagnosticoGestacao(cob, resultado, dataDiag, hojeIso){
 }
 
 function formatarDetalhesCobertura(ev){
+  const partes = [];
+  const servico = normalizarTipoServico(ev.tipo_servico);
+  if(servico) partes.push(TIPOS_SERVICO[servico]);
   const sit = situacaoGestacaoCobertura(ev);
-  if(sit === 'confirmada') return 'Prenhe, confirmada em ' + formatarData(ev.diagnostico_data);
-  if(sit === 'vazia') return 'Vazia, diagnosticada em ' + formatarData(ev.diagnostico_data);
-  return '';
+  if(sit === 'confirmada') partes.push('Prenhe, confirmada em ' + formatarData(ev.diagnostico_data));
+  else if(sit === 'vazia') partes.push('Vazia, diagnosticada em ' + formatarData(ev.diagnostico_data));
+  return partes.join(' · ');
+}
+
+// Lista de escolha do tipo de serviço (usada no formulário da cobertura e no diálogo do diagnóstico).
+function opcoesTipoServicoHTML(atual){
+  return '<option value="">Não informado</option>'
+    + Object.keys(TIPOS_SERVICO).map(k => '<option value="'+k+'"'+(atual === k ? ' selected' : '')+'>'+TIPOS_SERVICO[k]+'</option>').join('');
 }
 
 // Grupo 1 — indicadores reprodutivos do projeto com a UEM: idade ao 1º parto e frequência de repetição de cio.
@@ -1384,12 +1408,15 @@ function calcularIndicadoresGrupo1(animais, eventos, hojeIso){
   // Diagnóstico de gestação: entre as coberturas já diagnosticadas, quantas confirmaram prenhez. E quantas coberturas
   // em aberto estão há tempo demais sem diagnóstico (mesma janela do aviso do "O que fazer hoje").
   let diagPrenhe = 0, diagVazia = 0, aguardandoDiagnostico = 0;
+  const porServico = {};   // concepção por tipo de serviço; só entram as coberturas com o tipo informado
+  Object.keys(TIPOS_SERVICO).forEach(k => { porServico[k] = { prenhes: 0, vazias: 0, taxaPct: null }; });
   Object.keys(eventosPorAnimal).forEach(animalId=>{
     const evs = eventosPorAnimal[animalId];
     evs.forEach(e=>{
       if(e.tipo !== 'cobertura') return;
-      if(e.diagnostico_gestacao === 'prenhe') diagPrenhe++;
-      else if(e.diagnostico_gestacao === 'vazia') diagVazia++;
+      const servico = normalizarTipoServico(e.tipo_servico);
+      if(e.diagnostico_gestacao === 'prenhe'){ diagPrenhe++; if(servico) porServico[servico].prenhes++; }
+      else if(e.diagnostico_gestacao === 'vazia'){ diagVazia++; if(servico) porServico[servico].vazias++; }
     });
     const aberta = coberturaEmAberto(evs);
     if(aberta && situacaoGestacaoCobertura(aberta) === 'presumida'){
@@ -1398,9 +1425,13 @@ function calcularIndicadoresGrupo1(animais, eventos, hojeIso){
     }
   });
   const diagTotal = diagPrenhe + diagVazia;
+  Object.keys(porServico).forEach(k => {
+    const t = porServico[k].prenhes + porServico[k].vazias;
+    porServico[k].taxaPct = t ? (porServico[k].prenhes / t) * 100 : null;
+  });
 
   return {
-    diagnosticoGestacao: { prenhes: diagPrenhe, vazias: diagVazia, taxaConcepcaoPct: diagTotal ? (diagPrenhe/diagTotal)*100 : null, aguardando: aguardandoDiagnostico },
+    diagnosticoGestacao: { prenhes: diagPrenhe, vazias: diagVazia, taxaConcepcaoPct: diagTotal ? (diagPrenhe/diagTotal)*100 : null, aguardando: aguardandoDiagnostico, porServico },
     idadePrimeiroParto: { mediaMeses: elegiveisIdade ? (somaIdadeDias/elegiveisIdade)/30.44 : null, elegiveis: elegiveisIdade, excluidos: excluidosIdade },
     repeticaoCio: { coberturas: coberturasAvaliaveis, repeticoes, taxaPct: coberturasAvaliaveis ? (repeticoes/coberturasAvaliaveis)*100 : null, intervaloMedioDias: repeticoes ? somaIntervaloDias/repeticoes : null }
   };
@@ -1496,7 +1527,7 @@ function verificarQualidadeDados(producao, individual, animais, eventos, hojeIso
     // 5) Leite lançado antes do primeiro parto registrado, em vaca sem partos anteriores informados.
     //    Fica de fora quem entrou já parida (a data desse parto é aproximada).
     const partosPor = {};
-    (eventos||[]).filter(e=>e.tipo==='parto').forEach(e=>{ (partosPor[e.animal_id] = partosPor[e.animal_id] || []).push(e); });
+    (eventos||[]).filter(ehInicioLactacao).forEach(e=>{ (partosPor[e.animal_id] = partosPor[e.animal_id] || []).push(e); });   // parto ou indução de lactação
     const vacasComProblema = [];
     (animais||[]).forEach(a=>{
       if(Number(a.partos_anteriores||0) > 0) return;
@@ -1510,7 +1541,7 @@ function verificarQualidadeDados(producao, individual, animais, eventos, hojeIso
     if(vacasComProblema.length){
       avisos.push({ codigo:'leite_antes_do_parto',
         titulo: vacasComProblema.length === 1 ? 'Uma vaca com leite lançado antes do primeiro parto' : vacasComProblema.length + ' vacas com leite lançado antes do primeiro parto',
-        detalhe: vacasComProblema.slice(0, 5).map(x => 'Nº ' + x.a.identificacao + ' (parto em ' + dm(x.primeiro.data) + ', leite em ' + x.dias + (x.dias === 1 ? ' dia' : ' dias') + ' anteriores)').join('; ')
+        detalhe: vacasComProblema.slice(0, 5).map(x => 'Nº ' + x.a.identificacao + ' (' + (x.primeiro.tipo === 'inducao_lactacao' ? 'indução em ' : 'parto em ') + dm(x.primeiro.data) + ', leite em ' + x.dias + (x.dias === 1 ? ' dia' : ' dias') + ' anteriores)').join('; ')
           + '. Confira as datas. Se ela já tinha parido antes, informe os partos anteriores na edição do animal.' });
     }
   }
@@ -1557,11 +1588,13 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
     if(!evs.length) return;
     const partos = evs.filter(e=>e.tipo==='parto');
     const ultimoParto = partos.length ? partos[partos.length-1] : null;
+    const iniciosLact = evs.filter(ehInicioLactacao);
+    const ultimoInicio = iniciosLact.length ? iniciosLact[iniciosLact.length-1] : null;   // parto ou indução de lactação
     const lote = calcularLoteAnimal(a, evs, hojeIso);
     const nome = 'Nº ' + a.identificacao;
 
     // Último evento que muda a situação reprodutiva (secagem não conta): cobertura = prenhez presumida.
-    const relevantes = evs.filter(e=>e.tipo==='cobertura' || e.tipo==='cio' || e.tipo==='aborto' || e.tipo==='parto');
+    const relevantes = evs.filter(e=>e.tipo==='cobertura' || e.tipo==='cio' || e.tipo==='aborto' || e.tipo==='parto' || e.tipo==='inducao_lactacao');
     const ultimoRelevante = relevantes.length ? relevantes[relevantes.length-1] : null;
     const situacao = situacaoGestacaoCobertura(ultimoRelevante);
     const prenhePresumida = situacao === 'presumida' || situacao === 'confirmada';   // diagnosticada vazia não conta como prenhe
@@ -1584,8 +1617,8 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
       }
 
       // Secagem: só para vaca que já pariu e ainda não teve a secagem registrada.
-      const secouDepois = !!ultimoParto && evs.some(e=>e.tipo==='secagem' && e.data > ultimoParto.data);
-      if(ultimoParto && !secouDepois && faltam >= 0){
+      const secouDepois = !!ultimoInicio && evs.some(e=>e.tipo==='secagem' && e.data > ultimoInicio.data);
+      if(ultimoInicio && !secouDepois && faltam >= 0){
         const dataSecar = somarDias(partoPrevisto, -DIAS_SECA_ANTES_PARTO);
         const ate = diasEntre(hojeIso, dataSecar);
         if(ate >= 0 && ate <= DIAS_AVISO_SECAGEM){
@@ -1743,6 +1776,15 @@ function montarCartaoAcoesDoDia(grupos, temAnimais){
 }
 
 // HTML do cartão do Grupo 1, reaproveitado na tela de Indicadores e na ficha (tela e PDF).
+// "Inseminação 67% (2 de 3) · Monta natural 100% (1 de 1)": só os tipos de serviço que já têm diagnóstico.
+function linhaConcepcaoPorServico(porServico){
+  const itens = Object.keys(TIPOS_SERVICO).filter(k => porServico && (porServico[k].prenhes + porServico[k].vazias) > 0).map(k => {
+    const t = porServico[k], total = t.prenhes + t.vazias;
+    return TIPOS_SERVICO_CURTO[k] + ' ' + t.taxaPct.toFixed(0) + '% (' + t.prenhes + ' de ' + total + ')';
+  });
+  return itens.length ? '<div class="legenda-muted" style="font-size:11px">Por tipo de serviço: ' + itens.join(' · ') + '</div>' : '';
+}
+
 function montarCartaoGrupo1(ind){
   const idade = ind.idadePrimeiroParto, cio = ind.repeticaoCio, diag = ind.diagnosticoGestacao;
   return '<div class="cartao" style="display:flex; flex-wrap:wrap; justify-content:space-around; text-align:center; gap:10px">'
@@ -1754,6 +1796,7 @@ function montarCartaoGrupo1(ind){
     + '</div>'
     + '<div><div class="legenda-muted" style="font-size:12px; margin-bottom:2px">Concepção (diagnóstico de gestação)</div><div style="font-weight:700; font-size:18px">'+(diag.taxaConcepcaoPct!==null ? diag.taxaConcepcaoPct.toFixed(0)+'%' : '—')+'</div>'
       + '<div class="legenda-muted" style="font-size:11px">'+((diag.prenhes + diag.vazias) ? diag.prenhes+' prenhe(s), '+diag.vazias+' vazia(s)' : 'Nenhum diagnóstico registrado')+(diag.aguardando ? ' · '+diag.aguardando+' cobertura(s) aguardando diagnóstico' : '')+'</div>'
+      + linhaConcepcaoPorServico(diag.porServico)
     + '</div>'
   + '</div>';
 }
@@ -1780,7 +1823,7 @@ async function renderHistoricoReprodutivo(animalId){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Diagnosticada vazia</strong> em '+formatarData(maisRecente.diagnostico_data)+'. Sem previsão de parto; aguardando nova cobertura.</div>';
     } else if(maisRecente.tipo === 'cobertura'){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de parto:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_GESTACAO))+(situacaoGestacaoCobertura(maisRecente) === 'confirmada' ? ' <span class="legenda-muted" style="margin:0">(gestação confirmada)</span>' : ' <span class="legenda-muted" style="margin:0">(gestação ainda não confirmada)</span>')+'</div>';
-    } else if(maisRecente.tipo === 'parto'){
+    } else if(maisRecente.tipo === 'parto' || maisRecente.tipo === 'inducao_lactacao'){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de secagem:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_LACTACAO_ATE_SECAGEM))+'</div>';
     } else if(maisRecente.tipo === 'cio'){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de próximo cio:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_CICLO_ESTRO))+' <span class="legenda-muted" style="margin:0">(caso não tenha sido coberta)</span></div>';
@@ -1867,6 +1910,14 @@ function atualizarCamposFormularioEvento(tipo){
   if(!alvo) return;
   if(tipo === 'aborto'){
     alvo.innerHTML = '<div class="grupo-campo"><label for="campo-aborto-meses-gestacao">Estimativa de meses de gestação (opcional)</label><input id="campo-aborto-meses-gestacao" type="number" min="0" max="9" step="0.5"></div>';
+    return;
+  }
+  if(tipo === 'inducao_lactacao'){
+    alvo.innerHTML = '<div class="legenda-muted" style="font-size:12px; margin-bottom:10px">Use a data em que a ordenha começou (cerca de 21 a 22 dias após o início do protocolo). Anote o início do protocolo nas observações. O leite do início tem carência dos medicamentos: registre-a no Manejo sanitário.</div>';
+    return;
+  }
+  if(tipo === 'cobertura'){
+    alvo.innerHTML = '<div class="grupo-campo"><label for="campo-tipo-servico">Tipo de serviço (opcional)</label><select id="campo-tipo-servico">'+opcoesTipoServicoHTML('')+'</select></div>';
     return;
   }
   if(tipo !== 'parto'){ alvo.innerHTML = ''; return; }
@@ -1985,6 +2036,9 @@ async function executarSalvarEventoReprodutivo(animalId){
 
   if(tipo === 'parto' && partoAnterior){
     registro.observacoes = observacoes || 'Parto anterior à entrada no rebanho (detalhes do bezerro não informados)';
+  } else if(tipo === 'cobertura'){
+    const servico = normalizarTipoServico((document.getElementById('campo-tipo-servico') || {}).value);
+    if(servico) registro.tipo_servico = servico;
   } else if(tipo === 'aborto'){
     const elMeses = document.getElementById('campo-aborto-meses-gestacao');
     registro.meses_gestacao_aborto = (elMeses && elMeses.value !== '') ? Number(elMeses.value) : null;
@@ -2056,6 +2110,7 @@ function abrirDiagnosticoGestacao(eventoId, animalId){
       + '<option value="vazia"'+(atual==='vazia'?' selected':'')+'>Vazia (não emprenhou)</option>'
     + '</select></div>'
     + '<div class="grupo-campo"><label for="campo-diag-data">Data do diagnóstico</label><input id="campo-diag-data" type="date" value="'+escaparHTML(cob.diagnostico_data || '')+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-diag-servico">Tipo de serviço (opcional)</label><select id="campo-diag-servico">'+opcoesTipoServicoHTML(normalizarTipoServico(cob.tipo_servico))+'</select></div>'
     + '<div id="mensagem-diag" class="legenda-muted" style="min-height:18px"></div>'
     + '<div style="display:flex; gap:10px">'
       + '<button class="botao botao-secundario" style="flex:1" onclick="fecharConfirmacao()">Cancelar</button>'
@@ -2073,7 +2128,7 @@ async function salvarDiagnosticoGestacao(eventoId, animalId){
   const erroValidacao = validarDiagnosticoGestacao(cob, resultado, dataDiag, new Date().toISOString().slice(0,10));
   if(erroValidacao){ msg.textContent = erroValidacao; msg.style.color = 'var(--perigo)'; return; }
   msg.textContent = 'Salvando...'; msg.style.color = 'var(--tinta-suave)';
-  const { error } = await sb.from('eventos_reprodutivos').update({ diagnostico_gestacao: resultado, diagnostico_data: dataDiag }).eq('id', eventoId);
+  const { error } = await sb.from('eventos_reprodutivos').update({ diagnostico_gestacao: resultado, diagnostico_data: dataDiag, tipo_servico: normalizarTipoServico(document.getElementById('campo-diag-servico').value) }).eq('id', eventoId);
   if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar o diagnóstico'); msg.style.color = 'var(--perigo)'; return; }
   fecharConfirmacao();
   renderHistoricoReprodutivo(animalId);
@@ -2992,7 +3047,7 @@ async function buscarAlertasCalendario(){
     if(ev.tipo === 'cobertura'){
       if(situacaoGestacaoCobertura(ev) === 'vazia') return;   // diagnosticada vazia: não há parto a prever
       alertas.push({ data: somarDias(ev.data, DIAS_GESTACAO), titulo: 'Previsão de parto', animal: mapaAnimais[ev.animal_id] });
-    } else if(ev.tipo === 'parto'){
+    } else if(ev.tipo === 'parto' || ev.tipo === 'inducao_lactacao'){
       alertas.push({ data: somarDias(ev.data, DIAS_LACTACAO_ATE_SECAGEM), titulo: 'Previsão de secagem', animal: mapaAnimais[ev.animal_id] });
     } else if(ev.tipo === 'cio'){
       alertas.push({ data: somarDias(ev.data, DIAS_CICLO_ESTRO), titulo: 'Previsão de próximo cio', animal: mapaAnimais[ev.animal_id] });
@@ -4120,10 +4175,11 @@ async function renderIndicadores(){
     const secagens = evs.filter(e=>e.tipo==='secagem').sort((x,y)=>x.data.localeCompare(y.data));
 
     let del = '—';
-    if(partos.length){
-      const ultimoParto = partos[partos.length-1];
-      const secagemDepois = secagens.find(s=>s.data > ultimoParto.data);
-      if(!secagemDepois) del = diasEntre(ultimoParto.data, hoje) + ' dias';
+    const iniciosLact = evs.filter(ehInicioLactacao).sort((x,y)=>x.data.localeCompare(y.data));   // parto ou indução de lactação
+    if(iniciosLact.length){
+      const ultimoInicio = iniciosLact[iniciosLact.length-1];
+      const secagemDepois = secagens.find(s=>s.data > ultimoInicio.data);
+      if(!secagemDepois) del = diasEntre(ultimoInicio.data, hoje) + ' dias';
     }
 
     let iep = '—';
@@ -4948,10 +5004,11 @@ async function montarBlocoIndicadores(produtorId, mostrarCustoPorLitro, incluirR
     const partos = evs.filter(e=>e.tipo==='parto').sort((x,y)=>x.data.localeCompare(y.data));
     const secagens = evs.filter(e=>e.tipo==='secagem').sort((x,y)=>x.data.localeCompare(y.data));
     let del = '—';
-    if(partos.length){
-      const ultimoParto = partos[partos.length-1];
-      const secagemDepois = secagens.find(s=>s.data > ultimoParto.data);
-      if(!secagemDepois) del = diasEntre(ultimoParto.data, hoje) + ' dias';
+    const iniciosLact = evs.filter(ehInicioLactacao).sort((x,y)=>x.data.localeCompare(y.data));   // parto ou indução de lactação
+    if(iniciosLact.length){
+      const ultimoInicio = iniciosLact[iniciosLact.length-1];
+      const secagemDepois = secagens.find(s=>s.data > ultimoInicio.data);
+      if(!secagemDepois) del = diasEntre(ultimoInicio.data, hoje) + ' dias';
     }
     let iep = '—';
     if(partos.length >= 2){
@@ -5026,7 +5083,9 @@ const ordemNumerica = (a,b) => String(a).localeCompare(String(b), 'pt', { numeri
 function resumoReprodutivoAnimal(evs, hojeIso, partosAnteriores){
   const partos = (evs||[]).filter(e=>e.tipo==='parto').sort((x,y)=>x.data.localeCompare(y.data));
   const ultimo = partos.length ? partos[partos.length-1] : null;
-  const secouDepois = ultimo && (evs||[]).some(e=>e.tipo==='secagem' && e.data > ultimo.data);
+  const inicios = (evs||[]).filter(ehInicioLactacao).sort((x,y)=>x.data.localeCompare(y.data));   // parto ou indução: de onde se conta o DEL
+  const ultimoInicio = inicios.length ? inicios[inicios.length-1] : null;
+  const secouDepois = ultimoInicio && (evs||[]).some(e=>e.tipo==='secagem' && e.data > ultimoInicio.data);
   // Abortos e natimortos são contados na vida toda do animal (não numa janela de tempo): o objetivo é
   // acompanhar vaca a vaca se ela vem abortando ou tendo natimortos com frequência, para decidir entre
   // tratamento ou descarte — um recorte recente esconderia justamente o histórico que importa aqui.
@@ -5037,7 +5096,7 @@ function resumoReprodutivoAnimal(evs, hojeIso, partosAnteriores){
     partos: partos.length,
     paridade: partos.length ? (Number(partosAnteriores)||0) + partos.length : 0,
     ultimoParto: ultimo ? ultimo.data : null,
-    del: (ultimo && !secouDepois) ? diasEntre(ultimo.data, hojeIso) : null,
+    del: (ultimoInicio && !secouDepois) ? diasEntre(ultimoInicio.data, hojeIso) : null,
     iep: partos.length >= 2 ? diasEntre(partos[partos.length-2].data, ultimo.data) : null,
     abortos, taxaAbortoPct: desfechos ? (abortos/desfechos)*100 : null,
     natimortos, taxaNatimortoPct: partos.length ? (natimortos/partos.length)*100 : null
@@ -5158,7 +5217,8 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
     aba('Producao_por_vaca', d.individual.map(r=>{
       const a = animalPor[r.animal_id] || {};
       const partos = (eventosPor[r.animal_id]||[]).filter(e=>e.tipo==='parto' && e.data <= r.data).sort((x,y)=>x.data.localeCompare(y.data));
-      const ult = partos.length ? partos[partos.length-1].data : null;
+      const iniciosAteData = (eventosPor[r.animal_id]||[]).filter(e=>ehInicioLactacao(e) && e.data <= r.data).sort((x,y)=>x.data.localeCompare(y.data));
+      const ult = iniciosAteData.length ? iniciosAteData[iniciosAteData.length-1].data : null;   // DEL conta desde o parto ou a indução
       const m = r.litros_manha, t = r.litros_tarde;
       return { data:r.data, animal:a.identificacao||'', litros_manha:m==null?'':Number(m), litros_tarde:t==null?'':Number(t), total_dia:Number(m||0)+Number(t||0),
                ordenhas_lancadas:(m!=null?1:0)+(t!=null?1:0), grau_sangue:a.grau_sangue||'', partos_ate_a_data: permissoes.ve_reprodutivo ? partos.length : '', del_na_data: ult ? diasEntre(ult, r.data) : '' };
