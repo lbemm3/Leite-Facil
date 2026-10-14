@@ -129,7 +129,7 @@ create table eventos_reprodutivos (
   id                      bigint not null,
   animal_id               bigint not null,
   produtor_id             uuid not null,
-  tipo                    text not null,          -- cio | cobertura | parto | aborto | secagem
+  tipo                    text not null,          -- cio | cobertura | parto | aborto | secagem | inducao_lactacao
   data                    date not null,
   observacoes             text,
   criado_em               timestamptz default now(),
@@ -142,9 +142,14 @@ create table eventos_reprodutivos (
   meses_gestacao_aborto   numeric,                -- só quando tipo = 'aborto'
   diagnostico_gestacao    text,                   -- só quando tipo = 'cobertura': 'prenhe' | 'vazia'
   diagnostico_data        date,                   -- data do diagnóstico (junto com o resultado)
+  tipo_servico            text,                   -- só quando tipo = 'cobertura': 'inseminacao' | 'iatf' | 'monta_natural' (vazio = não informado)
   constraint eventos_reprodutivos_diagnostico_valido check (
     (diagnostico_gestacao is null and diagnostico_data is null)
     or (diagnostico_gestacao is not null and diagnostico_gestacao in ('prenhe', 'vazia') and diagnostico_data is not null and tipo = 'cobertura')
+  ),
+  constraint eventos_reprodutivos_tipo_servico_valido check (
+    tipo_servico is null
+    or (tipo_servico in ('inseminacao', 'iatf', 'monta_natural') and tipo = 'cobertura')
   )
 );
 
@@ -581,6 +586,7 @@ create policy "So admin le os registros de acesso" on logs_acesso for select to 
 --                              leitura dessa tabela é só do admin)
 --   service_role (Edge Functions):
 --     animais, eventos_reprodutivos, eventos_sanitarios, qualidade_leite:  S---
+--     avisos_dispensados (a função respeita baixas e adiamentos):          S---
 --     inscricoes_push, avisos_enviados:                                    SIUD
 --     as demais tabelas:                                                   ----
 --
