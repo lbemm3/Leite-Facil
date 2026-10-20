@@ -77,6 +77,7 @@ function carregarFuncoesReais(){
     'JANELA_CONFERENCIA_DIAS', 'JANELA_DIAS_SEM_LANCAMENTO', 'LIMITE_LITROS_ORDENHA', 'LIMITE_LITROS_VACA_DIA',
     'MIN_VACAS_DIA_REPETIDO', 'TOLERANCIA_TOTAL_DIA', 'escaparHTML',
     'verificarQualidadeDados', 'montarCartaoQualidadeDados',
+    'NOMES_MESES', 'agruparProducaoPorAnoMes', 'formatarLitros',
     'DIAS_ALERTA_SEM_COBERTURA', 'DIAS_AVISO_SECAGEM', 'DIAS_AVISO_PARTO', 'DIAS_PARTO_ATRASADO_MAX',
     'QUEDA_PRODUCAO_PCT', 'MIN_LITROS_BASE_QUEDA', 'DIAS_BAIXA_QUEDA', 'MAX_DIAS_ADIAR',
     'calcularAcoesDoDia', 'montarCartaoAcoesDoDia',
@@ -806,6 +807,32 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
 
   x = await roda(2500, 2);
   verificar('erro numa página para tudo e devolve o erro (sem relatório pela metade)', [x.r.data, x.r.error && x.r.error.message], [null, 'falhou']);
+
+
+  // ---------- Produção em ano → mês → dias ----------
+  console.log('\nProdução agrupada por ano e mês');
+  {
+    const R = (data, m, t) => ({ data, litros_manha:m, litros_tarde:t });
+    const regs = [R('2026-10-02',100,50), R('2026-10-01',90,40), R('2026-08-15',10,5), R('2025-12-31',70,30), R('2025-12-30',60,null), R('2026-10-03','80','20')];
+    const g = F.agruparProducaoPorAnoMes(regs, '2026-10-20');
+    verificar('anos em ordem decrescente', g.map(x=>x.ano), [2026, 2025]);
+    verificar('ano atual vai de outubro até janeiro (meses sem lançamento incluídos)', g[0].meses.map(m=>m.mes), [10,9,8,7,6,5,4,3,2,1]);
+    verificar('ano passado só traz meses com registro', g[1].meses.map(m=>m.mes), [12]);
+    const out = g[0].meses[0];
+    verificar('outubro: total soma manhã+tarde (aceita texto numérico)', out.total, 380);
+    verificar('outubro: dias lançados e média por dia lançado', [out.diasLancados, Math.round(out.media*10)/10], [3, 126.7]);
+    verificar('dias do mês em ordem decrescente', out.registros.map(r=>r.data), ['2026-10-03','2026-10-02','2026-10-01']);
+    verificar('mês sem lançamento: zeros e média 0', [g[0].meses[1].total, g[0].meses[1].diasLancados, g[0].meses[1].media], [0,0,0]);
+    verificar('dezembro/2025: litro nulo conta como 0', g[1].meses[0].total, 160);
+    verificar('total do ano', [g[0].total, g[1].total], [395, 160]);
+    verificar('registro de 31/12 fica em dezembro, não em janeiro', g[1].meses[0].registros.length, 2);
+    const vazio = F.agruparProducaoPorAnoMes([], '2027-02-10');
+    verificar('sem dados: só o ano atual, jan e fev vazios', [vazio.length, vazio[0].ano, vazio[0].meses.map(m=>m.mes)], [1, 2027, [2,1]]);
+    const futuro = F.agruparProducaoPorAnoMes([R('2027-01-05',1,1)], '2026-10-20');
+    verificar('ano futuro com dados também aparece', futuro.map(x=>x.ano), [2027, 2026]);
+    verificar('registros inválidos são ignorados', F.agruparProducaoPorAnoMes([null, {litros_manha:5}], '2026-01-10')[0].meses[0].diasLancados, 0);
+    verificar('formatarLitros usa vírgula e 1 casa', [F.formatarLitros(12480), F.formatarLitros(416.666), F.formatarLitros(0)], ['12.480', '416,7', '0']);
+  }
 
   console.log('\n' + '-'.repeat(50));
   console.log(total + ' verificações, ' + falhas + ' falha(s).');
