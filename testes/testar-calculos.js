@@ -78,7 +78,7 @@ function carregarFuncoesReais(){
     'MIN_VACAS_DIA_REPETIDO', 'TOLERANCIA_TOTAL_DIA', 'escaparHTML',
     'verificarQualidadeDados', 'montarCartaoQualidadeDados',
     'NOMES_MESES', 'agruparProducaoPorAnoMes', 'formatarLitros',
-    'CURVA_W', 'CURVA_ESQ', 'CURVA_DIR', 'xMaxCurvaLactacao', 'pontoMaisProximoCurva', 'lactacoesDoAnimal', 'pontosCurvaLactacao', 'resumoCurvaLactacao', 'curvaLactacaoSVG', 'descricaoLactacao', 'curvaLactacaoHTML',
+    'normalizarBuscaAnimal', 'filtrarAnimaisPorBusca', 'CURVA_W', 'CURVA_ESQ', 'CURVA_DIR', 'xMaxCurvaLactacao', 'pontoMaisProximoCurva', 'lactacoesDoAnimal', 'pontosCurvaLactacao', 'resumoCurvaLactacao', 'curvaLactacaoSVG', 'descricaoLactacao', 'curvaLactacaoHTML',
     'calcularProducaoDiariaMes', 'limiteEixoGrafico', 'graficoProducaoMesHTML', 'blocoProducaoMesInicioHTML',
     'DIAS_ALERTA_SEM_COBERTURA', 'DIAS_AVISO_SECAGEM', 'DIAS_AVISO_PARTO', 'DIAS_PARTO_ATRASADO_MAX',
     'QUEDA_PRODUCAO_PCT', 'MIN_LITROS_BASE_QUEDA', 'DIAS_BAIXA_QUEDA', 'MAX_DIAS_ADIAR',
@@ -909,6 +909,25 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('HTML: atual por padrão traz seletor com "(atual)" e botões de lactações anteriores', [h.includes('3ª (atual)'), h.includes('selecionarLactacaoCurva(0)'), h.includes('em andamento'), h.includes('<svg')], [true, true, true, true]);
     verificar('uma lactação só: sem seletor', F.curvaLactacaoHTML([l[0]], 0, [P('2024-02-01',5,5)]).includes('selecionarLactacaoCurva'), false);
     verificar('lactação sem registros: mensagem, sem gráfico', (x => [x.includes('<svg'), x.includes('Nenhum registro de ordenha')])(F.curvaLactacaoHTML(l, 0, [P('2026-03-05',20,10)])), [false, true]);
+  }
+
+
+  // ---------- Busca de animal pelo número ----------
+  console.log('\nBusca em "Meus animais"');
+  {
+    const A = (id, ident) => ({ id, identificacao: ident });
+    const lista = [A(1,'042'), A(2,'536'), A(3,'1042'), A(4,'Mimosa 5'), A(5,'42'), A(6,'AÇÚCAR'), A(7,null), A(8,'420')];
+    const ids = t => F.filtrarAnimaisPorBusca(lista, t).map(a=>a.id);
+    verificar('sem termo (ou só espaços) devolve todos, na ordem original', [ids(''), ids('   '), ids(null)], [[1,2,3,4,5,6,7,8], [1,2,3,4,5,6,7,8], [1,2,3,4,5,6,7,8]]);
+    verificar('número exato primeiro, depois os que começam igual, depois os que contêm', ids('42'), [5, 8, 1, 3]);
+    verificar('o número exato vem antes de um que apenas começa igual, mesmo cadastrado depois', F.filtrarAnimaisPorBusca([A(1,'420'), A(2,'42')], '42').map(x=>x.id), [2, 1]);
+    verificar('número único encontra só ele', ids('536'), [2]);
+    verificar('trecho no meio do número', ids('04'), [1, 3]);
+    verificar('sem resultado devolve lista vazia', ids('999'), []);
+    verificar('ignora maiúscula, acento e espaços nas pontas', [ids('  mimosa'), ids('acucar'), ids('AÇÚCAR ')], [[4], [6], [6]]);
+    verificar('identificação vazia (null) não quebra nem aparece', ids('0'), [1, 3, 8]);
+    verificar('a lista original não é alterada', lista.map(a=>a.id), [1,2,3,4,5,6,7,8]);
+    verificar('normalizar: texto, número e nulo', [F.normalizarBuscaAnimal(' Á1 '), F.normalizarBuscaAnimal(42), F.normalizarBuscaAnimal(undefined)], ['a1', '42', '']);
   }
 
   console.log('\n' + '-'.repeat(50));
