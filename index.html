@@ -2324,6 +2324,106 @@ function linhaCompacta(icone, titulo, subtitulo, valorDireita, onclickAttr, corB
     + '</button>';
 }
 
+const NOMES_MESES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+// Agrupa os registros de produção por ano e mês. O ano atual sempre aparece, com os meses
+// de janeiro até o atual (os sem lançamento ficam com diasLancados 0). Em anos passados só
+// entram os meses que têm registro. A média é por dia lançado, não por dia do calendário.
+function agruparProducaoPorAnoMes(registros, hojeIso){
+  const anoHoje = parseInt(hojeIso.slice(0,4), 10);
+  const mesHoje = parseInt(hojeIso.slice(5,7), 10);
+  const porMes = {};
+  (registros || []).forEach(r => {
+    if(!r || !r.data) return;
+    const chave = String(r.data).slice(0,7);
+    (porMes[chave] = porMes[chave] || []).push(r);
+  });
+  const anos = {};
+  const garantirMes = (ano, mes) => {
+    const chave = ano + '-' + String(mes).padStart(2,'0');
+    const regs = (porMes[chave] || []).slice().sort((x,y)=> x.data < y.data ? 1 : -1);
+    const total = regs.reduce((t,r)=> t + (Number(r.litros_manha)||0) + (Number(r.litros_tarde)||0), 0);
+    const dias = regs.length;
+    (anos[ano] = anos[ano] || []).push({ chave, ano, mes, total, diasLancados: dias, media: dias ? total/dias : 0, registros: regs });
+  };
+  Object.keys(porMes).forEach(chave => garantirMes(parseInt(chave.slice(0,4),10), parseInt(chave.slice(5,7),10)));
+  for(let m=1; m<=mesHoje; m++){
+    if(!porMes[anoHoje + '-' + String(m).padStart(2,'0')]) garantirMes(anoHoje, m);
+  }
+  return Object.keys(anos).map(Number).sort((x,y)=>y-x).map(ano => ({
+    ano, meses: anos[ano].sort((x,y)=>y.mes-x.mes),
+    total: anos[ano].reduce((t,m)=>t+m.total,0)
+  }));
+}
+
+function formatarLitros(v){
+  return (Math.round(v*10)/10).toLocaleString('pt-BR', { maximumFractionDigits:1 });
+}
+
+let PRODUCAO_ANO_SEL = null;
+let PRODUCAO_MES_ABERTO = null;
+
+function escolherAnoMesPadrao(grupos, hojeIso){
+  const anoHoje = parseInt(hojeIso.slice(0,4), 10);
+  let g = grupos.find(x => x.ano === PRODUCAO_ANO_SEL) || grupos.find(x => x.ano === anoHoje) || grupos[0];
+  if(!g) return { ano:null, mes:null };
+  let mes = g.meses.find(m => m.chave === PRODUCAO_MES_ABERTO);
+  if(!mes) mes = g.meses.find(m => m.diasLancados > 0) || g.meses[0];
+  return { ano:g.ano, mes: mes ? mes.chave : null };
+}
+
+function selecionarAnoProducao(ano){
+  PRODUCAO_ANO_SEL = ano;
+  PRODUCAO_MES_ABERTO = null;
+  desenharProducaoLitros();
+}
+function alternarMesProducao(chave){
+  PRODUCAO_MES_ABERTO = (PRODUCAO_MES_ABERTO === chave) ? '' : chave;
+  desenharProducaoLitros();
+}
+
+function htmlLinhaDiaProducao(r){
+  const manha = Number(r.litros_manha)||0;
+  const tarde = Number(r.litros_tarde)||0;
+  const temProblema = r.problemas_animais_manha || r.problemas_equipamento_manha || r.problemas_animais_tarde || r.problemas_equipamento_tarde;
+  const metodo = r.metodo_registro === 'individual' ? ' · por vaca' : '';
+  return linhaCompacta('gota', formatarData(r.data), 'Manhã: '+manha+' L · Tarde: '+tarde+' L'+metodo, formatarLitros(manha+tarde)+' L', 'abrirRegistroProducao(\''+r.data+'\')', temProblema ? 'var(--perigo)' : null);
+}
+
+function desenharProducaoLitros(){
+  const alvo = document.getElementById('producao-litros');
+  if(!alvo) return;
+  const hojeIso = new Date().toISOString().slice(0,10);
+  const grupos = agruparProducaoPorAnoMes(PRODUCAO_LEITE, hojeIso);
+  if(PRODUCAO_LEITE.length === 0){
+    alvo.innerHTML = '<div class="estado-vazio"><div class="ic">'+iconeInline('gota',28)+'</div>'
+      + '<p>Nenhum registro de produção ainda. Registre a ordenha da manhã e da tarde, por rebanho ou por vaca, para começar a acompanhar o total do rebanho.</p></div>';
+    return;
+  }
+  const padrao = escolherAnoMesPadrao(grupos, hojeIso);
+  PRODUCAO_ANO_SEL = padrao.ano;
+  if(PRODUCAO_MES_ABERTO !== '') PRODUCAO_MES_ABERTO = padrao.mes;
+  const grupo = grupos.find(g => g.ano === padrao.ano);
+
+  const chips = grupos.map(g => '<button class="botao '+(g.ano===grupo.ano?'botao-primario':'botao-secundario')+'" style="padding:7px 14px; font-size:13px" onclick="selecionarAnoProducao('+g.ano+')">'+g.ano+'</button>').join('');
+  const resumoAno = '<div class="legenda-muted" style="margin:0 0 10px">'+grupo.ano+': '+formatarLitros(grupo.total)+' L no ano.</div>';
+
+  const meses = grupo.meses.map(m => {
+    const aberto = m.chave === PRODUCAO_MES_ABERTO;
+    const vazio = m.diasLancados === 0;
+    const sub = vazio ? 'Sem lançamentos' : 'Média '+formatarLitros(m.media)+' L/dia · '+m.diasLancados+' '+(m.diasLancados===1?'dia lançado':'dias lançados');
+    const cab = '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:10px; cursor:pointer; padding:10px 12px; margin-bottom:8px'+(vazio?'; opacity:.55':'')+'" aria-expanded="'+aberto+'" onclick="alternarMesProducao(\''+m.chave+'\')">'
+      + '<div style="flex:1; min-width:0"><div style="font-weight:700; font-size:14px">'+NOMES_MESES[m.mes-1]+'</div>'
+      + '<div class="legenda-muted" style="margin-bottom:0; font-size:12px">'+sub+'</div></div>'
+      + (vazio ? '' : '<span style="font-family:var(--fonte-dados); font-weight:600; font-size:14px; color:var(--azul); white-space:nowrap">'+formatarLitros(m.total)+' L</span>')
+      + '<span style="color:var(--zinco)">'+(aberto?'▾':'▸')+'</span></button>';
+    const dias = (aberto && !vazio) ? '<div style="margin:0 0 10px 8px">'+m.registros.map(htmlLinhaDiaProducao).join('')+'</div>' : '';
+    return cab + dias;
+  }).join('');
+
+  alvo.innerHTML = '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px">'+chips+'</div>' + resumoAno + meses;
+}
+
 async function renderProducao(){
   document.getElementById('tela-producao').innerHTML = '<div class="legenda-muted">Carregando produção...</div>';
   const [{ data, error }, { data: dadosQualidade, error: erroQualidade }] = await Promise.all([
@@ -2340,23 +2440,8 @@ async function renderProducao(){
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Produção de leite</div>'
     + '<button class="botao botao-primario" style="margin-bottom:18px; padding:9px 16px; font-size:13px" onclick="abrirRegistroProducao()">'+iconeInline('gota',15)+' Registrar produção do dia</button>';
 
-  let corpoLitros;
-  if(PRODUCAO_LEITE.length === 0){
-    corpoLitros = '<div class="estado-vazio"><div class="ic">'+iconeInline('gota',28)+'</div>'
-      + '<p>Nenhum registro de produção ainda. Registre a ordenha da manhã e da tarde — por rebanho ou por vaca — para começar a acompanhar o total do rebanho.</p></div>';
-  } else {
-    corpoLitros = '<div class="legenda-muted" style="margin:-8px 0 10px">Mostrando os 7 registros mais recentes.</div>'
-      + PRODUCAO_LEITE.slice(0,7).map(r=>{
-      const manha = Number(r.litros_manha)||0;
-      const tarde = Number(r.litros_tarde)||0;
-      const total = manha + tarde;
-      const temProblema = r.problemas_animais_manha || r.problemas_equipamento_manha || r.problemas_animais_tarde || r.problemas_equipamento_tarde;
-      const metodo = r.metodo_registro === 'individual' ? ' · por vaca' : '';
-      return linhaCompacta('gota', formatarData(r.data), 'Manhã: '+manha+' L · Tarde: '+tarde+' L'+metodo, total+' L', 'abrirRegistroProducao(\''+r.data+'\')', temProblema ? 'var(--perigo)' : null);
-    }).join('');
-  }
-
-  document.getElementById('tela-producao').innerHTML = cabecalho + corpoLitros + renderSecaoQualidade();
+  document.getElementById('tela-producao').innerHTML = cabecalho + '<div id="producao-litros"></div>' + renderSecaoQualidade();
+  desenharProducaoLitros();
 }
 
 /* ======================= QUALIDADE DO LEITE (CCS/CBT) ======================= */
