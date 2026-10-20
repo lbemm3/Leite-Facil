@@ -1255,36 +1255,166 @@ function abrirEdicaoAnimal(id){
   renderCurvaLactacao(a.id);
 }
 
+// ---------- Curva de lactação individual (produção por dias em lactação, DEL) ----------
+// Cada início de lactação (parto ou indução) abre uma lactação, que vai até a secagem, ou até o dia antes do
+// próximo início. A última lactação é a "atual" (mesmo que já tenha sido secada).
+function lactacoesDoAnimal(eventos){
+  const lista = (eventos || []).filter(e => e && e.data);
+  const inicios = lista.filter(ehInicioLactacao).sort((x,y)=>x.data.localeCompare(y.data));
+  return inicios.map((ini, i) => {
+    const proximo = inicios[i+1] ? inicios[i+1].data : null;
+    const secagem = lista.filter(e => e.tipo === 'secagem' && e.data >= ini.data && (!proximo || e.data < proximo))
+      .sort((x,y)=>x.data.localeCompare(y.data))[0] || null;
+    const ate = secagem ? secagem.data : (proximo ? somarDias(proximo, -1) : null);
+    return { numero: i+1, inicio: ini.data, tipoInicio: ini.tipo, ate, encerrada: ate !== null };
+  });
+}
+
+// Pontos (um por dia com registro) da lactação, em DEL, com a média móvel de ±3 dias (por DEL) que dá a forma
+// da curva. Sem a suavização, um dia ruim de ordenha seria confundido com o pico.
+function pontosCurvaLactacao(producao, lact){
+  const porDia = {};
+  (producao || []).forEach(r => {
+    if(!r || !r.data) return;
+    if(r.data < lact.inicio || (lact.ate && r.data > lact.ate)) return;
+    porDia[r.data] = (porDia[r.data] || 0) + (Number(r.litros_manha)||0) + (Number(r.litros_tarde)||0);
+  });
+  const pts = Object.keys(porDia).sort().map(d => ({ data:d, del: diasEntre(lact.inicio, d), litros: porDia[d] }));
+  pts.forEach(pt => {
+    const vizinhos = pts.filter(q => Math.abs(q.del - pt.del) <= 3);
+    pt.suave = vizinhos.reduce((t,q)=>t+q.litros,0) / vizinhos.length;
+  });
+  return pts;
+}
+
+function resumoCurvaLactacao(pontos){
+  if(!pontos.length) return null;
+  const pico = pontos.reduce((m,q)=> q.suave > m.suave ? q : m, pontos[0]);
+  const ini = pontos[0], fim = pontos[pontos.length-1];
+  return {
+    inicio: { del: ini.del, litros: ini.litros },
+    pico: { del: pico.del, litros: pico.suave },
+    ultimo: { del: fim.del, litros: fim.litros },
+    nDias: pontos.length
+  };
+}
+
+const CURVA_W = 320;
+const CURVA_ESQ = 30;
+const CURVA_DIR = 8;
+function xMaxCurvaLactacao(pontos){
+  return Math.max(90, Math.ceil(Math.max(...pontos.map(q=>q.del))/30)*30);
+}
+// Dado o x (em unidades do desenho, 0 a 320) de um toque no gráfico, devolve o ponto de DEL mais próximo.
+// Um toque só para o gráfico inteiro evita alvos sobrepostos quando há um ponto por dia.
+function pontoMaisProximoCurva(pontos, xDesenho){
+  if(!pontos.length) return null;
+  const del = (xDesenho - CURVA_ESQ) / (CURVA_W - CURVA_ESQ - CURVA_DIR) * xMaxCurvaLactacao(pontos);
+  return pontos.reduce((m,q)=> Math.abs(q.del - del) < Math.abs(m.del - del) ? q : m, pontos[0]);
+}
+
+function curvaLactacaoSVG(pontos, resumo){
+  const W = CURVA_W, H = 170, esq = CURVA_ESQ, dir = CURVA_DIR, topo = 14, base = 140;
+  const xMax = xMaxCurvaLactacao(pontos);
+  const yMax = limiteEixoGrafico(Math.max(...pontos.map(q=>q.litros)));
+  const x = d => esq + (d / xMax) * (W - esq - dir);
+  const y = v => base - (v / yMax) * (base - topo);
+  const passo = xMax > 180 ? 60 : 30;
+  let marcas = '';
+  for(let d=0; d<=xMax; d+=passo) marcas += '<text x="'+x(d).toFixed(1)+'" y="'+(base+14)+'" text-anchor="middle" font-size="9" fill="var(--tinta-suave)">'+d+'</text>';
+  const linha = pontos.map((q,i)=> (i?'L':'M')+x(q.del).toFixed(1)+' '+y(q.suave).toFixed(1)).join(' ');
+  const dots = pontos.map(q => '<circle cx="'+x(q.del).toFixed(1)+'" cy="'+y(q.litros).toFixed(1)+'" r="2" fill="var(--azul-claro)" opacity=".75"/>').join('');
+  const px = x(resumo.pico.del), py = y(resumo.pico.litros);
+  const ancora = px > W - 70 ? 'end' : (px < esq + 40 ? 'start' : 'middle');
+  const pico = '<circle cx="'+px.toFixed(1)+'" cy="'+py.toFixed(1)+'" r="4.5" fill="var(--manteiga-escura)" stroke="var(--branco)" stroke-width="2"/>'
+    + '<text x="'+px.toFixed(1)+'" y="'+Math.max(10, py-9).toFixed(1)+'" text-anchor="'+ancora+'" font-size="9.5" font-weight="700" fill="var(--tinta)">Pico '+formatarLitros(resumo.pico.litros)+' L</text>';
+  const eixo = '<line x1="'+esq+'" x2="'+(W-dir)+'" y1="'+base+'" y2="'+base+'" stroke="var(--zinco)"/>'
+    + '<line x1="'+esq+'" x2="'+(W-dir)+'" y1="'+y(yMax).toFixed(1)+'" y2="'+y(yMax).toFixed(1)+'" stroke="var(--zinco-claro)"/>'
+    + '<text x="'+(esq-4)+'" y="'+(y(yMax)+3).toFixed(1)+'" text-anchor="end" font-size="9" fill="var(--tinta-suave)">'+formatarLitros(yMax)+'</text>'
+    + '<text x="'+(esq-4)+'" y="'+(base+3)+'" text-anchor="end" font-size="9" fill="var(--tinta-suave)">0</text>'
+    + '<text x="'+((esq+W-dir)/2)+'" y="'+(H-2)+'" text-anchor="middle" font-size="9" fill="var(--tinta-suave)">dias em lactação</text>';
+  return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" role="img" aria-label="Curva de lactação: litros por dia ao longo dos dias em lactação" style="display:block; cursor:pointer" onclick="tocarCurvaLactacao(event)">'
+    + eixo + marcas + dots + '<path d="'+linha+'" fill="none" stroke="var(--azul)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' + pico + '</svg>';
+}
+
+function descricaoLactacao(l){
+  const origem = l.tipoInicio === 'inducao_lactacao' ? 'Indução em ' : 'Parto em ';
+  return l.numero + 'ª lactação · ' + origem + formatarData(l.inicio) + ' · ' + (l.encerrada ? 'até ' + formatarData(l.ate) : 'em andamento');
+}
+
+function curvaLactacaoHTML(lactacoes, indice, producao){
+  const lact = lactacoes[indice];
+  let seletor = '';
+  if(lactacoes.length > 1){
+    seletor = '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px">'
+      + lactacoes.map((l,i)=> '<button class="botao '+(i===indice?'botao-primario':'botao-secundario')+'" style="padding:6px 12px; font-size:12.5px" onclick="selecionarLactacaoCurva('+i+')">'+l.numero+'ª'+(i===lactacoes.length-1?' (atual)':'')+'</button>').join('')
+      + '</div>';
+  }
+  const pontos = pontosCurvaLactacao(producao, lact);
+  const resumo = resumoCurvaLactacao(pontos);
+  const cab = '<div class="legenda-muted" style="margin-bottom:8px">'+descricaoLactacao(lact)+'</div>';
+  if(!resumo){
+    return seletor + cab + '<div class="legenda-muted">Nenhum registro de ordenha desta vaca dentro desta lactação.</div>';
+  }
+  const item = (rot, v, d) => '<div><div class="legenda-muted" style="margin-bottom:0; font-size:12px">'+rot+'</div><div style="font-family:var(--fonte-dados); font-weight:700; font-size:16px; color:var(--azul)">'+formatarLitros(v)+' L</div><div class="legenda-muted" style="margin-bottom:0; font-size:11.5px">dia '+d+' da lactação</div></div>';
+  return seletor + cab + '<div class="cartao" style="padding:12px 14px">'
+    + '<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:8px">'
+      + item('Início', resumo.inicio.litros, resumo.inicio.del)
+      + item('Pico', resumo.pico.litros, resumo.pico.del)
+      + item(lact.encerrada ? 'Final' : 'Último registro', resumo.ultimo.litros, resumo.ultimo.del)
+    + '</div>'
+    + curvaLactacaoSVG(pontos, resumo)
+    + '<div id="curva-lactacao-leitura" class="legenda-muted" style="margin:6px 0 0; font-size:12px">Os pontos são os dias registrados (manhã + tarde). A linha é a média de 7 dias, e o pico é tirado dela. Toque no gráfico para ver o dia mais próximo.</div>'
+    + '</div>';
+}
+
+let CURVA_LACTACAO = null;
+
+function selecionarLactacaoCurva(i){
+  if(!CURVA_LACTACAO) return;
+  CURVA_LACTACAO.indice = i;
+  const c = document.getElementById('secao-producao-individual');
+  if(c) c.innerHTML = curvaLactacaoHTML(CURVA_LACTACAO.lactacoes, i, CURVA_LACTACAO.producao);
+}
+
+function tocarCurvaLactacao(ev){
+  if(!CURVA_LACTACAO) return;
+  const svg = ev.currentTarget, r = svg.getBoundingClientRect();
+  if(!r.width) return;
+  const pontos = pontosCurvaLactacao(CURVA_LACTACAO.producao, CURVA_LACTACAO.lactacoes[CURVA_LACTACAO.indice]);
+  const q = pontoMaisProximoCurva(pontos, (ev.clientX - r.left) / r.width * CURVA_W);
+  if(q) mostrarPontoCurvaLactacao(q.del, q.data, q.litros);
+}
+
+function mostrarPontoCurvaLactacao(del, data, litros){
+  const el = document.getElementById('curva-lactacao-leitura');
+  if(el) el.textContent = 'Dia ' + del + ' da lactação · ' + formatarData(data) + ': ' + formatarLitros(litros) + ' L';
+}
+
 async function renderCurvaLactacao(animalId){
   const container = document.getElementById('secao-producao-individual');
   if(!container) return;
 
-  const { data, error } = await sb.from('producao_leite_individual')
-    .select('data, litros_manha, litros_tarde')
-    .eq('animal_id', animalId)
-    .order('data', { ascending:true });
-
-  if(error){
+  const [rProd, rEv] = await Promise.all([
+    buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, litros_manha, litros_tarde').eq('animal_id', animalId).order('data', { ascending:true })),
+    sb.from('eventos_reprodutivos').select('tipo, data').eq('animal_id', animalId)
+  ]);
+  if(rProd.error || rEv.error){
     container.innerHTML = '<div class="legenda-muted">Não foi possível carregar a produção individual.</div>';
     return;
   }
+  const data = rProd.data;
   if(!data || data.length === 0){
-    container.innerHTML = '<div class="legenda-muted">Nenhum registro individual de ordenha ainda para este animal. Isso é opcional — só aparece aqui se você usar a seção "Ordenha por vaca" na tela de Produção.</div>';
+    container.innerHTML = '<div class="legenda-muted">Nenhum registro individual de ordenha ainda para este animal. Isso é opcional: só aparece aqui se você usar a seção "Ordenha por vaca" na tela de Produção.</div>';
     return;
   }
-
-  const totalDia = r => Number(r.litros_manha||0) + Number(r.litros_tarde||0);
-  const paraGrafico = data.slice(-60);
-  const maxGrafico = Math.max(1, ...paraGrafico.map(totalDia));
-  const barras = paraGrafico.map(r=>{
-    const altura = Math.round((totalDia(r)/maxGrafico)*80) + 4;
-    return '<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; min-width:8px">'
-      + '<div title="'+formatarData(r.data)+': '+totalDia(r).toFixed(1)+' L" style="width:100%; max-width:14px; height:'+altura+'px; background:var(--azul); border-radius:3px 3px 0 0"></div>'
-      + '</div>';
-  }).join('');
-
-  container.innerHTML = '<div class="legenda-muted" style="margin-bottom:8px">Últimos '+paraGrafico.length+' dias registrados (manhã + tarde somadas). Passe o dedo/mouse sobre uma barra para ver a data e o total.</div>'
-    + '<div class="cartao"><div style="display:flex; align-items:flex-end; gap:3px; height:110px">'+barras+'</div></div>';
+  const lactacoes = lactacoesDoAnimal(rEv.data || []);
+  if(!lactacoes.length){
+    container.innerHTML = '<div class="legenda-muted">Para montar a curva por dias em lactação, registre o parto (ou a indução de lactação) desta vaca no Controle reprodutivo.</div>';
+    return;
+  }
+  CURVA_LACTACAO = { lactacoes, producao: data, indice: lactacoes.length - 1 };
+  container.innerHTML = curvaLactacaoHTML(lactacoes, CURVA_LACTACAO.indice, data);
 }
 
 const TIPOS_EVENTO = {
