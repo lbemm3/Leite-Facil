@@ -1083,8 +1083,12 @@ async function renderAnimais(){
   const hoje = new Date().toISOString().slice(0,10);
   MEUS_ANIMAIS = data.map(a => ({ ...a, lote: erroEventos ? (a.status||'novilha') : calcularLoteAnimal(a, eventosPorAnimal[a.id], hoje) }));
 
+  const botaoAdicionar = '<button class="botao botao-primario" onclick="abrirCadastroAnimal()">'+iconeInline('vaca',18)+' Adicionar animal</button>';
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Meus animais</div>'
-    + '<button class="botao botao-primario" style="margin-bottom:18px" onclick="abrirCadastroAnimal()">'+iconeInline('vaca',18)+' Adicionar animal</button>';
+    + '<div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:18px">'
+    + botaoAdicionar
+    + (MEUS_ANIMAIS.length ? '<input id="busca-animal" type="search" inputmode="search" placeholder="Buscar pelo número" aria-label="Buscar animal pelo número" autocomplete="off" value="'+escaparHTML(BUSCA_ANIMAL)+'" oninput="buscarAnimal(this.value)" onkeydown="if(event.key===\'Enter\') abrirAnimalDaBusca()" style="flex:1; min-width:150px; border:1.5px solid var(--zinco-claro); border-radius:var(--raio-sm); padding:12px 13px; background:var(--branco); color:var(--tinta)">' : '')
+    + '</div>';
 
   if(MEUS_ANIMAIS.length === 0){
     document.getElementById('tela-animais').innerHTML = cabecalho
@@ -1101,24 +1105,79 @@ async function renderAnimais(){
     + Object.keys(STATUS_ANIMAL).map(k => botaoFiltroLote(k, STATUS_ANIMAL[k].rot, contagens[k])).join('')
     + '</div>';
 
-  const animaisFiltrados = FILTRO_LOTE_ATUAL === 'todos' ? MEUS_ANIMAIS : MEUS_ANIMAIS.filter(a => a.lote === FILTRO_LOTE_ATUAL);
-
-  const linhas = animaisFiltrados.length === 0
-    ? '<div class="legenda-muted">Nenhum animal nesse lote.</div>'
-    : animaisFiltrados.map(a=>{
-        const st = STATUS_ANIMAL[a.lote] || { rot: a.lote || '—', cor:'var(--zinco)' };
-        return '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirEdicaoAnimal('+a.id+')">'
-          + '<div class="avatar">'+iconeInline('vaca',22)+'</div>'
-          + '<div style="flex:1">'
-            + '<div style="font-weight:700; font-size:15px">Nº '+escaparHTML(a.identificacao)+'</div>'
-            + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+escaparHTML(a.grau_sangue||'Grau de sangue não informado')+'</div>'
-          + '</div>'
-          + '<span style="background:'+st.cor+'; color:var(--branco); font-size:11px; font-weight:800; padding:4px 10px; border-radius:999px; text-transform:uppercase">'+st.rot+'</span>'
-          + '</button>';
-      }).join('');
-
-  document.getElementById('tela-animais').innerHTML = cabecalho + abasHTML + linhas;
+  document.getElementById('tela-animais').innerHTML = cabecalho + '<div id="abas-lote-animais">'+abasHTML+'</div><div id="lista-animais"></div>';
+  desenharListaAnimais();
 }
+
+let BUSCA_ANIMAL = '';
+
+// Normaliza para comparar: sem acento, sem diferença de maiúscula e sem espaços nas pontas.
+function normalizarBuscaAnimal(t){
+  return String(t == null ? '' : t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+}
+
+// Filtra pelo número/brinco (trecho em qualquer posição). Os que começam igual ao digitado vêm antes, e o número
+// exato vem primeiro de todos. Sem termo, devolve a lista inteira na ordem original.
+function filtrarAnimaisPorBusca(animais, termo){
+  const t = normalizarBuscaAnimal(termo);
+  if(!t) return animais.slice();
+  const peso = a => {
+    const id = normalizarBuscaAnimal(a.identificacao);
+    if(id === t) return 0;
+    if(id.startsWith(t)) return 1;
+    if(id.includes(t)) return 2;
+    return -1;
+  };
+  return animais.map((a,i)=>({ a, i, p: peso(a) })).filter(x => x.p >= 0)
+    .sort((x,y)=> x.p - y.p || x.i - y.i).map(x => x.a);
+}
+
+function linhaAnimalHTML(a){
+  const st = STATUS_ANIMAL[a.lote] || { rot: a.lote || '—', cor:'var(--zinco)' };
+  return '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirEdicaoAnimal('+a.id+')">'
+    + '<div class="avatar">'+iconeInline('vaca',22)+'</div>'
+    + '<div style="flex:1">'
+      + '<div style="font-weight:700; font-size:15px">Nº '+escaparHTML(a.identificacao)+'</div>'
+      + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+escaparHTML(a.grau_sangue||'Grau de sangue não informado')+'</div>'
+    + '</div>'
+    + '<span style="background:'+st.cor+'; color:var(--branco); font-size:11px; font-weight:800; padding:4px 10px; border-radius:999px; text-transform:uppercase">'+st.rot+'</span>'
+    + '</button>';
+}
+
+// Com texto na busca, ela vale para todos os animais (os filtros de lote ficam escondidos);
+// sem texto, vale o filtro de lote de sempre.
+function desenharListaAnimais(){
+  const alvo = document.getElementById('lista-animais');
+  if(!alvo) return;
+  const buscando = normalizarBuscaAnimal(BUSCA_ANIMAL) !== '';
+  const abas = document.getElementById('abas-lote-animais');
+  if(abas) abas.style.display = buscando ? 'none' : '';
+  if(buscando){
+    const achados = filtrarAnimaisPorBusca(MEUS_ANIMAIS, BUSCA_ANIMAL);
+    alvo.innerHTML = achados.length === 0
+      ? '<div class="legenda-muted">Nenhum animal com o número "'+escaparHTML(BUSCA_ANIMAL.trim())+'".</div>'
+      : '<div class="legenda-muted" style="margin-bottom:10px">'+achados.length+(achados.length===1?' animal encontrado':' animais encontrados')+(achados.length===1?'. Toque nele, ou aperte Enter, para abrir a ficha.':'.')+'</div>' + achados.map(linhaAnimalHTML).join('');
+    return;
+  }
+  const animaisFiltrados = FILTRO_LOTE_ATUAL === 'todos' ? MEUS_ANIMAIS : MEUS_ANIMAIS.filter(a => a.lote === FILTRO_LOTE_ATUAL);
+  alvo.innerHTML = animaisFiltrados.length === 0
+    ? '<div class="legenda-muted">Nenhum animal nesse lote.</div>'
+    : animaisFiltrados.map(linhaAnimalHTML).join('');
+}
+
+function buscarAnimal(texto){
+  BUSCA_ANIMAL = texto;
+  desenharListaAnimais();
+}
+
+// Enter na caixa de busca: abre a ficha se a busca levou a um só animal, ou se há um número exatamente igual ao digitado.
+function abrirAnimalDaBusca(){
+  const achados = filtrarAnimaisPorBusca(MEUS_ANIMAIS, BUSCA_ANIMAL);
+  const t = normalizarBuscaAnimal(BUSCA_ANIMAL);
+  if(!t || !achados.length) return;
+  if(achados.length === 1 || normalizarBuscaAnimal(achados[0].identificacao) === t) abrirEdicaoAnimal(achados[0].id);
+}
+
 
 function botaoFiltroLote(chave, rotulo, contagem){
   const ativo = FILTRO_LOTE_ATUAL === chave;
