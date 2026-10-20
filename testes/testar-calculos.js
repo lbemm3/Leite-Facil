@@ -78,6 +78,7 @@ function carregarFuncoesReais(){
     'MIN_VACAS_DIA_REPETIDO', 'TOLERANCIA_TOTAL_DIA', 'escaparHTML',
     'verificarQualidadeDados', 'montarCartaoQualidadeDados',
     'NOMES_MESES', 'agruparProducaoPorAnoMes', 'formatarLitros',
+    'calcularProducaoDiariaMes', 'limiteEixoGrafico', 'graficoProducaoMesHTML', 'blocoProducaoMesInicioHTML',
     'DIAS_ALERTA_SEM_COBERTURA', 'DIAS_AVISO_SECAGEM', 'DIAS_AVISO_PARTO', 'DIAS_PARTO_ATRASADO_MAX',
     'QUEDA_PRODUCAO_PCT', 'MIN_LITROS_BASE_QUEDA', 'DIAS_BAIXA_QUEDA', 'MAX_DIAS_ADIAR',
     'calcularAcoesDoDia', 'montarCartaoAcoesDoDia',
@@ -832,6 +833,33 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('ano futuro com dados também aparece', futuro.map(x=>x.ano), [2027, 2026]);
     verificar('registros inválidos são ignorados', F.agruparProducaoPorAnoMes([null, {litros_manha:5}], '2026-01-10')[0].meses[0].diasLancados, 0);
     verificar('formatarLitros usa vírgula e 1 casa', [F.formatarLitros(12480), F.formatarLitros(416.666), F.formatarLitros(0)], ['12.480', '416,7', '0']);
+  }
+
+
+  // ---------- Gráfico da produção do mês no Início ----------
+  console.log('\nProdução diária do mês (Início)');
+  {
+    const R = (data, m, t) => ({ data, litros_manha:m, litros_tarde:t });
+    const regs = [R('2026-10-01',100,50), R('2026-10-03',80,'20'), R('2026-10-05',null,60), R('2026-09-30',999,999), R('2026-11-01',999,999), R('2026-10-20',0,0)];
+    const r = F.calcularProducaoDiariaMes(regs, '2026-10-20');
+    verificar('outubro tem 31 dias', r.nDias, 31);
+    verificar('total do mês ignora outros meses', r.total, 150+100+60);
+    verificar('dias lançados contam o dia com zero litro', r.diasLancados, 4);
+    verificar('média por dia lançado', r.media, 310/4);
+    verificar('dia sem lançamento fica null, dia com zero fica 0', [r.dias[1].litros, r.dias[19].litros], [null, 0]);
+    verificar('máximo do mês', r.maximo, 150);
+    verificar('fevereiro de 2028 (bissexto) tem 29 dias', F.calcularProducaoDiariaMes([], '2028-02-10').nDias, 29);
+    verificar('fevereiro de 2026 tem 28 dias', F.calcularProducaoDiariaMes([], '2026-02-10').nDias, 28);
+    verificar('mês sem dados: total 0, média 0', (x => [x.total, x.diasLancados, x.media])(F.calcularProducaoDiariaMes([], '2026-10-20')), [0,0,0]);
+    verificar('registros inválidos são ignorados', F.calcularProducaoDiariaMes([null, {litros_manha:3}, {data:'2026-10-40', litros_manha:3}], '2026-10-20').diasLancados, 0);
+    verificar('limite do eixo é um valor redondo', [0,7,10,11,24,150,380,1200,2600,4999].map(F.limiteEixoGrafico), [10,10,10,20,25,200,500,2000,5000,5000]);
+    const svg = F.graficoProducaoMesHTML(r);
+    verificar('gráfico: uma barra por dia com litros > 0 (3) e um alvo de toque por dia (31)', [(svg.match(/fill="var\(--azul\)"/g)||[]).length, (svg.match(/onclick=/g)||[]).length], [3, 31]);
+    verificar('gráfico tem a linha da média', svg.includes('stroke-dasharray'), true);
+    verificar('sem lançamentos, não há linha de média', F.graficoProducaoMesHTML(F.calcularProducaoDiariaMes([], '2026-10-20')).includes('stroke-dasharray'), false);
+    const bloco = F.blocoProducaoMesInicioHTML(regs, '2026-10-20');
+    verificar('bloco mostra título do mês, total e média', [bloco.includes('Produção de outubro'), bloco.includes('310 L'), bloco.includes('77,5 L')], [true, true, true]);
+    verificar('mês vazio mostra orientação em vez de gráfico', (b => [b.includes('<svg'), b.includes('Ainda não há produção')])(F.blocoProducaoMesInicioHTML([], '2026-10-20')), [false, true]);
   }
 
   console.log('\n' + '-'.repeat(50));
