@@ -78,6 +78,7 @@ function carregarFuncoesReais(){
     'MIN_VACAS_DIA_REPETIDO', 'TOLERANCIA_TOTAL_DIA', 'escaparHTML',
     'verificarQualidadeDados', 'montarCartaoQualidadeDados',
     'NOMES_MESES', 'agruparProducaoPorAnoMes', 'formatarLitros',
+    'CURVA_W', 'CURVA_ESQ', 'CURVA_DIR', 'xMaxCurvaLactacao', 'pontoMaisProximoCurva', 'lactacoesDoAnimal', 'pontosCurvaLactacao', 'resumoCurvaLactacao', 'curvaLactacaoSVG', 'descricaoLactacao', 'curvaLactacaoHTML',
     'calcularProducaoDiariaMes', 'limiteEixoGrafico', 'graficoProducaoMesHTML', 'blocoProducaoMesInicioHTML',
     'DIAS_ALERTA_SEM_COBERTURA', 'DIAS_AVISO_SECAGEM', 'DIAS_AVISO_PARTO', 'DIAS_PARTO_ATRASADO_MAX',
     'QUEDA_PRODUCAO_PCT', 'MIN_LITROS_BASE_QUEDA', 'DIAS_BAIXA_QUEDA', 'MAX_DIAS_ADIAR',
@@ -860,6 +861,54 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     const bloco = F.blocoProducaoMesInicioHTML(regs, '2026-10-20');
     verificar('bloco mostra título do mês, total e média', [bloco.includes('Produção de outubro'), bloco.includes('310 L'), bloco.includes('77,5 L')], [true, true, true]);
     verificar('mês vazio mostra orientação em vez de gráfico', (b => [b.includes('<svg'), b.includes('Ainda não há produção')])(F.blocoProducaoMesInicioHTML([], '2026-10-20')), [false, true]);
+  }
+
+
+  // ---------- Curva de lactação individual ----------
+  console.log('\nCurva de lactação (por dias em lactação)');
+  {
+    const ev = (tipo, data) => ({ tipo, data });
+    const eventos = [ev('parto','2024-01-10'), ev('secagem','2024-11-01'), ev('parto','2025-02-01'), ev('cobertura','2025-05-01'), ev('inducao_lactacao','2026-03-01'), ev('aborto','2025-09-09')];
+    const l = F.lactacoesDoAnimal(eventos);
+    verificar('três lactações (2 partos e 1 indução), em ordem', l.map(x=>[x.numero, x.inicio, x.tipoInicio]), [[1,'2024-01-10','parto'],[2,'2025-02-01','parto'],[3,'2026-03-01','inducao_lactacao']]);
+    verificar('1ª termina na secagem', [l[0].ate, l[0].encerrada], ['2024-11-01', true]);
+    verificar('2ª sem secagem termina no dia anterior à indução', [l[1].ate, l[1].encerrada], ['2026-02-28', true]);
+    verificar('3ª (atual) está em andamento', [l[2].ate, l[2].encerrada], [null, false]);
+    verificar('aborto e cobertura não abrem lactação', l.length, 3);
+    verificar('secagem de uma lactação não fecha a seguinte', F.lactacoesDoAnimal([ev('parto','2025-01-01'), ev('secagem','2024-06-01')])[0].encerrada, false);
+    verificar('secagem depois do próximo parto pertence ao próximo', F.lactacoesDoAnimal([ev('parto','2025-01-01'), ev('parto','2026-01-01'), ev('secagem','2026-09-01')]).map(x=>x.ate), ['2025-12-31','2026-09-01']);
+    verificar('sem parto nem indução: nenhuma lactação', F.lactacoesDoAnimal([ev('cobertura','2025-01-01'), ev('cio','2025-02-01')]), []);
+    verificar('entrada vazia ou nula', [F.lactacoesDoAnimal(null), F.lactacoesDoAnimal([null])], [[], []]);
+
+    const lact = { inicio:'2026-01-01', ate:'2026-01-20' };
+    const P = (data, m, t) => ({ data, litros_manha:m, litros_tarde:t });
+    const prod = [P('2025-12-31',99,99), P('2026-01-01',5,5), P('2026-01-02',8,'7'), P('2026-01-05',20,10), P('2026-01-20',9,null), P('2026-01-21',99,99)];
+    const pts = F.pontosCurvaLactacao(prod, lact);
+    verificar('pontos só dentro da lactação (inclui o primeiro e o último dia)', pts.map(q=>q.data), ['2026-01-01','2026-01-02','2026-01-05','2026-01-20']);
+    verificar('DEL = dias desde o início; litros somam manhã+tarde', pts.map(q=>[q.del, q.litros]), [[0,10],[1,15],[4,30],[19,9]]);
+    verificar('suavização usa vizinhos a até 3 dias de DEL', pts.map(q=>Math.round(q.suave*100)/100), [12.5, 18.33, 22.5, 9]);
+    verificar('lactação aberta aceita registros depois', F.pontosCurvaLactacao(prod, { inicio:'2026-01-01', ate:null }).length, 5);
+    verificar('registros do mesmo dia são somados', F.pontosCurvaLactacao([P('2026-01-03',1,1), P('2026-01-03',2,2)], lact)[0].litros, 6);
+    verificar('sem registros na lactação: sem pontos e sem resumo', [F.pontosCurvaLactacao([], lact), F.resumoCurvaLactacao([])], [[], null]);
+    const rs = F.resumoCurvaLactacao(pts);
+    verificar('resumo: início, pico (da curva suavizada) e último', [rs.inicio, [rs.pico.del, Math.round(rs.pico.litros*100)/100], rs.ultimo, rs.nDias], [{del:0,litros:10}, [4, 22.5], {del:19,litros:9}, 4]);
+    const pico1 = F.resumoCurvaLactacao(F.pontosCurvaLactacao([P('2026-01-01',10,10), P('2026-01-02',10,10), P('2026-01-03',10,10), P('2026-01-04',10,10), P('2026-01-05',40,40), P('2026-01-06',10,10), P('2026-01-07',10,10), P('2026-01-08',10,10), P('2026-01-09',10,10)], { inicio:'2026-01-01', ate:null }));
+    verificar('um dia isolado muito alto não vira o pico sozinho (pico = média móvel)', pico1.pico.litros < 40, true);
+    const P2 = (d, l) => ({ data:d, litros_manha:l, litros_tarde:0 });
+    const sp = F.resumoCurvaLactacao(F.pontosCurvaLactacao([P2('2026-01-01',20), P2('2026-01-02',20), P2('2026-01-03',20), P2('2026-01-04',20), P2('2026-01-05',20), P2('2026-01-20',10), P2('2026-01-21',25), P2('2026-01-22',10)], { inicio:'2026-01-01', ate:null }));
+    verificar('pico fica onde a média de 7 dias é maior, não no maior valor bruto isolado', [sp.pico.del < 10, sp.pico.litros], [true, 20]);
+    const svg = F.curvaLactacaoSVG(pts, rs);
+    verificar('SVG: um ponto por dia registrado, marcador do pico e um único toque no gráfico', [(svg.match(/r="2"/g)||[]).length, (svg.match(/onclick=/g)||[]).length, svg.includes('Pico 22,5 L')], [4, 1, true]);
+    const xDe = del => F.CURVA_ESQ + del / F.xMaxCurvaLactacao(pts) * (F.CURVA_W - F.CURVA_ESQ - F.CURVA_DIR);
+    verificar('eixo x vai até o múltiplo de 30 acima do último DEL (mínimo 90)', [F.xMaxCurvaLactacao(pts), F.xMaxCurvaLactacao([{del:100}]), F.xMaxCurvaLactacao([{del:305}])], [90, 120, 330]);
+    const longo = [{del:0,litros:1,data:'a'},{del:100,litros:1,data:'b'}];
+    verificar('toque usa a escala do eixo real (lactação longa)', F.pontoMaisProximoCurva(longo, F.CURVA_ESQ + 60/120*(F.CURVA_W - F.CURVA_ESQ - F.CURVA_DIR)).del, 100);
+    verificar('toque escolhe o ponto de DEL mais próximo', [F.pontoMaisProximoCurva(pts, xDe(0.5)).del, F.pontoMaisProximoCurva(pts, xDe(3)).del, F.pontoMaisProximoCurva(pts, xDe(15)).del, F.pontoMaisProximoCurva(pts, xDe(80)).del, F.pontoMaisProximoCurva([], 100)], [0, 4, 19, 19, null]);
+    verificar('descrição da lactação', [F.descricaoLactacao(l[0]), F.descricaoLactacao(l[2])], ['1ª lactação · Parto em 10/01/2024 · até 01/11/2024', '3ª lactação · Indução em 01/03/2026 · em andamento']);
+    const h = F.curvaLactacaoHTML(l, 2, [P('2026-03-05',20,10), P('2026-03-06',22,10)]);
+    verificar('HTML: atual por padrão traz seletor com "(atual)" e botões de lactações anteriores', [h.includes('3ª (atual)'), h.includes('selecionarLactacaoCurva(0)'), h.includes('em andamento'), h.includes('<svg')], [true, true, true, true]);
+    verificar('uma lactação só: sem seletor', F.curvaLactacaoHTML([l[0]], 0, [P('2024-02-01',5,5)]).includes('selecionarLactacaoCurva'), false);
+    verificar('lactação sem registros: mensagem, sem gráfico', (x => [x.includes('<svg'), x.includes('Nenhum registro de ordenha')])(F.curvaLactacaoHTML(l, 0, [P('2026-03-05',20,10)])), [false, true]);
   }
 
   console.log('\n' + '-'.repeat(50));
