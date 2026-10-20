@@ -694,8 +694,10 @@ async function renderInicio(){
     + '<div id="bloco-alerta-qualidade-inicio"></div>'
     + '<div id="bloco-o-que-fazer"></div>'
     + '<div id="bloco-avisos-dispensados"></div>'
+    + '<div id="bloco-producao-mes"></div>'
     + '<div id="bloco-alertas-inicio"><div class="legenda-muted">Carregando alertas...</div></div>';
   atualizarAvisosInicio();
+  renderProducaoMesInicio();
   await renderAlertasNoInicio();
 }
 
@@ -2356,6 +2358,95 @@ function agruparProducaoPorAnoMes(registros, hojeIso){
   }));
 }
 
+// Produção diária do mês de hojeIso (um item por dia do mês, litros null onde não houve lançamento).
+// A média é por dia lançado, como na tela de Produção. Registros fora do mês são ignorados.
+function calcularProducaoDiariaMes(registros, hojeIso){
+  const ano = parseInt(hojeIso.slice(0,4), 10), mes = parseInt(hojeIso.slice(5,7), 10);
+  const nDias = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  const prefixo = hojeIso.slice(0,7);
+  const dias = [];
+  for(let d=1; d<=nDias; d++) dias.push({ dia:d, litros:null });
+  (registros || []).forEach(r => {
+    if(!r || !r.data || String(r.data).slice(0,7) !== prefixo) return;
+    const d = parseInt(String(r.data).slice(8,10), 10);
+    if(!(d >= 1 && d <= nDias)) return;
+    dias[d-1].litros = (Number(r.litros_manha)||0) + (Number(r.litros_tarde)||0);
+  });
+  const lancados = dias.filter(x => x.litros !== null);
+  const total = lancados.reduce((t,x)=>t+x.litros, 0);
+  return {
+    ano, mes, nDias, dias, total,
+    diasLancados: lancados.length,
+    media: lancados.length ? total/lancados.length : 0,
+    maximo: lancados.reduce((m,x)=>Math.max(m,x.litros), 0)
+  };
+}
+
+// Menor valor "redondo" (1, 2, 2,5, 5 × 10^n) que comporta o máximo, para o topo do eixo.
+function limiteEixoGrafico(maximo){
+  if(!(maximo > 0)) return 10;
+  const base = Math.pow(10, Math.floor(Math.log10(maximo)));
+  for(const f of [1, 2, 2.5, 5, 10]) if(f*base >= maximo) return f*base;
+  return 10*base;
+}
+
+function mostrarDiaGraficoProducao(dia, litros, mes){
+  const el = document.getElementById('grafico-producao-leitura');
+  if(!el) return;
+  const dd = String(dia).padStart(2,'0');
+  el.textContent = dd + '/' + String(mes).padStart(2,'0') + ': ' + (litros === null ? 'sem lançamento' : formatarLitros(litros) + ' L');
+}
+
+function graficoProducaoMesHTML(res){
+  const W = 320, H = 132, esq = 30, dir = 6, topo = 8, base = 104;
+  const topoEixo = limiteEixoGrafico(res.maximo);
+  const larg = (W - esq - dir) / res.nDias;
+  const y = v => base - (v / topoEixo) * (base - topo);
+  let barras = '', alvos = '', rotulos = '';
+  res.dias.forEach((d,i) => {
+    const x = esq + i*larg;
+    if(d.litros !== null && d.litros > 0){
+      const bw = Math.max(2, larg*0.62), h = base - y(d.litros);
+      barras += '<rect x="'+(x+(larg-bw)/2).toFixed(2)+'" y="'+y(d.litros).toFixed(2)+'" width="'+bw.toFixed(2)+'" height="'+h.toFixed(2)+'" rx="1.5" fill="var(--azul)"/>';
+    }
+    alvos += '<rect x="'+x.toFixed(2)+'" y="'+topo+'" width="'+larg.toFixed(2)+'" height="'+(base-topo)+'" fill="transparent" style="cursor:pointer" onclick="mostrarDiaGraficoProducao('+d.dia+','+(d.litros===null?'null':d.litros)+','+res.mes+')"/>';
+    if(d.dia === 1 || d.dia % 5 === 0) rotulos += '<text x="'+(x+larg/2).toFixed(2)+'" y="'+(base+14)+'" text-anchor="middle" font-size="9" fill="var(--tinta-suave)">'+d.dia+'</text>';
+  });
+  const linhaMedia = res.diasLancados ? '<line x1="'+esq+'" x2="'+(W-dir)+'" y1="'+y(res.media).toFixed(2)+'" y2="'+y(res.media).toFixed(2)+'" stroke="var(--manteiga-escura)" stroke-width="1.5" stroke-dasharray="4 3"/>' : '';
+  const eixo = '<line x1="'+esq+'" x2="'+(W-dir)+'" y1="'+base+'" y2="'+base+'" stroke="var(--zinco)" stroke-width="1"/>'
+    + '<line x1="'+esq+'" x2="'+(W-dir)+'" y1="'+topo+'" y2="'+topo+'" stroke="var(--zinco-claro)" stroke-width="1"/>'
+    + '<text x="'+(esq-4)+'" y="'+(topo+3)+'" text-anchor="end" font-size="9" fill="var(--tinta-suave)">'+formatarLitros(topoEixo)+'</text>'
+    + '<text x="'+(esq-4)+'" y="'+(base+3)+'" text-anchor="end" font-size="9" fill="var(--tinta-suave)">0</text>';
+  return '<svg viewBox="0 0 '+W+' '+H+'" width="100%" role="img" aria-label="Produção diária de leite em '+NOMES_MESES[res.mes-1]+', em litros" style="display:block">'
+    + eixo + barras + linhaMedia + rotulos + alvos + '</svg>';
+}
+
+function blocoProducaoMesInicioHTML(registros, hojeIso){
+  const res = calcularProducaoDiariaMes(registros, hojeIso);
+  const titulo = '<div class="rotulo-secao">Produção de '+NOMES_MESES[res.mes-1].toLowerCase()+'</div>';
+  if(res.diasLancados === 0){
+    return titulo + '<div class="cartao" style="padding:12px 14px"><div class="legenda-muted" style="margin-bottom:0">Ainda não há produção lançada neste mês. Registre a ordenha do dia na aba Produção e o gráfico aparece aqui.</div></div>';
+  }
+  return titulo + '<div class="cartao" style="padding:12px 14px">'
+    + '<div style="display:flex; gap:22px; margin-bottom:8px">'
+      + '<div><div class="legenda-muted" style="margin-bottom:0; font-size:12px">Total no mês</div><div style="font-family:var(--fonte-dados); font-weight:700; font-size:20px; color:var(--azul)">'+formatarLitros(res.total)+' L</div></div>'
+      + '<div><div class="legenda-muted" style="margin-bottom:0; font-size:12px">Média por dia lançado</div><div style="font-family:var(--fonte-dados); font-weight:700; font-size:20px; color:var(--azul)">'+formatarLitros(res.media)+' L</div></div>'
+    + '</div>'
+    + graficoProducaoMesHTML(res)
+    + '<div id="grafico-producao-leitura" class="legenda-muted" style="margin:6px 0 0; font-size:12px">Toque numa barra para ver o dia. A linha tracejada é a média.</div>'
+    + '</div>';
+}
+
+async function renderProducaoMesInicio(){
+  const alvo = document.getElementById('bloco-producao-mes');
+  if(!alvo) return;
+  const hojeIso = new Date().toISOString().slice(0,10);
+  const { data, error } = await buscarTodasAsLinhas(() => sb.from('producao_leite').select('data, litros_manha, litros_tarde')
+    .eq('produtor_id', usuarioAtual.id).gte('data', hojeIso.slice(0,7)+'-01').lte('data', hojeIso).order('data', { ascending:false }));
+  if(error){ alvo.innerHTML = ''; return; }
+  alvo.innerHTML = blocoProducaoMesInicioHTML(data, hojeIso);
+}
+
 function formatarLitros(v){
   return (Math.round(v*10)/10).toLocaleString('pt-BR', { maximumFractionDigits:1 });
 }
@@ -2421,7 +2512,8 @@ function desenharProducaoLitros(){
     return cab + dias;
   }).join('');
 
-  alvo.innerHTML = '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px">'+chips+'</div>' + resumoAno + meses;
+  const como = '<div class="legenda-muted" style="margin:-6px 0 12px">Escolha o ano, toque no mês para ver os dias e toque num dia para corrigir o lançamento.</div>';
+  alvo.innerHTML = como + '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px">'+chips+'</div>' + resumoAno + meses;
 }
 
 async function renderProducao(){
@@ -2440,7 +2532,7 @@ async function renderProducao(){
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Produção de leite</div>'
     + '<button class="botao botao-primario" style="margin-bottom:18px; padding:9px 16px; font-size:13px" onclick="abrirRegistroProducao()">'+iconeInline('gota',15)+' Registrar produção do dia</button>';
 
-  document.getElementById('tela-producao').innerHTML = cabecalho + '<div id="producao-litros"></div>' + renderSecaoQualidade();
+  document.getElementById('tela-producao').innerHTML = cabecalho + '<div class="rotulo-secao">Histórico anual de produção</div><div id="producao-litros"></div>' + renderSecaoQualidade();
   desenharProducaoLitros();
 }
 
