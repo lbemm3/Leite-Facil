@@ -957,6 +957,9 @@ async function montarFichaProdutorHTML(produtorId, permissoes){
     html += (lanc && lanc.length)
       ? lanc.map(l=>'<div class="cartao"><strong>'+formatarDetalhesLancamento(l)+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(l.data)+' · '+(l.tipo==='receita'?'+':'−')+' R$ '+Number(l.valor).toFixed(2)+'</div></div>').join('')
       : '<div class="legenda-muted">Nenhum lançamento registrado.</div>';
+    const rPreco = await buscarPrecoLeiteProdutor(produtorId, !!permissoes.ve_producao);
+    html += '<div class="rotulo-secao">Preço do leite e valor recebido</div>';
+    html += rPreco.erro ? '<div class="legenda-muted">Não foi possível carregar os preços do leite.</div>' : htmlTabelaPrecoLeite(rPreco.linhas);
   }
 
   return html || '<div class="legenda-muted">Nenhum módulo liberado para visualização.</div>';
@@ -2782,6 +2785,53 @@ function opcoesMesesPreco(producao, precos, hojeIso){
 
 function rotuloMesAno(chave){
   return NOMES_MESES[parseInt(chave.slice(5,7),10)-1] + ' de ' + chave.slice(0,4);
+}
+
+// Uma linha por mês com preço informado, do mais recente ao mais antigo, com os valores calculados.
+// producao === null significa "não pude ler a produção" (permissão): então litros e valores ficam null, e não zerados.
+function montarLinhasPrecoLeite(precos, producao){
+  return (precos || []).filter(r => r && r.mes).map(r => {
+    const chave = String(r.mes).slice(0,7);
+    const bruto = Number(r.preco_bruto_litro), liquido = Number(r.preco_liquido_litro);
+    const base = { chave, rotulo: rotuloMesAno(chave), precoBruto: bruto, precoLiquido: liquido };
+    if(producao === null) return { ...base, litros: null, valorBruto: null, valorLiquido: null, imposto: null, impostoPct: null };
+    const litros = litrosDoMes(producao, chave);
+    const v = calcularValoresLeiteMes(litros, bruto, liquido);
+    return { ...base, litros, valorBruto: v.bruto, valorLiquido: v.liquido, imposto: v.imposto, impostoPct: v.impostoPct };
+  }).sort((a,b)=> b.chave.localeCompare(a.chave));
+}
+
+// Busca os preços do produtor e, quando permitido, a produção para calcular. Devolve { linhas } ou { erro }.
+async function buscarPrecoLeiteProdutor(produtorId, podeVerProducao){
+  const rp = await sb.from('preco_leite_mensal').select('*').eq('produtor_id', produtorId);
+  if(rp.error) return { erro: rp.error };
+  const precos = rp.data || [];
+  if(!precos.length) return { linhas: [] };
+  if(!podeVerProducao) return { linhas: montarLinhasPrecoLeite(precos, null) };
+  const primeiro = precos.map(r => String(r.mes)).sort()[0];
+  const rl = await buscarTodasAsLinhas(() => sb.from('producao_leite').select('data, litros_manha, litros_tarde').eq('produtor_id', produtorId).gte('data', primeiro).order('data', { ascending:true }));
+  if(rl.error) return { erro: rl.error };
+  return { linhas: montarLinhasPrecoLeite(precos, rl.data || []) };
+}
+
+// Tabela para a ficha e para o relatório em PDF.
+function htmlTabelaPrecoLeite(linhas){
+  if(!linhas.length) return '<div class="legenda-muted">Nenhum preço informado.</div>';
+  const reais = v => v === null ? '—' : formatarReais(v);
+  return '<table class="tabela-admin"><thead><tr><th>Mês</th><th>Litros</th><th>Bruto/L</th><th>Líquido/L</th><th>Valor bruto</th><th>Valor líquido</th><th>Imposto retido</th></tr></thead><tbody>'
+    + linhas.map(l => '<tr><td>'+escaparHTML(l.rotulo)+'</td><td>'+(l.litros === null ? '—' : formatarLitros(l.litros))+'</td><td>'+formatarReais(l.precoBruto)+'</td><td>'+formatarReais(l.precoLiquido)+'</td><td>'+reais(l.valorBruto)+'</td><td>'+reais(l.valorLiquido)+'</td><td>'+reais(l.imposto)+(l.impostoPct !== null ? ' ('+formatarPercentual(l.impostoPct)+')' : '')+'</td></tr>').join('')
+    + '</tbody></table>'
+    + (linhas.some(l => l.litros === null) ? '<div class="legenda-muted" style="margin-top:6px">Os valores em reais dependem da permissão de Produção, que não foi liberada.</div>' : '');
+}
+
+// Linhas para a aba do Excel.
+function linhasExcelPrecoLeite(linhas){
+  return linhas.map(l => ({
+    mes: l.chave, litros_lancados: l.litros === null ? '' : Math.round(l.litros*10)/10,
+    preco_bruto_litro: l.precoBruto, preco_liquido_litro: l.precoLiquido,
+    valor_bruto: l.valorBruto === null ? '' : l.valorBruto, valor_liquido: l.valorLiquido === null ? '' : l.valorLiquido,
+    imposto_retido: l.imposto === null ? '' : l.imposto, imposto_pct: l.impostoPct === null ? '' : Math.round(l.impostoPct*100)/100
+  }));
 }
 
 let PRECOS_LEITE = [];
@@ -5851,6 +5901,7 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
     pedidos.alimentacao = q('alimentacao_eventos','data'); pedidos.piquetes = q('piquetes','nome'); pedidos.ciclosPastejo = q('ciclos_pastejo','data_entrada');
   }
   if(permissoes.ve_financeiro) pedidos.financeiro = q('financeiro_lancamentos','data');
+  if(permissoes.ve_financeiro) pedidos.precoLeite = buscarPrecoLeiteProdutor(produtorId, !!permissoes.ve_producao).then(r => r.erro ? { data: null, error: r.erro } : { data: r.linhas, error: null });
   const chaves = Object.keys(pedidos);
   const resp = await Promise.all(chaves.map(k=>pedidos[k]));
   const falha = resp.find(r=>r.error);
@@ -5882,6 +5933,7 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
     { aba:'Alimentacao', o_que_e:'Um lançamento por evento de alimentação, por lote (bezerra/novilha/lactante/seca). Quando o alimento é pasto, a coluna piquete traz o nome em vez do código interno.' },
     { aba:'Piquetes / Pastagem_ciclos', o_que_e:'Piquetes cadastrados e o histórico de ciclos de pastejo de cada um (espécie do pasto, altura de entrada/saída, dias de pastejo, estimativa de matéria seca).' },
     { aba:'Demais abas', o_que_e:'Reprodutivo, Sanitario, Qualidade e Financeiro (só se liberado) trazem todos os registros, com o número do animal no lugar do código interno.' },
+    ...(permissoes.ve_financeiro ? [{ aba:'Preco_leite', o_que_e:'Uma linha por mês com preço informado: litros lançados no mês, preço bruto e líquido por litro (da nota fiscal), valor bruto, valor líquido e imposto retido (a diferença, também em % do bruto). Só aparece se o Financeiro estiver liberado.' }] : []),
     { aba:'Gerado em', o_que_e: formatarData(hoje)+' — '+nomeProdutor }
   ]);
 
@@ -5920,6 +5972,7 @@ async function baixarExcelFichaProdutor(produtorId, nomeProdutor, permissoes){
   if(permissoes.ve_producao) aba('Piquetes', limpar(d.piquetes));
   if(permissoes.ve_producao) aba('Pastagem_ciclos', limpar(d.ciclosPastejo));
   if(permissoes.ve_financeiro) aba('Financeiro', limpar(d.financeiro));
+  if(permissoes.ve_financeiro) aba('Preco_leite', linhasExcelPrecoLeite(d.precoLeite));
 
   const nomeArquivo = 'leitefacil_'+(nomeProdutor||'produtor').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_')+'_analise.xlsx';
   XLSX.writeFile(wb, nomeArquivo);
@@ -5982,6 +6035,7 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p, ja
   }
   if(permissoes.ve_estoque) consultas.itensEstoque = sb.from('estoque_itens').select('*').eq('produtor_id', produtorId).order('nome', { ascending:true });
   if(permissoes.ve_financeiro) consultas.lancamentos = sb.from('financeiro_lancamentos').select('*').eq('produtor_id', produtorId).order('data', { ascending:true });
+  if(permissoes.ve_financeiro) consultas.precoLeiteRelatorio = buscarPrecoLeiteProdutor(produtorId, !!permissoes.ve_producao).then(r => r.erro ? { data: null, error: r.erro } : { data: r.linhas, error: null });
 
   const chaves = Object.keys(consultas);
   const resultados = await Promise.all(chaves.map(k=>consultas[k]));
@@ -6083,6 +6137,7 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p, ja
     conteudo += lancamentos.length
       ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Valor</th></tr></thead><tbody>'+lancamentos.map(l=>'<tr><td>'+formatarData(l.data)+'</td><td>'+(l.tipo==='receita'?'Receita':'Despesa')+'</td><td>'+formatarDetalhesLancamento(l)+'</td><td>R$ '+Number(l.valor).toFixed(2)+'</td></tr>').join('')+'</tbody></table>'
       : '<div class="legenda-muted">Nenhum lançamento registrado.</div>';
+    conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Preço do leite e valor recebido</h2>' + htmlTabelaPrecoLeite(dados.precoLeiteRelatorio || []);
   }
 
   imprimirRelatorio(janela, 'Relatório completo — '+escaparHTML(nomeProdutor), conteudo);
