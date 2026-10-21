@@ -270,6 +270,7 @@
       <section class="painel-tela ativa" id="tela-inicio"></section>
       <section class="painel-tela" id="tela-propriedade"></section>
       <section class="painel-tela" id="tela-animais"></section>
+      <section class="painel-tela" id="tela-reproducao"></section>
       <section class="painel-tela" id="tela-perfil"></section>
       <section class="painel-tela" id="tela-producao"></section>
       <section class="painel-tela" id="tela-pesagem"></section>
@@ -638,6 +639,7 @@ function abasAtivas(){
     { id:'tela-inicio', rot:'Início', ic:'casa' },
     { id:'tela-propriedade', rot:'Propriedade', ic:'pino' },
     { id:'tela-animais', rot:'Meus animais', ic:'vaca' },
+    { id:'tela-reproducao', rot:'Reprodução', ic:'coracao' },
     { id:'tela-producao', rot:'Produção', ic:'gota' },
     { id:'tela-pesagem', rot:'Pesagem', ic:'balanca' },
     { id:'tela-estoque', rot:'Estoque', ic:'caixa' },
@@ -671,6 +673,7 @@ async function trocarAba(id){
   if(id === 'tela-inicio') renderInicio();
   if(id === 'tela-propriedade') renderPropriedade();
   if(id === 'tela-animais') renderAnimais();
+  if(id === 'tela-reproducao') renderReproducao();
   if(id === 'tela-producao') renderProducao();
   if(id === 'tela-pesagem') renderPesagem();
   if(id === 'tela-estoque') renderEstoque();
@@ -2048,7 +2051,15 @@ async function renderHistoricoReprodutivo(animalId){
   alvo.innerHTML = previsaoHTML + abortoNatimortoHTML
     + (data.length ? lista : '<div class="legenda-muted">Nenhum evento registrado ainda.</div>')
     + '<button class="botao botao-secundario botao-bloco" onclick="abrirFormularioEvento('+animalId+')">'+iconeInline('coracao',18)+' Adicionar evento reprodutivo</button>';
+  // vindo da aba Reprodução ("Registrar evento"): já abre o formulário, só uma vez
+  if(ABRIR_FORM_EVENTO_ANIMAL === animalId){
+    ABRIR_FORM_EVENTO_ANIMAL = null;
+    abrirFormularioEvento(animalId);
+    const f = document.getElementById('form-evento');
+    if(f && f.scrollIntoView) f.scrollIntoView({ block:'center' });
+  }
 }
+let ABRIR_FORM_EVENTO_ANIMAL = null;
 
 function formatarData(iso){
   if(!iso) return '';
@@ -2707,9 +2718,10 @@ function desenharProducaoLitros(){
 
 async function renderProducao(){
   document.getElementById('tela-producao').innerHTML = '<div class="legenda-muted">Carregando produção...</div>';
-  const [{ data, error }, { data: dadosQualidade, error: erroQualidade }] = await Promise.all([
+  const [{ data, error }, { data: dadosQualidade, error: erroQualidade }, { data: dadosPrecos, error: erroPrecos }] = await Promise.all([
     buscarTodasAsLinhas(() => sb.from('producao_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false })),
-    sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false })
+    sb.from('qualidade_leite').select('*').eq('produtor_id', usuarioAtual.id).order('data', { ascending:false }),
+    sb.from('preco_leite_mensal').select('*').eq('produtor_id', usuarioAtual.id)
   ]);
   if(error){
     document.getElementById('tela-producao').innerHTML = '<div class="rotulo-secao" style="margin-top:0">Produção de leite</div><div class="legenda-muted">'+mensagemErroAmigavel(error, 'carregar a produção')+'</div>';
@@ -2717,12 +2729,142 @@ async function renderProducao(){
   }
   PRODUCAO_LEITE = data;
   QUALIDADE_LEITE = erroQualidade ? [] : dadosQualidade;
+  PRECOS_LEITE_INDISPONIVEL = !!erroPrecos;
+  PRECOS_LEITE = erroPrecos ? [] : (dadosPrecos || []);
 
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Produção de leite</div>'
     + '<button class="botao botao-primario" style="margin-bottom:18px; padding:9px 16px; font-size:13px" onclick="abrirRegistroProducao()">'+iconeInline('gota',15)+' Registrar produção do dia</button>';
 
-  document.getElementById('tela-producao').innerHTML = cabecalho + '<div class="rotulo-secao">Histórico anual de produção</div><div id="producao-litros"></div>' + renderSecaoQualidade();
+  document.getElementById('tela-producao').innerHTML = cabecalho + '<div class="rotulo-secao">Histórico anual de produção</div><div id="producao-litros"></div><div id="bloco-preco-leite"></div>' + renderSecaoQualidade();
   desenharProducaoLitros();
+  desenharBlocoPrecoLeite();
+}
+
+/* ======================= PREÇO DO LEITE E VALOR RECEBIDO (por mês) ======================= */
+const PRECO_MAX_LITRO = 20;   // acima disso, quase certamente é erro de digitação (preço do litro em R$)
+
+function formatarReais(v){
+  return Number(v).toLocaleString('pt-BR', { style:'currency', currency:'BRL' });
+}
+
+// Soma os litros (manhã + tarde) dos registros do mês chaveMes ("2026-10").
+function litrosDoMes(registros, chaveMes){
+  return (registros || []).reduce((t, r) =>
+    (r && r.data && String(r.data).slice(0,7) === chaveMes) ? t + (Number(r.litros_manha)||0) + (Number(r.litros_tarde)||0) : t, 0);
+}
+
+// Valor bruto e líquido do mês (litros × preço por litro, em centavos certos) e o imposto retido, que é a diferença.
+function calcularValoresLeiteMes(litros, precoBruto, precoLiquido){
+  const centavos = v => Math.round(v * 100) / 100;
+  const bruto = centavos(litros * precoBruto);
+  const liquido = centavos(litros * precoLiquido);
+  const imposto = centavos(bruto - liquido);
+  return { litros, bruto, liquido, imposto, impostoPct: bruto > 0 ? imposto / bruto * 100 : null };
+}
+
+// Lê os dois preços digitados (aceita vírgula ou ponto) e confere. Devolve { ok, erro } ou { ok, bruto, liquido }.
+function validarPrecosLeite(brutoTexto, liquidoTexto){
+  const num = t => { const x = String(t == null ? '' : t).trim().replace(',', '.'); return x === '' ? NaN : Number(x); };
+  const bruto = num(brutoTexto), liquido = num(liquidoTexto);
+  if(!(bruto > 0) || !(liquido > 0)) return { ok:false, erro:'Informe o preço bruto e o preço líquido por litro, maiores que zero.' };
+  if(bruto > PRECO_MAX_LITRO || liquido > PRECO_MAX_LITRO) return { ok:false, erro:'Esse preço por litro parece alto demais (mais de R$ '+PRECO_MAX_LITRO+'). Confira se digitou o valor por litro, e não o total da nota.' };
+  if(liquido > bruto) return { ok:false, erro:'O preço líquido não pode ser maior que o bruto.' };
+  return { ok:true, bruto, liquido };
+}
+
+// Meses oferecidos na escolha: os que têm produção, os que já têm preço salvo e o mês atual. Do mais recente ao mais antigo.
+function opcoesMesesPreco(producao, precos, hojeIso){
+  const meses = new Set([hojeIso.slice(0,7)]);
+  (producao || []).forEach(r => { if(r && r.data) meses.add(String(r.data).slice(0,7)); });
+  (precos || []).forEach(r => { if(r && r.mes) meses.add(String(r.mes).slice(0,7)); });
+  return Array.from(meses).sort().reverse();
+}
+
+function rotuloMesAno(chave){
+  return NOMES_MESES[parseInt(chave.slice(5,7),10)-1] + ' de ' + chave.slice(0,4);
+}
+
+let PRECOS_LEITE = [];
+let PRECOS_LEITE_INDISPONIVEL = false;
+let PRECO_MES_SEL = null;
+
+function selecionarMesPreco(chave){ PRECO_MES_SEL = chave; desenharBlocoPrecoLeite(); }
+
+function desenharBlocoPrecoLeite(){
+  const alvo = document.getElementById('bloco-preco-leite');
+  if(!alvo) return;
+  const titulo = '<div class="rotulo-secao">Preço do leite e valor recebido</div>';
+  if(PRECOS_LEITE_INDISPONIVEL){
+    alvo.innerHTML = titulo + '<div class="legenda-muted">Este recurso ainda não está disponível. Avise o suporte para ativá-lo.</div>';
+    return;
+  }
+  const hoje = new Date().toISOString().slice(0,10);
+  const meses = opcoesMesesPreco(PRODUCAO_LEITE, PRECOS_LEITE, hoje);
+  if(!PRECO_MES_SEL || !meses.includes(PRECO_MES_SEL)) PRECO_MES_SEL = hoje.slice(0,7);
+  const salvo = PRECOS_LEITE.find(r => String(r.mes).slice(0,7) === PRECO_MES_SEL) || null;
+  const litros = litrosDoMes(PRODUCAO_LEITE, PRECO_MES_SEL);
+
+  const seletor = '<div class="grupo-campo"><label for="campo-mes-preco">Mês</label><select id="campo-mes-preco" onchange="selecionarMesPreco(this.value)">'
+    + meses.map(m => '<option value="'+m+'"'+(m===PRECO_MES_SEL?' selected':'')+'>'+rotuloMesAno(m)+'</option>').join('') + '</select></div>';
+  const campos = '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px">'
+    + '<div class="grupo-campo" style="margin-bottom:8px"><label for="campo-preco-bruto">Preço bruto por litro (R$)</label><input id="campo-preco-bruto" type="number" inputmode="decimal" step="0.0001" min="0" placeholder="Ex.: 2,35" value="'+(salvo ? Number(salvo.preco_bruto_litro) : '')+'"></div>'
+    + '<div class="grupo-campo" style="margin-bottom:8px"><label for="campo-preco-liquido">Preço líquido por litro (R$)</label><input id="campo-preco-liquido" type="number" inputmode="decimal" step="0.0001" min="0" placeholder="Ex.: 2,20" value="'+(salvo ? Number(salvo.preco_liquido_litro) : '')+'"></div>'
+    + '</div>';
+  const botoes = '<div id="mensagem-preco-leite" class="legenda-muted" style="min-height:18px"></div>'
+    + '<button class="botao botao-primario" style="padding:9px 16px; font-size:13px" onclick="salvarPrecoLeiteMes()">'+(salvo ? 'Atualizar preços do mês' : 'Salvar preços do mês')+'</button>'
+    + (salvo ? ' <button class="botao botao-secundario" style="padding:9px 16px; font-size:13px; color:var(--perigo); border-color:var(--perigo)" onclick="removerPrecoLeiteMes()">Remover</button>' : '');
+
+  let resultado = '';
+  if(salvo){
+    const v = calcularValoresLeiteMes(litros, Number(salvo.preco_bruto_litro), Number(salvo.preco_liquido_litro));
+    const item = (rot, val, cor) => '<div><div class="legenda-muted" style="margin-bottom:0; font-size:12px">'+rot+'</div><div style="font-family:var(--fonte-dados); font-weight:700; font-size:17px; color:'+cor+'">'+val+'</div></div>';
+    resultado = '<div class="cartao" style="padding:12px 14px; margin-top:14px">'
+      + '<div class="legenda-muted" style="margin-bottom:8px">'+rotuloMesAno(PRECO_MES_SEL)+': '+formatarLitros(litros)+' L lançados na aba Produção</div>'
+      + (litros === 0 ? '<div class="legenda-muted" style="margin-bottom:0">Sem produção lançada neste mês, então os valores ficam zerados.</div>' :
+        '<div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px">'
+          + item('Valor bruto', formatarReais(v.bruto), 'var(--azul)')
+          + item('Valor líquido', formatarReais(v.liquido), 'var(--sucesso)')
+          + item('Imposto retido', formatarReais(v.imposto) + (v.impostoPct !== null ? ' <span style="font-size:12px; font-weight:600">('+formatarPercentual(v.impostoPct)+')</span>' : ''), 'var(--perigo)')
+        + '</div>')
+      + '</div>';
+  } else if(litros > 0){
+    resultado = '<div class="legenda-muted" style="margin-top:12px">'+formatarLitros(litros)+' L lançados em '+rotuloMesAno(PRECO_MES_SEL)+'. Informe os preços da nota para ver o valor bruto, o líquido e o imposto retido.</div>';
+  }
+
+  const historico = PRECOS_LEITE.length ? '<div class="legenda-muted" style="margin:16px 0 6px">Meses com preço informado</div>'
+    + PRECOS_LEITE.slice().sort((a,b)=> String(b.mes).localeCompare(String(a.mes))).map(r => {
+        const chave = String(r.mes).slice(0,7);
+        const v = calcularValoresLeiteMes(litrosDoMes(PRODUCAO_LEITE, chave), Number(r.preco_bruto_litro), Number(r.preco_liquido_litro));
+        return linhaCompacta('moeda', rotuloMesAno(chave), 'Bruto '+formatarReais(r.preco_bruto_litro)+' · líquido '+formatarReais(r.preco_liquido_litro)+' por litro', formatarReais(v.liquido), 'selecionarMesPreco(\''+chave+'\')');
+      }).join('') : '';
+
+  alvo.innerHTML = titulo
+    + '<div class="legenda-muted" style="margin-bottom:10px">Informe o preço por litro que consta na nota fiscal do laticínio, bruto e líquido (depois dos descontos). O app multiplica pelos litros lançados no mês e mostra o imposto retido, que é a diferença.</div>'
+    + '<div class="cartao" style="padding:14px">' + seletor + campos + botoes + '</div>'
+    + resultado + historico;
+}
+
+async function salvarPrecoLeiteMes(){
+  const msg = document.getElementById('mensagem-preco-leite');
+  const v = validarPrecosLeite(document.getElementById('campo-preco-bruto').value, document.getElementById('campo-preco-liquido').value);
+  if(!v.ok){ if(msg){ msg.style.color = 'var(--perigo)'; msg.textContent = v.erro; } return; }
+  const mes = PRECO_MES_SEL + '-01';
+  const { data, error } = await sb.from('preco_leite_mensal')
+    .upsert({ produtor_id: usuarioAtual.id, mes, preco_bruto_litro: v.bruto, preco_liquido_litro: v.liquido }, { onConflict: 'produtor_id,mes' })
+    .select().maybeSingle();
+  if(error){ if(msg){ msg.style.color = 'var(--perigo)'; msg.textContent = mensagemErroAmigavel(error, 'salvar os preços'); } return; }
+  const linha = data || { produtor_id: usuarioAtual.id, mes, preco_bruto_litro: v.bruto, preco_liquido_litro: v.liquido };
+  PRECOS_LEITE = PRECOS_LEITE.filter(r => String(r.mes).slice(0,7) !== PRECO_MES_SEL).concat([linha]);
+  desenharBlocoPrecoLeite();
+}
+
+function removerPrecoLeiteMes(){
+  confirmarAcao('Remover os preços de '+rotuloMesAno(PRECO_MES_SEL)+'?', async () => {
+    const { error } = await sb.from('preco_leite_mensal').delete().eq('produtor_id', usuarioAtual.id).eq('mes', PRECO_MES_SEL + '-01');
+    if(error){ avisar(mensagemErroAmigavel(error, 'remover os preços')); return; }
+    PRECOS_LEITE = PRECOS_LEITE.filter(r => String(r.mes).slice(0,7) !== PRECO_MES_SEL);
+    desenharBlocoPrecoLeite();
+  }, { textoConfirmar:'Remover' });
 }
 
 /* ======================= QUALIDADE DO LEITE (CCS/CBT) ======================= */
@@ -3430,6 +3572,170 @@ async function buscarAlertasCalendario(){
 
   alertas.sort((a,b) => a.data.localeCompare(b.data));
   return alertas;
+}
+
+
+/* ======================= ABA REPRODUÇÃO (painel do rebanho) ======================= */
+const DIAS_PAINEL_SECAGEM = 60;   // secagens previstas daqui a mais que isso ainda não aparecem no painel
+const TAMANHO_PAGINA_HISTORICO_REPRO = 30;
+
+function textoPrazoDias(dias){
+  if(dias === 0) return 'hoje';
+  if(dias === 1) return 'amanhã';
+  if(dias === -1) return 'ontem';
+  return dias > 0 ? 'em ' + dias + ' dias' : 'há ' + (-dias) + ' dias';
+}
+
+// Olha o último evento de cada vaca (como o calendário do Início) e separa o que ela espera:
+// parto (cobertura em aberto, a menos que diagnosticada vazia), secagem (depois de parto ou indução) ou cio.
+// Previsões muito antigas (passadas há mais de DIAS_PARTO_ATRASADO_MAX dias) são tratadas como dado antigo.
+function calcularPainelReprodutivo(animais, eventos, hojeIso){
+  const nomes = {};
+  (animais || []).forEach(a => { nomes[a.id] = a.identificacao; });
+  const ultimo = {};
+  (eventos || []).filter(e => e && e.data && nomes[e.animal_id] !== undefined)
+    .sort((x,y)=> x.data.localeCompare(y.data) || (Number(x.id)||0) - (Number(y.id)||0))
+    .forEach(e => { ultimo[e.animal_id] = e; });
+  const partos = [], secagens = [], cios = [];
+  Object.keys(ultimo).forEach(chave => {
+    const ev = ultimo[chave];
+    const base = { animalId: ev.animal_id, identificacao: nomes[ev.animal_id] };
+    const item = (dias) => { const dataPrevista = somarDias(ev.data, dias); return { ...base, dataPrevista, dias: diasEntre(hojeIso, dataPrevista), desde: ev.data }; };
+    if(ev.tipo === 'cobertura'){
+      if(situacaoGestacaoCobertura(ev) === 'vazia') return;
+      const it = item(DIAS_GESTACAO);
+      if(it.dias < -DIAS_PARTO_ATRASADO_MAX) return;
+      partos.push({ ...it, situacao: situacaoGestacaoCobertura(ev), servico: ev.tipo_servico || null });
+    } else if(ev.tipo === 'parto' || ev.tipo === 'inducao_lactacao'){
+      const it = item(DIAS_LACTACAO_ATE_SECAGEM);
+      if(it.dias > DIAS_PAINEL_SECAGEM || it.dias < -DIAS_PARTO_ATRASADO_MAX) return;
+      secagens.push(it);
+    } else if(ev.tipo === 'cio'){
+      const it = item(DIAS_CICLO_ESTRO);
+      if(it.dias < -3) return;   // o ciclo já passou há dias sem novo evento: a previsão deixou de servir
+      cios.push(it);
+    }
+  });
+  const ordenar = (x,y)=> x.dataPrevista.localeCompare(y.dataPrevista) || String(x.identificacao).localeCompare(String(y.identificacao), 'pt-BR', { numeric:true });
+  return { partos: partos.sort(ordenar), secagens: secagens.sort(ordenar), cios: cios.sort(ordenar) };
+}
+
+// Histórico de eventos do rebanho, do mais recente para o mais antigo, com filtro por tipo e limite.
+// Devolve também quantos eventos existem no filtro (para saber se há "mostrar mais").
+function filtrarHistoricoRebanho(eventos, animais, tipo, limite){
+  const nomes = {};
+  (animais || []).forEach(a => { nomes[a.id] = a.identificacao; });
+  const todos = (eventos || []).filter(e => e && e.data && nomes[e.animal_id] !== undefined && (!tipo || tipo === 'todos' || e.tipo === tipo))
+    .sort((x,y)=> y.data.localeCompare(x.data) || (Number(y.id)||0) - (Number(x.id)||0));
+  return { total: todos.length, itens: todos.slice(0, limite).map(e => ({ ...e, identificacao: nomes[e.animal_id] })) };
+}
+
+let REPRO_DADOS = { animais: [], eventos: [] };
+let REPRO_FILTRO_TIPO = 'todos';
+let REPRO_LIMITE = TAMANHO_PAGINA_HISTORICO_REPRO;
+
+function cartaoPrevisaoRepro(it, destaque, extra){
+  const cor = destaque ? 'var(--manteiga-escura)' : 'var(--zinco-claro)';
+  return '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:10px; cursor:pointer; padding:9px 12px; margin-bottom:8px; border-color:'+cor+'" onclick="abrirFichaDoAnimal('+it.animalId+')">'
+    + '<div style="flex:1; min-width:0"><div style="font-weight:700; font-size:14px">Nº '+escaparHTML(it.identificacao)+'</div>'
+    + '<div class="legenda-muted" style="margin-bottom:0; font-size:12px">'+formatarData(it.dataPrevista)+(extra ? ' · '+extra : '')+'</div></div>'
+    + '<span style="font-weight:700; font-size:13px; white-space:nowrap; color:'+(destaque ? 'var(--manteiga-escura)' : 'var(--tinta-suave)')+'">'+textoPrazoDias(it.dias)+'</span>'
+    + '</button>';
+}
+
+function blocoPrevisoesRepro(titulo, itens, vazio, destaqueAte, extraFn){
+  return '<div class="rotulo-secao">'+titulo+'</div>'
+    + (itens.length ? itens.map(it => cartaoPrevisaoRepro(it, it.dias <= destaqueAte, extraFn ? extraFn(it) : '')).join('')
+      : '<div class="legenda-muted" style="margin-bottom:10px">'+vazio+'</div>');
+}
+
+function desenharHistoricoRepro(){
+  const alvo = document.getElementById('historico-repro');
+  if(!alvo) return;
+  const { total, itens } = filtrarHistoricoRebanho(REPRO_DADOS.eventos, REPRO_DADOS.animais, REPRO_FILTRO_TIPO, REPRO_LIMITE);
+  const chip = (chave, rot) => { const ativo = REPRO_FILTRO_TIPO === chave; return '<button onclick="filtrarHistoricoRepro(\''+chave+'\')" style="padding:6px 12px; border-radius:999px; border:1px solid '+(ativo?'var(--azul)':'var(--zinco-claro)')+'; background:'+(ativo?'var(--azul)':'var(--branco)')+'; color:'+(ativo?'var(--branco)':'var(--tinta)')+'; font-size:12.5px; font-weight:700; cursor:pointer">'+rot+'</button>'; };
+  const chips = '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px">' + chip('todos','Todos') + Object.keys(TIPOS_EVENTO).map(k => chip(k, TIPOS_EVENTO_CURTO[k] || TIPOS_EVENTO[k])).join('') + '</div>';
+  const linhas = itens.map(ev => {
+    const det = ev.tipo === 'parto' ? formatarDetalhesParto(ev) : (ev.tipo === 'aborto' ? formatarDetalhesAborto(ev) : (ev.tipo === 'cobertura' ? formatarDetalhesCobertura(ev) : ''));
+    return linhaCompacta('coracao', 'Nº '+escaparHTML(ev.identificacao)+' · '+TIPOS_EVENTO[ev.tipo], formatarData(ev.data)+(det ? ' · '+escaparHTML(det) : '')+(ev.observacoes ? ' · '+escaparHTML(ev.observacoes) : ''), '', 'abrirFichaDoAnimal('+ev.animal_id+')');
+  }).join('');
+  alvo.innerHTML = chips
+    + (itens.length ? linhas : '<div class="legenda-muted">Nenhum evento '+(REPRO_FILTRO_TIPO === 'todos' ? 'registrado ainda' : 'desse tipo')+'.</div>')
+    + (total > itens.length ? '<button class="botao botao-secundario botao-bloco" onclick="mostrarMaisHistoricoRepro()">Mostrar mais ('+(total-itens.length)+' restantes)</button>' : '');
+}
+
+const TIPOS_EVENTO_CURTO = { cio:'Cio', cobertura:'Cobertura', parto:'Parto', inducao_lactacao:'Indução', aborto:'Aborto', secagem:'Secagem' };
+
+function filtrarHistoricoRepro(tipo){ REPRO_FILTRO_TIPO = tipo; REPRO_LIMITE = TAMANHO_PAGINA_HISTORICO_REPRO; desenharHistoricoRepro(); }
+function mostrarMaisHistoricoRepro(){ REPRO_LIMITE += TAMANHO_PAGINA_HISTORICO_REPRO; desenharHistoricoRepro(); }
+
+async function garantirMeusAnimaisCarregados(id){
+  if(!MEUS_ANIMAIS.find(a => a.id === id)) await renderAnimais();
+}
+
+async function abrirFichaDoAnimal(id, abrirFormulario){
+  await garantirMeusAnimaisCarregados(id);
+  if(!MEUS_ANIMAIS.find(a => a.id === id)) return;
+  ABRIR_FORM_EVENTO_ANIMAL = abrirFormulario ? id : null;
+  abrirEdicaoAnimal(id);
+}
+
+function abrirRegistroEventoReproducao(){
+  document.getElementById('conteudo-modal').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Registrar evento reprodutivo</div>'
+    + '<div class="grupo-campo"><label for="campo-busca-evento">Número do animal</label><input id="campo-busca-evento" type="search" inputmode="search" autocomplete="off" placeholder="Digite o número da vaca" oninput="buscarAnimalParaEvento(this.value)" onkeydown="if(event.key===\'Enter\') escolherAnimalParaEvento()"></div>'
+    + '<div id="resultado-busca-evento"><div class="legenda-muted">Digite o número para encontrar a vaca. Depois você escolhe o tipo de evento (cio, cobertura, parto etc.) e a data.</div></div>';
+  abrirModal();
+  const campo = document.getElementById('campo-busca-evento');
+  if(campo) campo.focus();
+}
+
+function buscarAnimalParaEvento(texto){
+  const alvo = document.getElementById('resultado-busca-evento');
+  if(!alvo) return;
+  if(!normalizarBuscaAnimal(texto)){ alvo.innerHTML = '<div class="legenda-muted">Digite o número para encontrar a vaca.</div>'; return; }
+  const achados = filtrarAnimaisPorBusca(REPRO_DADOS.animais, texto);
+  alvo.innerHTML = achados.length === 0
+    ? '<div class="legenda-muted">Nenhum animal com o número "'+escaparHTML(texto.trim())+'".</div>'
+    : achados.slice(0,8).map(a => '<button class="cartao" style="width:100%; text-align:left; cursor:pointer; padding:10px 14px; margin-bottom:8px" onclick="abrirFichaDoAnimal('+a.id+', true)"><strong>Nº '+escaparHTML(a.identificacao)+'</strong></button>').join('')
+      + (achados.length > 8 ? '<div class="legenda-muted">Mostrando 8 de '+achados.length+'. Digite mais do número para refinar.</div>' : '');
+}
+
+function escolherAnimalParaEvento(){
+  const campo = document.getElementById('campo-busca-evento');
+  if(!campo) return;
+  const achados = filtrarAnimaisPorBusca(REPRO_DADOS.animais, campo.value);
+  const t = normalizarBuscaAnimal(campo.value);
+  if(!t || !achados.length) return;
+  if(achados.length === 1 || normalizarBuscaAnimal(achados[0].identificacao) === t) abrirFichaDoAnimal(achados[0].id, true);
+}
+
+async function renderReproducao(){
+  const tela = document.getElementById('tela-reproducao');
+  tela.innerHTML = '<div class="legenda-muted">Carregando reprodução...</div>';
+  const [rAn, rEv] = await Promise.all([
+    buscarTodasAsLinhas(() => sb.from('animais').select('id, identificacao').eq('produtor_id', usuarioAtual.id)),
+    buscarTodasAsLinhas(() => sb.from('eventos_reprodutivos').select('*').eq('produtor_id', usuarioAtual.id))
+  ]);
+  if(rAn.error || rEv.error){
+    tela.innerHTML = '<div class="rotulo-secao" style="margin-top:0">Reprodução</div><div class="legenda-muted">'+mensagemErroAmigavel(rAn.error || rEv.error, 'carregar a reprodução')+'</div>';
+    return;
+  }
+  REPRO_DADOS = { animais: rAn.data, eventos: rEv.data };
+  REPRO_LIMITE = TAMANHO_PAGINA_HISTORICO_REPRO;
+  const hoje = new Date().toISOString().slice(0,10);
+  const painel = calcularPainelReprodutivo(REPRO_DADOS.animais, REPRO_DADOS.eventos, hoje);
+
+  tela.innerHTML = '<div class="rotulo-secao" style="margin-top:0">Reprodução</div>'
+    + '<button class="botao botao-primario" style="margin-bottom:6px" onclick="abrirRegistroEventoReproducao()">'+iconeInline('coracao',18)+' Registrar evento</button>'
+    + '<div class="legenda-muted" style="margin-bottom:6px">Os prazos abaixo são previsões calculadas a partir do último evento de cada vaca. Toque numa vaca para abrir a ficha.</div>'
+    + (REPRO_DADOS.animais.length === 0 ? '<div class="estado-vazio"><div class="ic">'+iconeInline('vaca',28)+'</div><p>Cadastre os animais em "Meus animais" para começar a registrar a reprodução.</p></div>' : (
+      blocoPrevisoesRepro('Partos previstos', painel.partos, 'Nenhuma vaca com cobertura em aberto. Registre uma cobertura para ver a data prevista do parto.', DIAS_AVISO_PARTO,
+        it => (it.situacao === 'confirmada' ? 'gestação confirmada' : 'gestação não confirmada') + (it.servico && TIPOS_SERVICO_CURTO[it.servico] ? ' · '+TIPOS_SERVICO_CURTO[it.servico] : ''))
+      + blocoPrevisoesRepro('Secagens previstas (próximos '+DIAS_PAINEL_SECAGEM+' dias)', painel.secagens, 'Nenhuma secagem prevista para os próximos '+DIAS_PAINEL_SECAGEM+' dias.', DIAS_AVISO_SECAGEM, () => 'lactação de 305 dias')
+      + blocoPrevisoesRepro('Próximos cios previstos', painel.cios, 'Nenhuma vaca com cio recente registrado.', 2, () => 'se não tiver sido coberta')
+      + '<div class="rotulo-secao">Histórico do rebanho</div><div id="historico-repro"></div>'));
+  desenharHistoricoRepro();
 }
 
 /* ======================= ESTOQUE (por categoria) ======================= */
@@ -5839,6 +6145,9 @@ function fecharModal(){
   if(MODAL_BLOQUEADO) return;
   document.getElementById('camada-modal').classList.remove('ativo');
   if(PRODUCAO_DESATUALIZADA){ PRODUCAO_DESATUALIZADA = false; renderProducao(); }
+  // eventos registrados ou apagados na ficha mudam o painel da aba Reprodução
+  const telaRepro = document.getElementById('tela-reproducao');
+  if(telaRepro && telaRepro.classList.contains('ativa')) renderReproducao();
 }
 
 // Substitui o confirm() nativo do navegador por uma caixa com a cara do app.
