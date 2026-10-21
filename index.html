@@ -614,11 +614,16 @@ async function carregarOuCriarPerfilProdutor(){
 
   if(data){
     meuProdutor = data;
+    // Guarda uma cópia do e-mail do login na linha do produtor (o painel admin não lê o sistema de login).
+    if(usuarioAtual.email && data.email !== usuarioAtual.email){
+      const { error: erroEmail } = await sb.from('produtores').update({ email: usuarioAtual.email }).eq('id', usuarioAtual.id);
+      if(!erroEmail) meuProdutor.email = usuarioAtual.email;
+    }
     return;
   }
 
   const nomeInicial = (usuarioAtual.user_metadata && usuarioAtual.user_metadata.nome) || usuarioAtual.email.split('@')[0];
-  const novoPerfil = { id: usuarioAtual.id, nome: nomeInicial };
+  const novoPerfil = { id: usuarioAtual.id, nome: nomeInicial, email: usuarioAtual.email };
   if(aceiteDeTermosNoCadastro) novoPerfil.termos_aceitos_em = new Date().toISOString();
   const { data: criado, error: erroCriar } = await sb.from('produtores')
     .insert(novoPerfil)
@@ -5497,6 +5502,63 @@ async function salvarPerfil(){
   renderInicio();
 }
 
+// Cadastro "sem uso": nenhum animal e nenhuma produção lançada. Quem passar a usar o app deixa de ser sem uso sozinho.
+function ehCadastroSemUso(qtdAnimais, temProducao){
+  return !(Number(qtdAnimais) > 0) && !temProducao;
+}
+
+function diasDesdeCadastro(criadoEm, hoje){
+  if(!criadoEm) return null;
+  const a = Date.parse(String(criadoEm).slice(0,10)+'T00:00:00Z');
+  const b = Date.parse(String(hoje).slice(0,10)+'T00:00:00Z');
+  if(isNaN(a) || isNaN(b)) return null;
+  return Math.max(0, Math.round((b-a)/86400000));
+}
+
+function textoDiasCadastro(dias){
+  if(dias === null) return '—';
+  if(dias === 0) return 'hoje';
+  if(dias === 1) return 'há 1 dia';
+  return 'há '+dias+' dias';
+}
+
+function separarCadastrosSemUso(produtores, contagemAnimais, idsComProducao){
+  const usados = [], semUso = [];
+  (produtores||[]).forEach(p=>{
+    (ehCadastroSemUso((contagemAnimais||{})[p.id], idsComProducao && idsComProducao.has(p.id)) ? semUso : usados).push(p);
+  });
+  return { usados, semUso };
+}
+
+let ADMIN_MOSTRAR_SEM_USO = false;
+
+function htmlTabelaAdmin(d, mostrarSemUso){
+  const hoje = new Date().toISOString().slice(0,10);
+  const sep = separarCadastrosSemUso(d.produtores, d.contagemAnimais, d.idsComProducao);
+  const lista = mostrarSemUso ? d.produtores : sep.usados;
+  const linhas = lista.map(p=>
+    '<tr style="cursor:pointer" onclick="abrirFichaProdutorAdmin(\''+p.id+'\')"><td>'+escaparHTML(p.nome||'—')+(p.admin_financeiro_liberado ? ' <span title="Financeiro liberado" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--sucesso); margin-left:4px"></span>' : '')+'</td><td>'+escaparHTML(p.email||'—')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+textoDiasCadastro(diasDesdeCadastro(p.criado_em, hoje))+'</td><td>'+(d.contagemAnimais[p.id]||0)+'</td><td>'+(d.carenciaPorProdutor[p.id]||0)+'</td><td>'+(d.producaoPorProdutor[p.id] ? d.producaoPorProdutor[p.id].toFixed(0)+' L' : '—')+'</td><td>'+(d.ROTULO_QUALIDADE_ADMIN[d.qualidadePorProdutor[p.id]] || '—')+'</td></tr>'
+  ).join('');
+  let aviso = '';
+  if(sep.semUso.length){
+    const n = sep.semUso.length;
+    aviso = '<div class="legenda-muted" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px">'
+      + '<span>'+(mostrarSemUso ? (n+(n===1?' cadastro sem uso aparece':' cadastros sem uso aparecem')+' na lista') : (n+(n===1?' cadastro sem uso escondido':' cadastros sem uso escondidos'))+' (sem animais e sem produção lançada).')+'</span>'
+      + '<button class="botao botao-secundario" onclick="alternarCadastrosSemUso()">'+(mostrarSemUso ? 'Esconder' : 'Mostrar')+'</button></div>';
+  }
+  const corpo = lista.length
+    ? '<div style="overflow-x:auto"><table class="tabela-admin"><thead><tr><th>Nome</th><th>E-mail</th><th>Propriedade</th><th>Cidade</th><th>Telefone</th><th>Cadastro</th><th>Animais</th><th>Em carência</th><th>Produção (7d)</th><th>Qualidade (90d)</th></tr></thead><tbody>'+linhas+'</tbody></table></div>'
+    : '<div class="legenda-muted" style="margin-bottom:0">'+(d.produtores.length ? 'Nenhum cadastro com uso no momento.' : 'Nenhum produtor cadastrado ainda.')+'</div>';
+  return aviso + corpo;
+}
+
+function alternarCadastrosSemUso(){
+  if(!ADMIN_DADOS_ATUAIS) return;
+  ADMIN_MOSTRAR_SEM_USO = !ADMIN_MOSTRAR_SEM_USO;
+  const el = document.getElementById('admin-tabela');
+  if(el) el.innerHTML = htmlTabelaAdmin(ADMIN_DADOS_ATUAIS, ADMIN_MOSTRAR_SEM_USO);
+}
+
 async function renderAdmin(){
   document.getElementById('tela-admin').innerHTML = '<div class="legenda-muted">Carregando produtores...</div>';
   const hoje = new Date().toISOString().slice(0,10);
@@ -5537,6 +5599,20 @@ async function renderAdmin(){
       producaoPorProdutor[r.produtor_id] = (producaoPorProdutor[r.produtor_id] || 0) + litros;
     });
   }
+  // Quem não tem animal pode ainda ter produção lançada: só esses precisam da consulta extra.
+  const idsComProducao = new Set(produtoresComProducao);
+  const semAnimalIds = data.filter(p => !contagemAnimais[p.id] && !idsComProducao.has(p.id)).map(p=>p.id);
+  if(semAnimalIds.length && !erroAnimais){
+    const { data: prodAntiga, error: erroProdAntiga } = await buscarTodasAsLinhas(() => sb.from('producao_leite').select('id, produtor_id').in('produtor_id', semAnimalIds));
+    if(erroProdAntiga){
+      // Sem certeza, melhor não esconder ninguém.
+      semAnimalIds.forEach(id => idsComProducao.add(id));
+    } else {
+      (prodAntiga||[]).forEach(r => idsComProducao.add(r.produtor_id));
+    }
+  } else if(erroAnimais){
+    data.forEach(p => idsComProducao.add(p.id));
+  }
   const mediaPorProdutor = produtoresComProducao.size ? (producaoTotal7dias/produtoresComProducao.size) : 0;
   const animaisEmCarencia = (!erroCarencias && carenciasAtivas) ? new Set(carenciasAtivas.map(c=>c.animal_id)).size : 0;
   const totalAnimaisRegiao = Object.values(contagemAnimais).reduce((s,n)=>s+n,0);
@@ -5573,12 +5649,9 @@ async function renderAdmin(){
     + '<div class="cartao-estat"><div class="rot">Produtores c/ qualidade em alerta (90d)</div><div class="num">'+produtoresQualidadeAlerta+'</div></div>'
     + '</div>';
 
-  const linhas = data.map(p=>
-    '<tr style="cursor:pointer" onclick="abrirFichaProdutorAdmin(\''+p.id+'\')"><td>'+escaparHTML(p.nome||'—')+(p.admin_financeiro_liberado ? ' <span title="Financeiro liberado" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--sucesso); margin-left:4px"></span>' : '')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+(contagemAnimais[p.id]||0)+'</td><td>'+(carenciaPorProdutor[p.id]||0)+'</td><td>'+(producaoPorProdutor[p.id] ? producaoPorProdutor[p.id].toFixed(0)+' L' : '—')+'</td><td>'+(ROTULO_QUALIDADE_ADMIN[qualidadePorProdutor[p.id]] || '—')+'</td></tr>'
-  ).join('');
   document.getElementById('tela-admin').innerHTML =
     '<div class="rotulo-secao" style="margin-top:0">Painel administrativo</div>'
-    + '<div class="legenda-muted">Visão geral de todos os produtores cadastrados (financeiro só aparece para quem liberou — veja a bolinha verde ao lado do nome). Toque no nome de um produtor para ver a ficha completa dele.</div>'
+    + '<div class="legenda-muted">Visão geral de todos os produtores cadastrados (financeiro só aparece para quem liberou — veja a bolinha verde ao lado do nome). Toque no nome de um produtor para ver a ficha completa dele. Cadastros sem animais e sem produção ficam escondidos por padrão.</div>'
     + cartoesIndicadores
     + '<div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px">'
       + '<button class="botao botao-secundario" onclick="exportarCSVAdmin()">Baixar CSV da região</button>'
@@ -5586,13 +5659,11 @@ async function renderAdmin(){
       + '<button class="botao botao-secundario" onclick="abrirLogsErro()">'+iconeInline('sino',16)+' Ver erros técnicos recentes</button>'
       + '<button class="botao botao-secundario" onclick="abrirLogsAcesso()">'+iconeInline('documento',16)+' Ver registros de acesso</button>'
     + '</div>'
-    + '<div class="cartao">'
-      + (data.length
-        ? '<div style="overflow-x:auto"><table class="tabela-admin"><thead><tr><th>Nome</th><th>Propriedade</th><th>Cidade</th><th>Telefone</th><th>Animais</th><th>Em carência</th><th>Produção (7d)</th><th>Qualidade (90d)</th></tr></thead><tbody>'+linhas+'</tbody></table></div>'
-        : '<div class="legenda-muted" style="margin-bottom:0">Nenhum produtor cadastrado ainda.</div>')
+    + '<div class="cartao"><div id="admin-tabela"></div>'
     + '</div>';
 
-  ADMIN_DADOS_ATUAIS = { produtores:data, contagemAnimais, producaoTotal7dias, mediaPorProdutor, animaisEmCarencia, totalAnimaisRegiao, carenciaPorProdutor, producaoPorProdutor, qualidadePorProdutor, ROTULO_QUALIDADE_ADMIN };
+  ADMIN_DADOS_ATUAIS = { produtores:data, idsComProducao, contagemAnimais, producaoTotal7dias, mediaPorProdutor, animaisEmCarencia, totalAnimaisRegiao, carenciaPorProdutor, producaoPorProdutor, qualidadePorProdutor, ROTULO_QUALIDADE_ADMIN };
+  document.getElementById('admin-tabela').innerHTML = htmlTabelaAdmin(ADMIN_DADOS_ATUAIS, ADMIN_MOSTRAR_SEM_USO);
 }
 
 let ADMIN_DADOS_ATUAIS = null;
@@ -6190,13 +6261,14 @@ function exportarCSVAdmin(){
   if(!ADMIN_DADOS_ATUAIS) return;
   const d = ADMIN_DADOS_ATUAIS;
   const linhas = d.produtores.map(p=>({
-    nome: p.nome||'', propriedade: p.propriedade||'', cidade: p.cidade||'', telefone: p.telefone||'',
+    nome: p.nome||'', email: p.email||'', propriedade: p.propriedade||'', cidade: p.cidade||'', telefone: p.telefone||'',
+    cadastro_em: p.criado_em ? String(p.criado_em).slice(0,10) : '',
     animais: d.contagemAnimais[p.id]||0,
     animais_em_carencia: d.carenciaPorProdutor[p.id]||0,
     producao_7d_litros: d.producaoPorProdutor[p.id] ? d.producaoPorProdutor[p.id].toFixed(1) : '',
     qualidade_90d: d.ROTULO_QUALIDADE_ADMIN[d.qualidadePorProdutor[p.id]] || ''
   }));
-  baixarCSV('leitefacil_produtores.csv', ['nome','propriedade','cidade','telefone','animais','animais_em_carencia','producao_7d_litros','qualidade_90d'], linhas);
+  baixarCSV('leitefacil_produtores.csv', ['nome','email','propriedade','cidade','telefone','cadastro_em','animais','animais_em_carencia','producao_7d_litros','qualidade_90d'], linhas);
 }
 
 function gerarPDFAdmin(){
