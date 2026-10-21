@@ -78,7 +78,8 @@ function carregarFuncoesReais(){
     'MIN_VACAS_DIA_REPETIDO', 'TOLERANCIA_TOTAL_DIA', 'escaparHTML',
     'verificarQualidadeDados', 'montarCartaoQualidadeDados',
     'NOMES_MESES', 'agruparProducaoPorAnoMes', 'formatarLitros',
-    'normalizarBuscaAnimal', 'filtrarAnimaisPorBusca', 'CURVA_W', 'CURVA_ESQ', 'CURVA_DIR', 'xMaxCurvaLactacao', 'pontoMaisProximoCurva', 'lactacoesDoAnimal', 'pontosCurvaLactacao', 'resumoCurvaLactacao', 'curvaLactacaoSVG', 'descricaoLactacao', 'curvaLactacaoHTML',
+    'PRECO_MAX_LITRO', 'formatarReais', 'litrosDoMes', 'calcularValoresLeiteMes', 'validarPrecosLeite', 'opcoesMesesPreco', 'rotuloMesAno',
+    'DIAS_PAINEL_SECAGEM', 'textoPrazoDias', 'calcularPainelReprodutivo', 'filtrarHistoricoRebanho', 'normalizarBuscaAnimal', 'filtrarAnimaisPorBusca', 'CURVA_W', 'CURVA_ESQ', 'CURVA_DIR', 'xMaxCurvaLactacao', 'pontoMaisProximoCurva', 'lactacoesDoAnimal', 'pontosCurvaLactacao', 'resumoCurvaLactacao', 'curvaLactacaoSVG', 'descricaoLactacao', 'curvaLactacaoHTML',
     'calcularProducaoDiariaMes', 'limiteEixoGrafico', 'graficoProducaoMesHTML', 'blocoProducaoMesInicioHTML',
     'DIAS_ALERTA_SEM_COBERTURA', 'DIAS_AVISO_SECAGEM', 'DIAS_AVISO_PARTO', 'DIAS_PARTO_ATRASADO_MAX',
     'QUEDA_PRODUCAO_PCT', 'MIN_LITROS_BASE_QUEDA', 'DIAS_BAIXA_QUEDA', 'MAX_DIAS_ADIAR',
@@ -928,6 +929,83 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('identificação vazia (null) não quebra nem aparece', ids('0'), [1, 3, 8]);
     verificar('a lista original não é alterada', lista.map(a=>a.id), [1,2,3,4,5,6,7,8]);
     verificar('normalizar: texto, número e nulo', [F.normalizarBuscaAnimal(' Á1 '), F.normalizarBuscaAnimal(42), F.normalizarBuscaAnimal(undefined)], ['a1', '42', '']);
+  }
+
+
+  // ---------- Aba Reprodução (painel do rebanho) ----------
+  console.log('\nAba Reprodução');
+  {
+    const hoje = '2026-10-20';
+    const d = n => F.somarDias(hoje, n);
+    const animais = [1,2,3,4,5,6,7,8,9].map(i => ({ id:i, identificacao:String(100+i) }));
+    let seq = 0;
+    const E = (animal_id, tipo, data, extra) => ({ id: ++seq, animal_id, tipo, data, ...(extra||{}) });
+    const eventos = [
+      E(1,'parto', d(-400)), E(1,'cobertura', d(-270)),                         // parto previsto em 13 dias
+      E(2,'cobertura', d(-283)),                                                // parto previsto hoje
+      E(3,'cobertura', d(-290), { diagnostico_gestacao:'vazia', diagnostico_data: d(-250) }), // vazia: sem previsão
+      E(4,'cobertura', d(-100), { diagnostico_gestacao:'prenhe', diagnostico_data: d(-60), tipo_servico:'iatf' }), // parto em 183 dias
+      E(5,'cobertura', d(-340)),                                                // previsão passou há 57 dias: dado antigo
+      E(6,'parto', d(-290)),                                                    // secagem prevista em 15 dias
+      E(7,'parto', d(-100)),                                                    // secagem em 205 dias: fora do painel
+      E(8,'cio', d(-20)),                                                       // próximo cio em 1 dia
+      E(9,'cio', d(-30)),                                                       // ciclo passou há 9 dias: some
+      E(99,'cobertura', d(-100)),                                               // animal que não existe mais
+      E(6,'cio', d(-300)),                                                      // evento antigo do 6, não é o último
+    ];
+    const pn = F.calcularPainelReprodutivo(animais, eventos, hoje);
+    verificar('partos previstos: ordem por data, sem vazia, sem dado antigo e sem animal inexistente', pn.partos.map(x=>[x.identificacao, x.dias]), [['102',0],['101',13],['104',183]]);
+    verificar('parto: situação e tipo de serviço seguem a cobertura', pn.partos.map(x=>[x.situacao, x.servico]), [['presumida',null],['presumida',null],['confirmada','iatf']]);
+    verificar('secagens: só as dos próximos 60 dias (ou atrasadas recentes)', pn.secagens.map(x=>[x.identificacao, x.dias]), [['106',15]]);
+    verificar('cios: só o ciclo ainda atual', pn.cios.map(x=>[x.identificacao, x.dias]), [['108',1]]);
+    verificar('cobertura depois do parto tira a vaca da lista de secagens', pn.secagens.some(x=>x.identificacao==='101'), false);
+    verificar('previsão passada há pouco aparece como atrasada (dias negativos)', F.calcularPainelReprodutivo(animais, [E(1,'cobertura', d(-290))], hoje).partos.map(x=>x.dias), [-7]);
+    verificar('exatamente no limite de dado antigo ainda aparece; um dia depois não', [F.calcularPainelReprodutivo(animais, [E(1,'cobertura', d(-283-45))], hoje).partos.length, F.calcularPainelReprodutivo(animais, [E(1,'cobertura', d(-283-46))], hoje).partos.length], [1, 0]);
+    verificar('secagem atrasada há 45 dias ainda aparece; 46 não', [F.calcularPainelReprodutivo(animais, [E(1,'parto', d(-305-45))], hoje).secagens.length, F.calcularPainelReprodutivo(animais, [E(1,'parto', d(-305-46))], hoje).secagens.length], [1, 0]);
+    verificar('secagem em exatamente 60 dias aparece; em 61 não', [F.calcularPainelReprodutivo(animais, [E(1,'parto', d(-305+60))], hoje).secagens.length, F.calcularPainelReprodutivo(animais, [E(1,'parto', d(-305+61))], hoje).secagens.length], [1, 0]);
+    verificar('indução também prevê secagem', F.calcularPainelReprodutivo(animais, [E(1,'inducao_lactacao', d(-300))], hoje).secagens.map(x=>x.dias), [5]);
+    verificar('último evento aborto ou secagem: nenhuma previsão', (x => [x.partos.length, x.secagens.length, x.cios.length])(F.calcularPainelReprodutivo(animais, [E(1,'cobertura', d(-100)), E(1,'aborto', d(-10)), E(2,'parto', d(-300)), E(2,'secagem', d(-5))], hoje)), [0,0,0]);
+    verificar('mesmo dia: vale o evento de id maior', F.calcularPainelReprodutivo(animais, [E(1,'cio', d(-1)), E(1,'cobertura', d(-1))], hoje).partos.length, 1);
+    verificar('mesmo dia, array em ordem contrária à dos ids: ainda vale o id maior', F.calcularPainelReprodutivo(animais, [{id:5, animal_id:1, tipo:'cobertura', data:d(-1)}, {id:4, animal_id:1, tipo:'cio', data:d(-1)}], hoje).partos.length, 1);
+    verificar('entradas vazias ou nulas', [F.calcularPainelReprodutivo(null, null, hoje), F.calcularPainelReprodutivo(animais, [null], hoje)], [{partos:[],secagens:[],cios:[]}, {partos:[],secagens:[],cios:[]}]);
+    verificar('texto do prazo', [0,1,-1,12,-5].map(F.textoPrazoDias), ['hoje','amanhã','ontem','em 12 dias','há 5 dias']);
+
+    const h = F.filtrarHistoricoRebanho(eventos, animais, 'todos', 4);
+    verificar('histórico: mais recente primeiro, limitado, com o total e sem animal inexistente', [h.itens.map(x=>x.identificacao), h.total], [['108','109','107','104'], 11]);
+    verificar('histórico ordenado do mais recente para o mais antigo', h.itens.every((x,i,a)=> i===0 || a[i-1].data >= x.data), true);
+    verificar('histórico filtrado por tipo', F.filtrarHistoricoRebanho(eventos, animais, 'cio', 50).itens.map(x=>x.identificacao), ['108','109','106']);
+    verificar('histórico: tipo sem eventos', F.filtrarHistoricoRebanho(eventos, animais, 'aborto', 50), { total:0, itens:[] });
+    verificar('histórico: no mesmo dia vale o id maior primeiro', F.filtrarHistoricoRebanho([E(1,'cio','2026-01-01'), E(2,'cio','2026-01-01')], animais, 'todos', 5).itens.map(x=>x.animal_id), [2,1]);
+  }
+
+
+  // ---------- Preço do leite e valor recebido ----------
+  console.log('\nPreço do leite (bruto, líquido e imposto retido)');
+  {
+    const R = (data, m, t) => ({ data, litros_manha:m, litros_tarde:t });
+    const prod = [R('2026-10-01',100,50), R('2026-10-31',200,'50'), R('2026-09-30',999,999), R('2026-11-01',999,999), R('2026-10-15',null,10), null];
+    verificar('litros do mês: soma manhã+tarde só do mês (inclui dia 1 e dia 31, aceita texto e nulo)', F.litrosDoMes(prod, '2026-10'), 410);
+    verificar('mês sem produção: zero', [F.litrosDoMes(prod, '2026-08'), F.litrosDoMes(null, '2026-10')], [0, 0]);
+
+    const v = F.calcularValoresLeiteMes(10000, 2.35, 2.2);
+    verificar('valores: bruto, líquido e imposto = diferença', [v.bruto, v.liquido, v.imposto], [23500, 22000, 1500]);
+    verificar('imposto em % do bruto', Math.round(v.impostoPct*100)/100, 6.38);
+    const c = F.calcularValoresLeiteMes(1234.5, 2.3333, 2.1111);
+    verificar('centavos arredondados e a diferença bate com bruto − líquido', [c.bruto, c.liquido, c.imposto, Math.round((c.bruto - c.liquido)*100)/100], [2880.46, 2606.15, 274.31, 274.31]);
+    verificar('sem litros: tudo zero e sem percentual', (z => [z.bruto, z.liquido, z.imposto, z.impostoPct])(F.calcularValoresLeiteMes(0, 2.3, 2.1)), [0, 0, 0, null]);
+    verificar('bruto igual ao líquido: imposto zero', F.calcularValoresLeiteMes(100, 2, 2).imposto, 0);
+
+    verificar('validação aceita vírgula e ponto', [F.validarPrecosLeite('2,35', '2.2'), F.validarPrecosLeite(' 2,3500 ', '2,2')], [{ok:true, bruto:2.35, liquido:2.2}, {ok:true, bruto:2.35, liquido:2.2}]);
+    verificar('validação recusa vazio, zero, negativo e texto', ['', '0', '-1', 'abc', null].map(x => F.validarPrecosLeite(x, '2').ok), [false, false, false, false, false]);
+    verificar('validação recusa líquido maior que bruto', F.validarPrecosLeite('2', '2,5').ok, false);
+    verificar('validação aceita líquido igual ao bruto', F.validarPrecosLeite('2', '2').ok, true);
+    verificar('validação recusa preço absurdo (total da nota no lugar do preço)', [F.validarPrecosLeite('20', '19').ok, F.validarPrecosLeite('20,01', '19').ok, F.validarPrecosLeite('9500', '8700').ok], [true, false, false]);
+    verificar('mensagens de erro distintas', [F.validarPrecosLeite('', '').erro.includes('maiores que zero'), F.validarPrecosLeite('999','1').erro.includes('alto demais'), F.validarPrecosLeite('2','3').erro.includes('não pode ser maior')], [true, true, true]);
+
+    verificar('opções de mês: produção, preço salvo e mês atual, do mais recente ao mais antigo, sem repetir', F.opcoesMesesPreco([R('2026-08-10',1,1), R('2026-08-11',1,1), R('2026-06-01',1,1)], [{mes:'2026-07-01'}, {mes:'2026-08-01'}], '2026-10-20'), ['2026-10','2026-08','2026-07','2026-06']);
+    verificar('opções de mês sem dados: só o mês atual', F.opcoesMesesPreco(null, null, '2026-10-20'), ['2026-10']);
+    verificar('rótulo do mês', [F.rotuloMesAno('2026-01'), F.rotuloMesAno('2026-12')], ['Janeiro de 2026', 'Dezembro de 2026']);
+    verificar('reais no formato brasileiro', F.formatarReais(1234.5).replace(/\s| /g, ' '), 'R$ 1.234,50');
   }
 
   console.log('\n' + '-'.repeat(50));
