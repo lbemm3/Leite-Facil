@@ -1524,6 +1524,14 @@ function normalizarTipoServico(valor){
 // Indução de lactação: protocolo hormonal que faz uma vaca ou novilha vazia entrar em lactação sem gestação nem parto.
 // A data do evento é a do início da ordenha. Para o app ela abre uma lactação (lote, DEL, previsão de secagem) como um
 // parto abriria, mas não é parto: não conta em partos, paridade, IEP, idade ao 1º parto, natimortos nem gera bezerro.
+// Data prevista de secagem pela duração da lactação (305 dias), para a vaca cujo último evento é o início da
+// lactação. Só vale para lactação que começou em parto. Na indução não há uma duração de referência (a vaca
+// foi seca, induzida e é mantida em ordenha enquanto compensar), então não se prevê secagem por tempo: ela
+// só passa a ser prevista quando houver cobertura (parto previsto menos DIAS_SECA_ANTES_PARTO).
+function dataPrevistaSecagemPorTempo(ev){
+  return (ev && ev.tipo === 'parto' && ev.data) ? somarDias(ev.data, DIAS_LACTACAO_ATE_SECAGEM) : null;
+}
+
 function ehInicioLactacao(e){ return !!e && (e.tipo === 'parto' || e.tipo === 'inducao_lactacao'); }
 
 // A cobertura "em aberto" é a que ainda é o último evento que muda a situação reprodutiva da vaca
@@ -2020,8 +2028,10 @@ async function renderHistoricoReprodutivo(animalId){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Diagnosticada vazia</strong> em '+formatarData(maisRecente.diagnostico_data)+'. Sem previsão de parto; aguardando nova cobertura.</div>';
     } else if(maisRecente.tipo === 'cobertura'){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de parto:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_GESTACAO))+(situacaoGestacaoCobertura(maisRecente) === 'confirmada' ? ' <span class="legenda-muted" style="margin:0">(gestação confirmada)</span>' : ' <span class="legenda-muted" style="margin:0">(gestação ainda não confirmada)</span>')+'</div>';
-    } else if(maisRecente.tipo === 'parto' || maisRecente.tipo === 'inducao_lactacao'){
-      previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de secagem:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_LACTACAO_ATE_SECAGEM))+'</div>';
+    } else if(maisRecente.tipo === 'parto'){
+      previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de secagem:</strong> '+formatarData(dataPrevistaSecagemPorTempo(maisRecente))+'</div>';
+    } else if(maisRecente.tipo === 'inducao_lactacao'){
+      previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Lactação induzida:</strong> sem previsão de secagem por tempo. Ela passa a ser prevista quando houver uma cobertura.</div>';
     } else if(maisRecente.tipo === 'cio'){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de próximo cio:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_CICLO_ESTRO))+' <span class="legenda-muted" style="margin:0">(caso não tenha sido coberta)</span></div>';
     }
@@ -3611,8 +3621,8 @@ async function buscarAlertasCalendario(){
     if(ev.tipo === 'cobertura'){
       if(situacaoGestacaoCobertura(ev) === 'vazia') return;   // diagnosticada vazia: não há parto a prever
       alertas.push({ data: somarDias(ev.data, DIAS_GESTACAO), titulo: 'Previsão de parto', animal: mapaAnimais[ev.animal_id] });
-    } else if(ev.tipo === 'parto' || ev.tipo === 'inducao_lactacao'){
-      alertas.push({ data: somarDias(ev.data, DIAS_LACTACAO_ATE_SECAGEM), titulo: 'Previsão de secagem', animal: mapaAnimais[ev.animal_id] });
+    } else if(ev.tipo === 'parto'){
+      alertas.push({ data: dataPrevistaSecagemPorTempo(ev), titulo: 'Previsão de secagem', animal: mapaAnimais[ev.animal_id] });
     } else if(ev.tipo === 'cio'){
       alertas.push({ data: somarDias(ev.data, DIAS_CICLO_ESTRO), titulo: 'Previsão de próximo cio', animal: mapaAnimais[ev.animal_id] });
     }
@@ -3662,7 +3672,7 @@ function calcularPainelReprodutivo(animais, eventos, hojeIso){
       const it = item(DIAS_GESTACAO);
       if(it.dias < -DIAS_PARTO_ATRASADO_MAX) return;
       partos.push({ ...it, situacao: situacaoGestacaoCobertura(ev), servico: ev.tipo_servico || null });
-    } else if(ev.tipo === 'parto' || ev.tipo === 'inducao_lactacao'){
+    } else if(ev.tipo === 'parto'){
       const it = item(DIAS_LACTACAO_ATE_SECAGEM);
       if(it.dias > DIAS_PAINEL_SECAGEM || it.dias < -DIAS_PARTO_ATRASADO_MAX) return;
       secagens.push(it);
@@ -5376,8 +5386,8 @@ function renderPerfil(){
       + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Para editar os dados da propriedade (estado, município, área, alimentos produzidos, etc.), use a aba "Propriedade".</div>'
     + '</div>'
     + '<div class="rotulo-secao">Compartilhar meus dados</div>'
-    + '<div class="legenda-muted">Convide um veterinário ou sócio para ver os dados que você escolher, com a própria conta de login.</div>'
-    + '<button class="botao botao-secundario" style="margin-bottom:14px" onclick="abrirConviteColaborador()">'+iconeInline('compartilhar',18)+' Convidar alguém</button>'
+    + '<div class="legenda-muted">Dê acesso a um veterinário ou sócio para ver os dados que você escolher, com a própria conta de login. O LeiteFácil não envia e-mail: avise a pessoa, que passa a ter acesso ao entrar no app com o e-mail informado (se ainda não tiver conta, ela cria uma com esse mesmo e-mail).</div>'
+    + '<button class="botao botao-secundario" style="margin-bottom:14px" onclick="abrirConviteColaborador()">'+iconeInline('compartilhar',18)+' Liberar acesso para alguém</button>'
     + '<div id="lista-colaboradores"><div class="legenda-muted">Carregando...</div></div>'
     + '<button class="botao-perigo-fino" onclick="sair()">'+iconeInline('sair',16)+' Sair da conta</button>';
   renderListaColaboradores();
@@ -5391,7 +5401,7 @@ async function renderListaColaboradores(){
   if(error){ alvo.innerHTML = '<div class="legenda-muted">Não foi possível carregar.</div>'; return; }
   if(!data.length){ alvo.innerHTML = '<div class="legenda-muted">Nenhuma pessoa convidada ainda.</div>'; return; }
 
-  const rotuloStatus = { pendente:'Convite pendente', ativo:'Ativo', revogado:'Revogado' };
+  const rotuloStatus = { pendente:'Aguardando o primeiro acesso', ativo:'Ativo', revogado:'Revogado' };
   alvo.innerHTML = data.map(c=>{
     const modulos = Object.keys(PERMISSOES_COLABORADOR).filter(k=>c[k]).map(k=>PERMISSOES_COLABORADOR[k]).join(', ') || 'Nenhum módulo';
     const acao = c.status === 'revogado'
@@ -5400,6 +5410,7 @@ async function renderListaColaboradores(){
     return '<div class="cartao">'
       + '<strong>'+escaparHTML(c.email)+'</strong> — '+rotuloStatus[c.status]
       + '<div class="legenda-muted" style="margin-bottom:6px; font-size:13px">Vê: '+modulos+'</div>'
+      + (c.status === 'pendente' ? '<div class="legenda-muted" style="margin-bottom:6px; font-size:13px">Nenhum e-mail foi enviado. Avise a pessoa: o acesso começa quando ela entrar no LeiteFácil com este e-mail.</div>' : '')
       + acao
       + '</div>';
   }).join('');
@@ -5407,14 +5418,14 @@ async function renderListaColaboradores(){
 
 function abrirConviteColaborador(){
   document.getElementById('conteudo-modal').innerHTML =
-    '<div class="rotulo-secao" style="margin-top:0">Convidar veterinário/sócio</div>'
-    + '<div class="grupo-campo"><label for="campo-email-colaborador">E-mail da pessoa</label><input id="campo-email-colaborador" type="email" placeholder="nome@exemplo.com"></div>'
+    '<div class="rotulo-secao" style="margin-top:0">Liberar acesso a veterinário ou sócio</div>'
+    + '<div class="grupo-campo"><label for="campo-email-colaborador">E-mail da pessoa</label><input id="campo-email-colaborador" type="email" placeholder="nome@exemplo.com"><div class="legenda-muted" style="font-size:12px; margin-top:4px">Nenhum e-mail é enviado. O acesso começa quando a pessoa entrar no LeiteFácil com este mesmo e-mail.</div></div>'
     + '<div class="rotulo-secao">O que essa pessoa pode ver</div>'
     + Object.keys(PERMISSOES_COLABORADOR).map(k=>
         '<label class="item-servico-extra"><input type="checkbox" id="chk-'+k+'" '+(k==='ve_animais'||k==='ve_reprodutivo'||k==='ve_sanitario'?'checked':'')+'><span>'+PERMISSOES_COLABORADOR[k]+'</span></label>'
       ).join('')
     + '<div id="mensagem-convite" class="legenda-muted" style="min-height:18px; margin-top:10px"></div>'
-    + '<button class="botao botao-primario botao-bloco" onclick="salvarConviteColaborador()">Enviar convite</button>';
+    + '<button class="botao botao-primario botao-bloco" onclick="salvarConviteColaborador()">Liberar acesso</button>';
   abrirModal();
 }
 
@@ -5426,7 +5437,7 @@ async function salvarConviteColaborador(){
   const permissoes = {};
   Object.keys(PERMISSOES_COLABORADOR).forEach(k=>{ permissoes[k] = document.getElementById('chk-'+k).checked; });
 
-  msg.textContent = 'Enviando convite...';
+  msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
 
   const { error } = await sb.from('colaboradores').insert({ produtor_id: usuarioAtual.id, email, ...permissoes, status:'pendente' });
