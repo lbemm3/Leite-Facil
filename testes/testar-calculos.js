@@ -78,7 +78,7 @@ function carregarFuncoesReais(){
     'MIN_VACAS_DIA_REPETIDO', 'TOLERANCIA_TOTAL_DIA', 'escaparHTML',
     'verificarQualidadeDados', 'montarCartaoQualidadeDados',
     'NOMES_MESES', 'agruparProducaoPorAnoMes', 'formatarLitros',
-    'formatarPercentual', 'montarLinhasPrecoLeite', 'htmlTabelaPrecoLeite', 'linhasExcelPrecoLeite', 'PRECO_MAX_LITRO', 'formatarReais', 'litrosDoMes', 'calcularValoresLeiteMes', 'validarPrecosLeite', 'opcoesMesesPreco', 'rotuloMesAno',
+    'formatarPercentual', 'montarLinhasPrecoLeite', 'filtrarLinhasPrecoPorPeriodo', 'htmlTabelaPrecoLeite', 'linhasExcelPrecoLeite', 'PRECO_MAX_LITRO', 'formatarReais', 'litrosDoMes', 'calcularValoresLeiteMes', 'validarPrecosLeite', 'opcoesMesesPreco', 'rotuloMesAno',
     'DIAS_PAINEL_SECAGEM', 'textoPrazoDias', 'calcularPainelReprodutivo', 'filtrarHistoricoRebanho', 'normalizarBuscaAnimal', 'filtrarAnimaisPorBusca', 'CURVA_W', 'CURVA_ESQ', 'CURVA_DIR', 'xMaxCurvaLactacao', 'pontoMaisProximoCurva', 'lactacoesDoAnimal', 'pontosCurvaLactacao', 'resumoCurvaLactacao', 'curvaLactacaoSVG', 'descricaoLactacao', 'curvaLactacaoHTML',
     'calcularProducaoDiariaMes', 'limiteEixoGrafico', 'graficoProducaoMesHTML', 'blocoProducaoMesInicioHTML',
     'DIAS_ALERTA_SEM_COBERTURA', 'DIAS_AVISO_SECAGEM', 'DIAS_AVISO_PARTO', 'DIAS_PARTO_ATRASADO_MAX',
@@ -1013,6 +1013,8 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('sem permissão de produção: litros e valores são nulos (nunca zero), preços aparecem', [sem[0].litros, sem[0].valorBruto, sem[0].imposto, sem[0].impostoPct, sem[0].precoBruto], [null, null, null, null, 2.5]);
     verificar('lista vazia ou nula', [F.montarLinhasPrecoLeite([], prod), F.montarLinhasPrecoLeite(null, prod)], [[], []]);
     const th = F.htmlTabelaPrecoLeite(ln);
+    const tres = F.montarLinhasPrecoLeite([{mes:'2026-07-01',preco_bruto_litro:2,preco_liquido_litro:1.9},{mes:'2026-08-01',preco_bruto_litro:2,preco_liquido_litro:1.9},{mes:'2026-09-01',preco_bruto_litro:2,preco_liquido_litro:1.9}], []);
+    verificar('período: pega do mês do início ao mês do fim, inclusive, mesmo com datas no meio do mês', [F.filtrarLinhasPrecoPorPeriodo(tres,'2026-08-15','2026-09-02').map(x=>x.chave), F.filtrarLinhasPrecoPorPeriodo(tres,'2026-07-31','2026-07-31').map(x=>x.chave), F.filtrarLinhasPrecoPorPeriodo(tres,'2026-10-01','2026-10-31').length, F.filtrarLinhasPrecoPorPeriodo(tres,'2026-01-01','2026-06-30').length, F.filtrarLinhasPrecoPorPeriodo(null,'2026-01-01','2026-12-31')], [['2026-09','2026-08'], ['2026-07'], 0, 0, []]);
     verificar('tabela: cabeçalho, mês, valores em reais e imposto com percentual', [th.includes('Valor líquido'), th.includes('Outubro de 2026'), th.replace(/\u00a0/g, ' ').includes('R$ 1.025,00'), th.includes('(8,0%)')], [true, true, true, true]);
     verificar('tabela sem permissão de produção mostra traço e a explicação', (t => [t.includes('—'), t.includes('permissão de Produção')])(F.htmlTabelaPrecoLeite(sem)), [true, true]);
     verificar('tabela sem preços: mensagem', F.htmlTabelaPrecoLeite([]).includes('Nenhum preço informado'), true);
