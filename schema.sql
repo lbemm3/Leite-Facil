@@ -512,6 +512,31 @@ create policy "Produtor gerencia seus avisos dispensados" on avisos_dispensados 
   with check (auth.uid() = produtor_id);
 
 
+-- ============================== preco_leite_mensal ==============================
+-- Preço do litro de leite recebido em cada mês, bruto e líquido (valores da nota fiscal
+-- do laticínio). Criada em 20/10/2026 por criar-preco-leite-mensal.sql, que também cria
+-- a chave primária (id, identity), a restrição única (produtor_id, mes) e as validações:
+-- mes é sempre o dia 1; preços > 0; líquido <= bruto. Mesma regra de acesso do Financeiro.
+create table preco_leite_mensal (
+  id                   bigint not null,
+  produtor_id          uuid not null,
+  mes                  date not null,
+  preco_bruto_litro    numeric not null,
+  preco_liquido_litro  numeric not null,
+  criado_em            timestamptz not null default now()
+);
+
+alter table preco_leite_mensal enable row level security;
+create policy "Produtor gerencia seus precos de leite" on preco_leite_mensal for all to public
+  using (auth.uid() = produtor_id)
+  with check (auth.uid() = produtor_id);
+create policy "Colaborador ve precos de leite liberados" on preco_leite_mensal for select to public
+  using (exists (select 1 from colaboradores c where c.produtor_id = preco_leite_mensal.produtor_id and c.user_id = auth.uid() and c.status = 'ativo' and c.ve_financeiro = true));
+create policy "Admin ve precos de leite com consentimento" on preco_leite_mensal for select to public
+  using (exists (select 1 from administradores a where a.user_id = auth.uid())
+         and exists (select 1 from produtores p where p.id = preco_leite_mensal.produtor_id and p.admin_financeiro_liberado = true));
+
+
 -- ============================== logs_erro ==============================
 -- Monitoramento de erros (Fase 1 do diagnóstico técnico): qualquer erro de
 -- JavaScript não tratado no app é gravado aqui automaticamente.
