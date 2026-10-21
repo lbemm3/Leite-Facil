@@ -44,6 +44,7 @@ create table produtores (
   propriedade                   text,
   cidade                        text,
   telefone                      text,
+  email                         text,
   criado_em                     timestamptz default now(),
   termos_aceitos_em             timestamptz,
   estado                        text,
