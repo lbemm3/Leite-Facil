@@ -78,7 +78,7 @@ function carregarFuncoesReais(){
     'MIN_VACAS_DIA_REPETIDO', 'TOLERANCIA_TOTAL_DIA', 'escaparHTML',
     'verificarQualidadeDados', 'montarCartaoQualidadeDados',
     'NOMES_MESES', 'agruparProducaoPorAnoMes', 'formatarLitros',
-    'PRECO_MAX_LITRO', 'formatarReais', 'litrosDoMes', 'calcularValoresLeiteMes', 'validarPrecosLeite', 'opcoesMesesPreco', 'rotuloMesAno',
+    'formatarPercentual', 'montarLinhasPrecoLeite', 'htmlTabelaPrecoLeite', 'linhasExcelPrecoLeite', 'PRECO_MAX_LITRO', 'formatarReais', 'litrosDoMes', 'calcularValoresLeiteMes', 'validarPrecosLeite', 'opcoesMesesPreco', 'rotuloMesAno',
     'DIAS_PAINEL_SECAGEM', 'textoPrazoDias', 'calcularPainelReprodutivo', 'filtrarHistoricoRebanho', 'normalizarBuscaAnimal', 'filtrarAnimaisPorBusca', 'CURVA_W', 'CURVA_ESQ', 'CURVA_DIR', 'xMaxCurvaLactacao', 'pontoMaisProximoCurva', 'lactacoesDoAnimal', 'pontosCurvaLactacao', 'resumoCurvaLactacao', 'curvaLactacaoSVG', 'descricaoLactacao', 'curvaLactacaoHTML',
     'calcularProducaoDiariaMes', 'limiteEixoGrafico', 'graficoProducaoMesHTML', 'blocoProducaoMesInicioHTML',
     'DIAS_ALERTA_SEM_COBERTURA', 'DIAS_AVISO_SECAGEM', 'DIAS_AVISO_PARTO', 'DIAS_PARTO_ATRASADO_MAX',
@@ -1004,6 +1004,22 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
 
     verificar('opções de mês: produção, preço salvo e mês atual, do mais recente ao mais antigo, sem repetir', F.opcoesMesesPreco([R('2026-08-10',1,1), R('2026-08-11',1,1), R('2026-06-01',1,1)], [{mes:'2026-07-01'}, {mes:'2026-08-01'}], '2026-10-20'), ['2026-10','2026-08','2026-07','2026-06']);
     verificar('opções de mês sem dados: só o mês atual', F.opcoesMesesPreco(null, null, '2026-10-20'), ['2026-10']);
+    const precos = [{ mes:'2026-08-01', preco_bruto_litro:'2.4', preco_liquido_litro:'2.2' }, { mes:'2026-10-01', preco_bruto_litro:2.5, preco_liquido_litro:2.3 }, null, { preco_bruto_litro:1 }];
+    const ln = F.montarLinhasPrecoLeite(precos, prod);
+    verificar('ficha: um item por mês com preço, mais recente primeiro; ignora linhas inválidas', ln.map(x=>x.chave), ['2026-10','2026-08']);
+    verificar('ficha: outubro tem 410 L, bruto 1.025, líquido 943, imposto 82', [ln[0].litros, ln[0].valorBruto, ln[0].valorLiquido, ln[0].imposto], [410, 1025, 943, 82]);
+    verificar('ficha: mês com preço e sem produção fica zerado (não some)', [ln[1].litros, ln[1].valorBruto, ln[1].imposto], [0, 0, 0]);
+    const sem = F.montarLinhasPrecoLeite(precos, null);
+    verificar('sem permissão de produção: litros e valores são nulos (nunca zero), preços aparecem', [sem[0].litros, sem[0].valorBruto, sem[0].imposto, sem[0].impostoPct, sem[0].precoBruto], [null, null, null, null, 2.5]);
+    verificar('lista vazia ou nula', [F.montarLinhasPrecoLeite([], prod), F.montarLinhasPrecoLeite(null, prod)], [[], []]);
+    const th = F.htmlTabelaPrecoLeite(ln);
+    verificar('tabela: cabeçalho, mês, valores em reais e imposto com percentual', [th.includes('Valor líquido'), th.includes('Outubro de 2026'), th.replace(/\u00a0/g, ' ').includes('R$ 1.025,00'), th.includes('(8,0%)')], [true, true, true, true]);
+    verificar('tabela sem permissão de produção mostra traço e a explicação', (t => [t.includes('—'), t.includes('permissão de Produção')])(F.htmlTabelaPrecoLeite(sem)), [true, true]);
+    verificar('tabela sem preços: mensagem', F.htmlTabelaPrecoLeite([]).includes('Nenhum preço informado'), true);
+    verificar('tabela escapa HTML do rótulo (não há entrada de usuário, mas o rótulo passa por escape)', F.htmlTabelaPrecoLeite([{ ...ln[0], rotulo:'<b>x</b>' }]).includes('<b>x</b>'), false);
+    verificar('excel: colunas e valores arredondados', F.linhasExcelPrecoLeite(ln)[0], { mes:'2026-10', litros_lancados:410, preco_bruto_litro:2.5, preco_liquido_litro:2.3, valor_bruto:1025, valor_liquido:943, imposto_retido:82, imposto_pct:8 });
+    verificar('excel: percentual com duas casas', F.linhasExcelPrecoLeite(F.montarLinhasPrecoLeite([{ mes:'2026-10-01', preco_bruto_litro:2.35, preco_liquido_litro:2.2 }], [{ data:'2026-10-02', litros_manha:5000, litros_tarde:5000 }]))[0].imposto_pct, 6.38);
+    verificar('excel sem produção: células vazias, não zero', (o => [o.litros_lancados, o.valor_bruto, o.imposto_retido, o.imposto_pct, o.preco_bruto_litro])(F.linhasExcelPrecoLeite(sem)[0]), ['', '', '', '', 2.5]);
     verificar('rótulo do mês', [F.rotuloMesAno('2026-01'), F.rotuloMesAno('2026-12')], ['Janeiro de 2026', 'Dezembro de 2026']);
     verificar('reais no formato brasileiro', F.formatarReais(1234.5).replace(/\s| /g, ' '), 'R$ 1.234,50');
   }
