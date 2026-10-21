@@ -88,7 +88,7 @@ function carregarFuncoesReais(){
     'DIAS_CARENCIA_LIMPEZA_AVISOS', 'chavesDosGrupos', 'classificarAvisosDispensados',
     'DIAS_ALERTA_VAZIA_SEM_COBERTURA', 'DIAS_ALERTA_SEM_DIAGNOSTICO', 'DIAS_MAX_AVISO_SEM_DIAGNOSTICO', 'DIAS_MAX_DIAGNOSTICO', 'situacaoGestacaoCobertura', 'coberturaEmAberto',
     'validarDiagnosticoGestacao', 'formatarDetalhesCobertura', 'formatarData', 'montarCartaoGrupo1',
-    'ehInicioLactacao', 'TIPOS_SERVICO', 'TIPOS_SERVICO_CURTO', 'normalizarTipoServico', 'opcoesTipoServicoHTML', 'linhaConcepcaoPorServico'
+    'ehInicioLactacao', 'dataPrevistaSecagemPorTempo', 'TIPOS_SERVICO', 'TIPOS_SERVICO_CURTO', 'normalizarTipoServico', 'opcoesTipoServicoHTML', 'linhaConcepcaoPorServico'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -963,7 +963,9 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('exatamente no limite de dado antigo ainda aparece; um dia depois não', [F.calcularPainelReprodutivo(animais, [E(1,'cobertura', d(-283-45))], hoje).partos.length, F.calcularPainelReprodutivo(animais, [E(1,'cobertura', d(-283-46))], hoje).partos.length], [1, 0]);
     verificar('secagem atrasada há 45 dias ainda aparece; 46 não', [F.calcularPainelReprodutivo(animais, [E(1,'parto', d(-305-45))], hoje).secagens.length, F.calcularPainelReprodutivo(animais, [E(1,'parto', d(-305-46))], hoje).secagens.length], [1, 0]);
     verificar('secagem em exatamente 60 dias aparece; em 61 não', [F.calcularPainelReprodutivo(animais, [E(1,'parto', d(-305+60))], hoje).secagens.length, F.calcularPainelReprodutivo(animais, [E(1,'parto', d(-305+61))], hoje).secagens.length], [1, 0]);
-    verificar('indução também prevê secagem', F.calcularPainelReprodutivo(animais, [E(1,'inducao_lactacao', d(-300))], hoje).secagens.map(x=>x.dias), [5]);
+    verificar('indução sem cobertura não prevê secagem por tempo (nem no painel, nem no calendário)', F.calcularPainelReprodutivo(animais, [E(1,'inducao_lactacao', d(-300))], hoje).secagens, []);
+    verificar('parto continua prevendo secagem aos 305 dias', F.calcularPainelReprodutivo(animais, [E(1,'parto', d(-300))], hoje).secagens.map(x=>x.dias), [5]);
+    verificar('data prevista de secagem por tempo: só parto', [F.dataPrevistaSecagemPorTempo({tipo:'parto', data:'2026-01-01'}), F.dataPrevistaSecagemPorTempo({tipo:'inducao_lactacao', data:'2026-01-01'}), F.dataPrevistaSecagemPorTempo({tipo:'cobertura', data:'2026-01-01'}), F.dataPrevistaSecagemPorTempo(null), F.dataPrevistaSecagemPorTempo({tipo:'parto'})], ['2026-11-02', null, null, null, null]);
     verificar('último evento aborto ou secagem: nenhuma previsão', (x => [x.partos.length, x.secagens.length, x.cios.length])(F.calcularPainelReprodutivo(animais, [E(1,'cobertura', d(-100)), E(1,'aborto', d(-10)), E(2,'parto', d(-300)), E(2,'secagem', d(-5))], hoje)), [0,0,0]);
     verificar('mesmo dia: vale o evento de id maior', F.calcularPainelReprodutivo(animais, [E(1,'cio', d(-1)), E(1,'cobertura', d(-1))], hoje).partos.length, 1);
     verificar('mesmo dia, array em ordem contrária à dos ids: ainda vale o id maior', F.calcularPainelReprodutivo(animais, [{id:5, animal_id:1, tipo:'cobertura', data:d(-1)}, {id:4, animal_id:1, tipo:'cio', data:d(-1)}], hoje).partos.length, 1);
