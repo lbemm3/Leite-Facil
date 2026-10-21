@@ -77,6 +77,7 @@ function carregarFuncoesReais(){
     'JANELA_CONFERENCIA_DIAS', 'JANELA_DIAS_SEM_LANCAMENTO', 'LIMITE_LITROS_ORDENHA', 'LIMITE_LITROS_VACA_DIA',
     'MIN_VACAS_DIA_REPETIDO', 'TOLERANCIA_TOTAL_DIA', 'escaparHTML',
     'verificarQualidadeDados', 'montarCartaoQualidadeDados',
+    'ehCadastroSemUso', 'diasDesdeCadastro', 'textoDiasCadastro', 'separarCadastrosSemUso',
     'NOMES_MESES', 'agruparProducaoPorAnoMes', 'formatarLitros',
     'formatarPercentual', 'montarLinhasPrecoLeite', 'filtrarLinhasPrecoPorPeriodo', 'htmlTabelaPrecoLeite', 'linhasExcelPrecoLeite', 'PRECO_MAX_LITRO', 'formatarReais', 'litrosDoMes', 'calcularValoresLeiteMes', 'validarPrecosLeite', 'opcoesMesesPreco', 'rotuloMesAno',
     'DIAS_PAINEL_SECAGEM', 'textoPrazoDias', 'calcularPainelReprodutivo', 'filtrarHistoricoRebanho', 'normalizarBuscaAnimal', 'filtrarAnimaisPorBusca', 'CURVA_W', 'CURVA_ESQ', 'CURVA_DIR', 'xMaxCurvaLactacao', 'pontoMaisProximoCurva', 'lactacoesDoAnimal', 'pontosCurvaLactacao', 'resumoCurvaLactacao', 'curvaLactacaoSVG', 'descricaoLactacao', 'curvaLactacaoHTML',
@@ -1026,6 +1027,23 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('excel sem produção: células vazias, não zero', (o => [o.litros_lancados, o.valor_bruto, o.imposto_retido, o.imposto_pct, o.preco_bruto_litro])(F.linhasExcelPrecoLeite(sem)[0]), ['', '', '', '', 2.5]);
     verificar('rótulo do mês', [F.rotuloMesAno('2026-01'), F.rotuloMesAno('2026-12')], ['Janeiro de 2026', 'Dezembro de 2026']);
     verificar('reais no formato brasileiro', F.formatarReais(1234.5).replace(/\s| /g, ' '), 'R$ 1.234,50');
+  }
+
+  // ---------- Painel admin: cadastros sem uso ----------
+  {
+    console.log('\nPainel admin: cadastros sem uso e data de cadastro');
+    verificar('sem uso: nenhum animal e nenhuma produção', F.ehCadastroSemUso(0, false), true);
+    verificar('sem uso: contagem ausente (undefined) conta como zero', F.ehCadastroSemUso(undefined, false), true);
+    verificar('com animal já é uso, mesmo sem produção', F.ehCadastroSemUso(1, false), false);
+    verificar('com produção já é uso, mesmo sem animal', F.ehCadastroSemUso(0, true), false);
+    verificar('com animal e produção', F.ehCadastroSemUso(5, true), false);
+    const prods = [{id:'a'},{id:'b'},{id:'c'},{id:'d'}];
+    const sep = F.separarCadastrosSemUso(prods, {a:3, c:0}, new Set(['b']));
+    verificar('separação: usados e sem uso, mantendo a ordem', [sep.usados.map(x=>x.id), sep.semUso.map(x=>x.id)], [['a','b'], ['c','d']]);
+    verificar('separação tolera entradas nulas', F.separarCadastrosSemUso(null, null, null), { usados:[], semUso:[] });
+    verificar('separação sem conjunto de produção: só os animais contam', F.separarCadastrosSemUso([{id:'x'},{id:'y'}], {x:1}, null).semUso.map(x=>x.id), ['y']);
+    verificar('dias desde o cadastro', [F.diasDesdeCadastro('2026-10-11T23:59:00+00:00','2026-10-21'), F.diasDesdeCadastro('2026-10-21T01:00:00Z','2026-10-21'), F.diasDesdeCadastro('2026-10-25T00:00:00Z','2026-10-21'), F.diasDesdeCadastro(null,'2026-10-21'), F.diasDesdeCadastro('lixo','2026-10-21')], [10, 0, 0, null, null]);
+    verificar('texto dos dias', [F.textoDiasCadastro(0), F.textoDiasCadastro(1), F.textoDiasCadastro(15), F.textoDiasCadastro(null)], ['hoje', 'há 1 dia', 'há 15 dias', '—']);
   }
 
   console.log('\n' + '-'.repeat(50));
