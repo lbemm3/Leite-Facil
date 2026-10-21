@@ -2814,6 +2814,12 @@ async function buscarPrecoLeiteProdutor(produtorId, podeVerProducao){
   return { linhas: montarLinhasPrecoLeite(precos, rl.data || []) };
 }
 
+// Meses com preço que tocam o período (de inicio a fim, datas ISO): do mês do início ao mês do fim, inclusive.
+function filtrarLinhasPrecoPorPeriodo(linhas, inicio, fim){
+  const de = String(inicio || '').slice(0,7), ate = String(fim || '').slice(0,7);
+  return (linhas || []).filter(l => (!de || l.chave >= de) && (!ate || l.chave <= ate));
+}
+
 // Tabela para a ficha e para o relatório em PDF.
 function htmlTabelaPrecoLeite(linhas){
   if(!linhas.length) return '<div class="legenda-muted">Nenhum preço informado.</div>';
@@ -5066,6 +5072,13 @@ async function gerarPDFProdutor(){
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Financeiro no período</h2>';
   conteudo += '<div class="cartao">Receitas: R$ '+totalReceitas.toFixed(2)+' · Despesas: R$ '+totalDespesas.toFixed(2)+' · Saldo: R$ '+(totalReceitas-totalDespesas).toFixed(2)+'</div>';
+
+  const rPreco = await buscarPrecoLeiteProdutor(usuarioAtual.id, true);
+  conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Preço do leite e valor recebido</h2>';
+  conteudo += rPreco.erro
+    ? '<div class="legenda-muted">Não foi possível carregar os preços do leite.</div>'
+    : htmlTabelaPrecoLeite(filtrarLinhasPrecoPorPeriodo(rPreco.linhas, inicio, fim))
+      + '<div class="legenda-muted" style="margin-top:6px">Mostra os meses que tocam o período escolhido, sempre com o mês inteiro (litros lançados do dia 1 ao último dia).</div>';
 
   imprimirRelatorio(janela, 'Relatório LeiteFácil', conteudo);
 }
