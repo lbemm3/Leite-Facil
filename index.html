@@ -5535,9 +5535,11 @@ let ADMIN_MOSTRAR_SEM_USO = false;
 function htmlTabelaAdmin(d, mostrarSemUso){
   const hoje = new Date().toISOString().slice(0,10);
   const sep = separarCadastrosSemUso(d.produtores, d.contagemAnimais, d.idsComProducao);
-  const lista = mostrarSemUso ? d.produtores : sep.usados;
+  const lista = mostrarSemUso ? sep.usados.concat(sep.semUso) : sep.usados;
+  const primeiroSemUso = mostrarSemUso && sep.semUso.length ? sep.semUso[0].id : null;
   const linhas = lista.map(p=>
-    '<tr style="cursor:pointer" onclick="abrirFichaProdutorAdmin(\''+p.id+'\')"><td>'+escaparHTML(p.nome||'—')+(p.admin_financeiro_liberado ? ' <span title="Financeiro liberado" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--sucesso); margin-left:4px"></span>' : '')+'</td><td>'+escaparHTML(p.email||'—')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+textoDiasCadastro(diasDesdeCadastro(p.criado_em, hoje))+'</td><td>'+(d.contagemAnimais[p.id]||0)+'</td><td>'+(d.carenciaPorProdutor[p.id]||0)+'</td><td>'+(d.producaoPorProdutor[p.id] ? d.producaoPorProdutor[p.id].toFixed(0)+' L' : '—')+'</td><td>'+(d.ROTULO_QUALIDADE_ADMIN[d.qualidadePorProdutor[p.id]] || '—')+'</td></tr>'
+    (p.id === primeiroSemUso ? '<tr><td colspan="10" class="legenda-muted" style="padding-top:14px; font-weight:600">Cadastros sem uso</td></tr>' : '')
+    + '<tr style="cursor:pointer" onclick="abrirFichaProdutorAdmin(\''+p.id+'\')"><td>'+escaparHTML(p.nome||'—')+(p.admin_financeiro_liberado ? ' <span title="Financeiro liberado" style="display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--sucesso); margin-left:4px"></span>' : '')+'</td><td>'+escaparHTML(p.email||'—')+'</td><td>'+escaparHTML(p.propriedade||'—')+'</td><td>'+escaparHTML(p.cidade||'—')+'</td><td>'+escaparHTML(p.telefone||'—')+'</td><td>'+textoDiasCadastro(diasDesdeCadastro(p.criado_em, hoje))+'</td><td>'+(d.contagemAnimais[p.id]||0)+'</td><td>'+(d.carenciaPorProdutor[p.id]||0)+'</td><td>'+(d.producaoPorProdutor[p.id] ? d.producaoPorProdutor[p.id].toFixed(0)+' L' : '—')+'</td><td>'+(d.ROTULO_QUALIDADE_ADMIN[d.qualidadePorProdutor[p.id]] || '—')+'</td></tr>'
   ).join('');
   let aviso = '';
   if(sep.semUso.length){
