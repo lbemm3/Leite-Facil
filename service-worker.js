@@ -5,9 +5,11 @@
   Isso garante que o produtor sempre veja a versão mais atual do app quando
   conectado, mas ainda consiga abrir o app no curral sem sinal.
 
-  IMPORTANTE: sempre que uma nova versão do index.html for publicada,
-  aumente o número de CACHE_NAME abaixo (ex.: 'leitefacil-v2') para que os
-  celulares dos produtores substituam o cache antigo automaticamente.
+  IMPORTANTE: como a estratégia é network-first, uma nova versão do index.html
+  NÃO precisa de mudança aqui: com internet, o app já busca a versão mais nova
+  sozinho. Aumente o número de CACHE_NAME abaixo (ex.: 'leitefacil-v8') só
+  quando o próprio service-worker.js mudar ou quando a lista de
+  ARQUIVOS_ESSENCIAIS mudar, para os celulares trocarem o cache antigo.
 */
 
 const CACHE_NAME = 'leitefacil-v7';
