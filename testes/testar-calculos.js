@@ -89,7 +89,8 @@ function carregarFuncoesReais(){
     'DIAS_CARENCIA_LIMPEZA_AVISOS', 'chavesDosGrupos', 'classificarAvisosDispensados',
     'DIAS_ALERTA_VAZIA_SEM_COBERTURA', 'DIAS_ALERTA_SEM_DIAGNOSTICO', 'DIAS_MAX_AVISO_SEM_DIAGNOSTICO', 'DIAS_MAX_DIAGNOSTICO', 'situacaoGestacaoCobertura', 'coberturaEmAberto',
     'validarDiagnosticoGestacao', 'formatarDetalhesCobertura', 'formatarData', 'montarCartaoGrupo1',
-    'ehInicioLactacao', 'dataPrevistaSecagemPorTempo', 'TIPOS_SERVICO', 'TIPOS_SERVICO_CURTO', 'normalizarTipoServico', 'opcoesTipoServicoHTML', 'linhaConcepcaoPorServico'
+    'ehInicioLactacao', 'dataPrevistaSecagemPorTempo', 'TIPOS_SERVICO', 'TIPOS_SERVICO_CURTO', 'normalizarTipoServico', 'opcoesTipoServicoHTML', 'linhaConcepcaoPorServico',
+    'calcularPrimeirosPassos'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -1044,6 +1045,26 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('separação sem conjunto de produção: só os animais contam', F.separarCadastrosSemUso([{id:'x'},{id:'y'}], {x:1}, null).semUso.map(x=>x.id), ['y']);
     verificar('dias desde o cadastro', [F.diasDesdeCadastro('2026-10-11T23:59:00+00:00','2026-10-21'), F.diasDesdeCadastro('2026-10-21T01:00:00Z','2026-10-21'), F.diasDesdeCadastro('2026-10-25T00:00:00Z','2026-10-21'), F.diasDesdeCadastro(null,'2026-10-21'), F.diasDesdeCadastro('lixo','2026-10-21')], [10, 0, 0, null, null]);
     verificar('texto dos dias', [F.textoDiasCadastro(0), F.textoDiasCadastro(1), F.textoDiasCadastro(15), F.textoDiasCadastro(null)], ['hoje', 'há 1 dia', 'há 15 dias', '—']);
+  }
+
+  // ---------- Primeiros passos (cartão no Início) ----------
+  {
+    console.log('\nPrimeiros passos do produtor novo');
+    const base = { propriedadePreenchida:false, totalAnimais:0, totalProducoes:0, avisosSuportados:true, avisosAtivos:false };
+    const feitos = d => F.calcularPrimeirosPassos({ ...base, ...d }).map(p => p.feito);
+    const ids = d => F.calcularPrimeirosPassos({ ...base, ...d }).map(p => p.id);
+    verificar('produtor novo: os quatro passos, nesta ordem', ids({}), ['propriedade', 'animal', 'producao', 'avisos']);
+    verificar('produtor novo: nada feito', feitos({}), [false, false, false, false]);
+    verificar('propriedade preenchida marca só o primeiro passo', feitos({ propriedadePreenchida:true }), [true, false, false, false]);
+    verificar('um animal cadastrado marca o passo do animal', feitos({ totalAnimais:1 }), [false, true, false, false]);
+    verificar('uma produção lançada marca o passo da produção', feitos({ totalProducoes:1 }), [false, false, true, false]);
+    verificar('avisos ativos marca o último passo', feitos({ avisosAtivos:true }), [false, false, false, true]);
+    verificar('tudo feito: todos marcados', feitos({ propriedadePreenchida:true, totalAnimais:3, totalProducoes:12, avisosAtivos:true }), [true, true, true, true]);
+    verificar('contagens ausentes (null ou undefined) contam como zero', feitos({ totalAnimais:null, totalProducoes:undefined }), [false, false, false, false]);
+    verificar('aparelho sem suporte a avisos: o passo dos avisos nem aparece', ids({ avisosSuportados:false }), ['propriedade', 'animal', 'producao']);
+    verificar('sem suporte a avisos, "avisos ativos" não cria passo', ids({ avisosSuportados:false, avisosAtivos:true }), ['propriedade', 'animal', 'producao']);
+    verificar('cada passo pendente tem botão e destino', F.calcularPrimeirosPassos(base).every(p => p.botao && p.acao && p.titulo && p.dica), true);
+    verificar('destinos dos botões', F.calcularPrimeirosPassos(base).map(p => p.acao), ["trocarAba('tela-propriedade')", "trocarAba('tela-animais')", "trocarAba('tela-producao')", 'ligarAvisosPeloPrimeirosPassos()']);
   }
 
   console.log('\n' + '-'.repeat(50));
