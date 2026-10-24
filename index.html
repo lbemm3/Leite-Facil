@@ -130,6 +130,20 @@
 
   .saudacao{ font-family: var(--fonte-titulo); font-weight:700; font-size:27px; margin-bottom:4px; }
   .legenda-muted{ color: var(--tinta-suave); font-size:14.5px; margin-bottom:26px; }
+  .botao-video{ width:100%; flex-direction:column; gap:2px; margin:2px 0 20px; padding:12px 18px; background: var(--creme-alt); color: var(--azul); border:1.5px solid var(--azul); text-decoration:none; }
+  .botao-video .linha-principal{ display:inline-flex; align-items:center; gap:8px; }
+  .botao-video .duracao{ font-size:12px; font-weight:600; color: var(--tinta-suave); }
+  .link-fino{ background:none; border:none; padding:6px 0; color: var(--azul); font-weight:700; font-size:13px; text-decoration:underline; cursor:pointer; }
+  .passo-inicial{ display:flex; align-items:flex-start; gap:12px; padding:10px 0; border-top:1px solid var(--zinco-claro); }
+  .passo-inicial .marca{ flex:0 0 26px; width:26px; height:26px; border-radius:50%; border:2px solid var(--zinco-claro); display:flex; align-items:center; justify-content:center; margin-top:1px; }
+  .passo-inicial.feito .marca{ background: var(--sucesso); border-color: var(--sucesso); color:#fff; }
+  .passo-inicial .texto{ flex:1; min-width:0; }
+  .passo-inicial .titulo{ font-weight:700; font-size:14.5px; }
+  .passo-inicial.feito .titulo{ color: var(--tinta-suave); text-decoration:line-through; }
+  .passo-inicial .dica{ color: var(--tinta-suave); font-size:13px; margin-top:2px; }
+  .ajuda-pergunta{ border-top:1px solid var(--zinco-claro); padding:2px 0; }
+  .ajuda-pergunta summary{ cursor:pointer; font-weight:700; font-size:14.5px; padding:12px 0; list-style-position:inside; }
+  .ajuda-pergunta .resposta{ color: var(--tinta); font-size:14px; line-height:1.55; padding:0 0 14px; }
   .rotulo-secao{ font-family: var(--fonte-titulo); font-weight:600; font-size:14px; text-transform:uppercase; letter-spacing:0.4px; color: var(--celeiro); margin: 4px 0 14px; }
 
   .botao{ display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:14px 22px; border-radius:999px; font-weight:700; font-size:14.5px; transition: transform 0.12s ease, filter 0.12s ease; }
@@ -226,6 +240,10 @@
     <div class="selo-grande" id="icone-login"></div>
     <h1>LeiteFácil</h1>
     <p class="tagline">Controle de produção leiteira simples e gratuito, feito para o pequeno produtor.</p>
+    <a id="link-video-login" class="botao botao-video" href="#" target="_blank" rel="noopener noreferrer">
+      <span class="linha-principal"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg> Veja como o aplicativo funciona</span>
+      <span class="duracao">Vídeo de 4 minutos, sem precisar se cadastrar</span>
+    </a>
     <div class="grupo-campo">
       <label for="input-nome">Seu nome (só para criar conta)</label>
       <input id="input-nome" type="text" placeholder="Seu nome completo" autocomplete="name">
@@ -303,6 +321,10 @@
 const SUPABASE_URL = 'https://uknaypyjykbetxdwgnxv.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_sOtcjxZ9R7ZyE-CkphzRdw_HV2QeeJz';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Vídeo de apresentação do app (4 minutos). Um só endereço, usado na tela de cadastro e na Ajuda.
+const URL_VIDEO_APRESENTACAO = 'https://youtu.be/2O5WTJ1WcMg';
+document.getElementById('link-video-login').href = URL_VIDEO_APRESENTACAO;
 
 // ---------- Monitoramento de erros (Fase 1 do diagnóstico técnico) ----------
 // Guarda em uma tabela do próprio Supabase qualquer erro de JavaScript não tratado
@@ -703,14 +725,124 @@ async function renderInicio(){
     '<div class="saudacao">Oi, '+nomeExibicao()+'</div>'
     + '<div class="legenda-muted">Bem-vindo ao LeiteFácil.</div>'
     + blocoAcessosColaborador()
+    + '<div id="bloco-primeiros-passos"></div>'
     + '<div id="bloco-alerta-qualidade-inicio"></div>'
     + '<div id="bloco-o-que-fazer"></div>'
     + '<div id="bloco-avisos-dispensados"></div>'
     + '<div id="bloco-producao-mes"></div>'
     + '<div id="bloco-alertas-inicio"><div class="legenda-muted">Carregando alertas...</div></div>';
+  renderPrimeirosPassos().catch(e => console.error('[LeiteFácil] falha ao montar os primeiros passos', e));
   atualizarAvisosInicio();
   renderProducaoMesInicio();
   await renderAlertasNoInicio();
+}
+
+// ---------- Primeiros passos (cartão no Início) ----------
+// Lista curta do que um produtor novo precisa fazer para o app começar a servir. Cada passo se marca
+// sozinho a partir dos dados que já existem. Quando todos estão feitos, o cartão desaparece. Se não for
+// possível saber (erro ao consultar), o cartão não aparece, em vez de mostrar uma informação errada.
+function chavePrimeirosPassosOcultos(){ return 'lf_primeiros_passos_ocultos_' + (usuarioAtual ? usuarioAtual.id : ''); }
+function primeirosPassosOcultos(){
+  try{ return localStorage.getItem(chavePrimeirosPassosOcultos()) === '1'; }catch(e){ return false; }
+}
+function ocultarPrimeirosPassos(){
+  try{ localStorage.setItem(chavePrimeirosPassosOcultos(), '1'); }catch(e){}
+  const el = document.getElementById('bloco-primeiros-passos');
+  if(el) el.innerHTML = '';
+}
+
+// Monta a lista de passos a partir do que já foi feito. Separada da tela para poder ser testada.
+function calcularPrimeirosPassos(dados){
+  const passos = [
+    { id:'propriedade', feito: !!dados.propriedadePreenchida, titulo:'Preencher os dados da propriedade', dica:'Estado, município e área. Leva uns 2 minutos.', botao:'Preencher', acao:"trocarAba('tela-propriedade')" },
+    { id:'animal', feito: (dados.totalAnimais || 0) > 0, titulo:'Cadastrar o primeiro animal', dica:'Na aba Meus animais, toque em Adicionar animal.', botao:'Cadastrar', acao:"trocarAba('tela-animais')" },
+    { id:'producao', feito: (dados.totalProducoes || 0) > 0, titulo:'Lançar a primeira produção de leite', dica:'Na aba Produção, toque em Registrar produção do dia.', botao:'Lançar', acao:"trocarAba('tela-producao')" }
+  ];
+  // O passo dos avisos só aparece quando o aparelho consegue receber avisos.
+  if(dados.avisosSuportados){
+    passos.push({ id:'avisos', feito: !!dados.avisosAtivos, titulo:'Ligar os avisos no celular', dica:'Avisa de parto, fim de carência e vacinas.', botao:'Ligar', acao:'ligarAvisosPeloPrimeirosPassos()' });
+  }
+  return passos;
+}
+
+async function renderPrimeirosPassos(){
+  const el = document.getElementById('bloco-primeiros-passos');
+  if(!el) return;
+  if(primeirosPassosOcultos()){ el.innerHTML = ''; return; }
+  const [animais, producoes] = await Promise.all([
+    sb.from('animais').select('id', { count:'exact', head:true }).eq('produtor_id', usuarioAtual.id),
+    sb.from('producao_leite').select('id', { count:'exact', head:true }).eq('produtor_id', usuarioAtual.id)
+  ]);
+  if(animais.error || producoes.error){ el.innerHTML = ''; return; }
+  // Se o aparelho não responde sobre os avisos (por exemplo, o service worker não está ativo), só esse
+  // passo some; o cartão com os outros passos aparece do mesmo jeito, sem ficar esperando para sempre.
+  let avisosAtivos = false;
+  let avisosSuportados = suportaNotificacoesPush();
+  if(avisosSuportados){
+    const st = await Promise.race([
+      statusInscricaoPushDoProdutor().catch(() => null),
+      new Promise(resolve => setTimeout(() => resolve(null), 3000))
+    ]);
+    if(!st || st.suportado === false) avisosSuportados = false;
+    else avisosAtivos = !!(st.ativoParaEsteProdutor && Notification.permission === 'granted');
+  }
+  const passos = calcularPrimeirosPassos({
+    propriedadePreenchida: !!(meuProdutor && meuProdutor.cidade),
+    totalAnimais: animais.count, totalProducoes: producoes.count,
+    avisosSuportados, avisosAtivos
+  });
+  const faltam = passos.filter(p => !p.feito).length;
+  if(!faltam){ el.innerHTML = ''; return; }
+  el.innerHTML = '<div class="cartao">'
+    + '<div style="font-weight:700; margin-bottom:4px">Primeiros passos</div>'
+    + '<div class="legenda-muted" style="margin-bottom:8px">Para começar a usar o LeiteFácil, faça estes passos. '+(faltam === 1 ? 'Falta 1 de ' : 'Faltam '+faltam+' de ')+passos.length+'.</div>'
+    + passos.map(p =>
+        '<div class="passo-inicial'+(p.feito ? ' feito' : '')+'">'
+        + '<div class="marca">'+(p.feito ? iconeInline('check',14) : '')+'</div>'
+        + '<div class="texto"><div class="titulo">'+p.titulo+'</div>'+(p.feito ? '' : '<div class="dica">'+p.dica+'</div>')+'</div>'
+        + (p.feito ? '' : '<button class="botao botao-secundario" style="padding:8px 14px; font-size:13px" onclick="'+p.acao+'">'+p.botao+'</button>')
+        + '</div>').join('')
+    + '<div style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:6px; border-top:1px solid var(--zinco-claro); padding-top:6px">'
+      + '<button class="link-fino" onclick="abrirAjuda()">Precisa de ajuda?</button>'
+      + '<button class="link-fino" style="font-weight:600; color:var(--tinta-suave)" onclick="ocultarPrimeirosPassos()">Não mostrar mais</button>'
+    + '</div></div>';
+}
+
+async function ligarAvisosPeloPrimeirosPassos(){
+  await alternarNotificacoesPush();
+  renderPrimeirosPassos();
+}
+
+// ---------- Ajuda (perguntas e respostas) ----------
+// Texto em linguagem simples, para quem não tem familiaridade com tecnologia. Cada resposta descreve só o
+// que o app realmente faz hoje: se uma tela mudar de nome, a resposta correspondente precisa mudar junto.
+const PERGUNTAS_AJUDA = [
+  { p:'Por onde eu começo?', r:'Faça nesta ordem. <strong>1.</strong> Na aba <strong>Propriedade</strong>, preencha estado, município e área. <strong>2.</strong> Na aba <strong>Meus animais</strong>, toque em <strong>Adicionar animal</strong> e cadastre suas vacas. <strong>3.</strong> Na aba <strong>Produção</strong>, toque em <strong>Registrar produção do dia</strong> e lance o leite. <strong>4.</strong> No <strong>Perfil</strong>, ligue os <strong>Avisos no celular</strong>. O cartão <strong>Primeiros passos</strong>, na tela Início, mostra o que ainda falta.' },
+  { p:'Como cadastro um animal?', r:'Na aba <strong>Meus animais</strong>, toque em <strong>Adicionar animal</strong>. Informe o número ou brinco e a data de nascimento. Os outros campos (nome da mãe, pai, avós, grau de sangue) são opcionais. Se a vaca já tinha parido antes de entrar no LeiteFácil, o próprio formulário tem uma opção para informar a data do último parto. Assim o app coloca a vaca no lote certo (lactante, seca ou novilha).' },
+  { p:'Como lanço o leite do dia?', r:'Na aba <strong>Produção</strong>, toque em <strong>Registrar produção do dia</strong>. Escolha como quer lançar: <strong>Por rebanho</strong> (você digita o total do dia) ou <strong>Por vaca</strong> (você lança vaca por vaca e o app soma). Preencha a ordenha da manhã e a da tarde e salve.' },
+  { p:'Lancei errado. Como corrijo?', r:'Na aba <strong>Produção</strong>, toque no dia que quer mudar (ou no ícone de lápis ao lado dele). O formulário abre já preenchido. Corrija e salve, ou use o botão de excluir se quiser apagar o dia.' },
+  { p:'Como registro cio, cobertura, parto e outros eventos da vaca?', r:'Pela aba <strong>Reprodução</strong>, no botão <strong>Registrar evento</strong>, ou pela ficha da vaca (aba <strong>Meus animais</strong>, toque no animal). Você pode registrar: cio, cobertura ou inseminação, parto, indução de lactação, aborto e secagem.' },
+  { p:'O que são os avisos da tela Início?', r:'O app faz as contas das datas a partir do que você registra: previsão de parto (283 dias depois da cobertura), previsão de secagem, próximo cio (21 dias depois do cio), fim da carência de medicamento, próxima dose de vacina e a qualidade do leite. Quando uma data está chegando, aparece um aviso. Se um aviso não serve mais, use <strong>Dar baixa</strong> para tirá-lo da tela ou <strong>Adiar</strong> para ele voltar mais tarde.' },
+  { p:'O que é carência?', r:'É o tempo, depois de aplicar um medicamento, em que o leite não pode ser vendido nem consumido. Ao registrar um remédio ou tratamento na ficha do animal, informe o fim da carência. O app avisa quando o prazo terminar.' },
+  { p:'Como ligo os avisos no celular?', r:'Vá em <strong>Perfil</strong> e toque em <strong>Avisos no celular</strong>. O celular vai pedir permissão para mostrar notificações: aceite. Os avisos chegam por volta das 7h da manhã. No iPhone, primeiro é preciso instalar o LeiteFácil na tela inicial (veja a pergunta abaixo). Para desligar, toque no mesmo lugar.' },
+  { p:'Como instalo o LeiteFácil no celular?', r:'No <strong>Android</strong> (Chrome): toque nos três pontinhos no canto da tela e escolha <strong>Instalar aplicativo</strong> ou <strong>Adicionar à tela inicial</strong>. No <strong>iPhone</strong> (Safari): toque no botão de compartilhar (um quadrado com uma seta para cima) e escolha <strong>Adicionar à Tela de Início</strong>. O ícone aparece junto com os seus outros aplicativos.' },
+  { p:'Como dou acesso ao veterinário ou ao sócio?', r:'Vá em <strong>Perfil</strong> e toque em <strong>Liberar acesso para alguém</strong>. Digite o e-mail da pessoa e escolha o que ela pode ver. O LeiteFácil não envia e-mail: avise a pessoa, que deve criar a conta no app com esse mesmo e-mail. Você pode retirar o acesso quando quiser, no mesmo lugar.' },
+  { p:'Posso baixar meus dados ou um relatório?', r:'Sim. Na aba <strong>Indicadores</strong>, no fim da página, em <strong>Relatórios</strong>, escolha o período e toque em <strong>Baixar CSV</strong> (uma planilha) ou <strong>Gerar relatório PDF</strong>.' },
+  { p:'Quem pode ver os meus dados?', r:'Os dados são seus. A equipe do projeto (UEM) vê os dados de produção para fazer análises acadêmicas e ajudar os produtores, nunca para fins comerciais. O <strong>Financeiro</strong> é privado: a equipe só passa a ver se você liberar, na tela Financeiro, e você pode retirar a liberação quando quiser. O texto completo está em <strong>Perfil</strong>, <strong>Termos de uso e privacidade</strong>.' },
+  { p:'O app funciona sem internet?', r:'O app abre sem sinal, mas os dados vêm da internet: para ver ou lançar informações é preciso ter conexão. Se estiver sem sinal no curral, anote no papel e lance quando o sinal voltar.' },
+  { p:'Esqueci a minha senha.', r:'O LeiteFácil ainda não tem recuperação automática de senha. Escreva para <strong>cbemm2@gmail.com</strong> usando o e-mail do seu cadastro, que vamos ajudar.' },
+  { p:'Encontrei um problema ou tenho uma sugestão.', r:'Escreva para <strong>cbemm2@gmail.com</strong> contando o que aconteceu e em qual tela. Isso ajuda a melhorar o app.' }
+];
+
+function abrirAjuda(){
+  document.getElementById('conteudo-modal').innerHTML =
+    '<div class="rotulo-secao" style="margin-top:0">Ajuda</div>'
+    + '<a class="botao botao-video" href="'+URL_VIDEO_APRESENTACAO+'" target="_blank" rel="noopener noreferrer" style="margin-bottom:14px">'
+      + '<span class="linha-principal"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg> Veja como o aplicativo funciona</span>'
+      + '<span class="duracao">Vídeo de 4 minutos</span></a>'
+    + '<div class="legenda-muted" style="margin-bottom:10px">Toque em uma pergunta para ver a resposta.</div>'
+    + PERGUNTAS_AJUDA.map(x => '<details class="ajuda-pergunta"><summary>'+x.p+'</summary><div class="resposta">'+x.r+'</div></details>').join('');
+  abrirModal();
 }
 
 // Avisos dispensados (baixa ou adiamento) do produtor, carregados a cada atualização do Início.
@@ -5385,6 +5517,7 @@ function renderPerfil(){
       + '</div></div></div>'
     + '<div class="cartao" style="padding:4px 16px">'
       + '<button class="linha-menu" onclick="abrirEdicaoPerfil()"><span class="ic">'+iconeInline('telefone',18)+'</span><span class="txt">Meus dados (nome, telefone)</span></button>'
+      + '<button class="linha-menu" onclick="abrirAjuda()"><span class="ic">'+iconeInline('documento',18)+'</span><span class="txt">Ajuda e perguntas frequentes</span></button>'
       + '<button class="linha-menu" onclick="abrirTermosDeUso(false)"><span class="ic">'+iconeInline('documento',18)+'</span><span class="txt">Termos de uso e privacidade'+(p.termos_aceitos_em ? '<div class="legenda-muted" style="margin:0; font-size:12px">Aceito em '+formatarData(p.termos_aceitos_em.slice(0,10))+'</div>' : '')+'</span></button>'
       + '<button class="linha-menu" id="btn-notificacoes-push" onclick="alternarNotificacoesPush()"><span class="ic">'+iconeInline('sino',18)+'</span><span class="txt" id="txt-notificacoes-push">Avisos no celular<div class="legenda-muted" style="margin:0; font-size:12px">Verificando...</div></span></button>'
     + '</div>'
