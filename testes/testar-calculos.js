@@ -90,7 +90,9 @@ function carregarFuncoesReais(){
     'DIAS_ALERTA_VAZIA_SEM_COBERTURA', 'DIAS_ALERTA_SEM_DIAGNOSTICO', 'DIAS_MAX_AVISO_SEM_DIAGNOSTICO', 'DIAS_MAX_DIAGNOSTICO', 'situacaoGestacaoCobertura', 'coberturaEmAberto',
     'validarDiagnosticoGestacao', 'formatarDetalhesCobertura', 'formatarData', 'montarCartaoGrupo1',
     'ehInicioLactacao', 'dataPrevistaSecagemPorTempo', 'TIPOS_SERVICO', 'TIPOS_SERVICO_CURTO', 'normalizarTipoServico', 'opcoesTipoServicoHTML', 'linhaConcepcaoPorServico',
-    'calcularPrimeirosPassos'
+    'calcularPrimeirosPassos',
+    'CATEGORIAS_CHUVA', 'CHUVA_MM_MAXIMO', 'MIN_DIAS_COMPARACAO_CHUVA', 'JANELA_DIAS_COMPARACAO_CHUVA',
+    'rotuloChuvaDia', 'validarChuvaDoDia', 'colunaDeChuvaAusente', 'compararProducaoPorChuva'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -1065,6 +1067,59 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('sem suporte a avisos, "avisos ativos" não cria passo', ids({ avisosSuportados:false, avisosAtivos:true }), ['propriedade', 'animal', 'producao']);
     verificar('cada passo pendente tem botão e destino', F.calcularPrimeirosPassos(base).every(p => p.botao && p.acao && p.titulo && p.dica), true);
     verificar('destinos dos botões', F.calcularPrimeirosPassos(base).map(p => p.acao), ["trocarAba('tela-propriedade')", "trocarAba('tela-animais')", "trocarAba('tela-producao')", 'ligarAvisosPeloPrimeirosPassos()']);
+  }
+
+  // ---------- Chuva e produção ----------
+  {
+    console.log('\nChuva do dia e comparação com a produção');
+    verificar('rótulo: nada anotado fica vazio', [F.rotuloChuvaDia(null), F.rotuloChuvaDia({}), F.rotuloChuvaDia({ chuva:null, chuva_mm:null })], ['', '', '']);
+    verificar('rótulo: só a categoria', F.rotuloChuvaDia({ chuva:'boa' }), 'Chuva boa');
+    verificar('rótulo: categoria com milímetros (vírgula decimal)', F.rotuloChuvaDia({ chuva:'forte', chuva_mm:32.5 }), 'Chuva forte (32,5 mm)');
+    verificar('rótulo: "Não choveu" com 0 mm', F.rotuloChuvaDia({ chuva:'nao_choveu', chuva_mm:0 }), 'Não choveu (0 mm)');
+
+    const v = (c, mm) => F.validarChuvaDoDia(c, mm);
+    verificar('nada informado é aceito e vira vazio', v('', ''), { ok:true, chuva:null, mm:null });
+    verificar('categoria sem milímetros é aceita', v('pouca', ''), { ok:true, chuva:'pouca', mm:null });
+    verificar('milímetros com vírgula e arredondados em 1 casa', v('boa', '12,34'), { ok:true, chuva:'boa', mm:12.3 });
+    verificar('"Não choveu" com 0 mm é aceito', v('nao_choveu', '0'), { ok:true, chuva:'nao_choveu', mm:0 });
+    verificar('500 mm ainda é aceito', v('forte', '500').ok, true);
+    verificar('mais de 500 mm é recusado', v('forte', '501').ok, false);
+    verificar('milímetros sem categoria: pede a categoria', v('', '5'), { ok:false, erro:'Escolha também a categoria da chuva do dia.' });
+    verificar('"Não choveu" com milímetros maiores que zero é recusado', v('nao_choveu', '3').ok, false);
+    verificar('"choveu" com 0 mm é recusado', [v('pouca', '0').ok, v('boa', '0').ok, v('forte', '0').ok], [false, false, false]);
+    verificar('milímetros negativos ou texto são recusados', [v('boa', '-1').ok, v('boa', 'abc').ok], [false, false]);
+    verificar('categoria fora da lista é recusada', v('xyz', '').ok, false);
+
+    verificar('erro de coluna ausente do PostgREST', F.colunaDeChuvaAusente({ code:'PGRST204', message:"Could not find the 'chuva' column of 'producao_leite' in the schema cache" }), true);
+    verificar('erro de coluna ausente do Postgres', F.colunaDeChuvaAusente({ code:'42703', message:'column "chuva" of relation "producao_leite" does not exist' }), true);
+    verificar('outros erros não são tratados como coluna ausente', [F.colunaDeChuvaAusente({ code:'42501', message:'permission denied for table producao_leite' }), F.colunaDeChuvaAusente({ code:'23505', message:'duplicate key' }), F.colunaDeChuvaAusente(null)], [false, false, false]);
+
+    const HC = '2026-10-20';
+    const dia = (n, chuva, manha, tarde) => ({ data: F.somarDias(HC, -n), chuva, litros_manha: manha, litros_tarde: tarde });
+    const seisSecos = [1, 2, 3, 4, 5, 6].map(n => dia(n, 'nao_choveu', 60, 40));
+    const seisChuva = [7, 8, 9, 10, 11, 12].map(n => dia(n, n <= 8 ? 'pouca' : (n <= 10 ? 'boa' : 'forte'), n <= 8 ? 50 : (n <= 10 ? 45 : 35), n <= 8 ? 40 : (n <= 10 ? 35 : 35)));
+    let c = F.compararProducaoPorChuva([...seisSecos, ...seisChuva], HC);
+    verificar('com 6 dias secos e 6 de chuva: comparação pronta', c.estado, 'ok');
+    verificar('média dos dias secos', c.secos, { dias:6, media:100 });
+    verificar('média dos dias de chuva (pouca, boa e forte juntas)', c.comChuva, { dias:6, media:80 });
+    verificar('diferença percentual (chuva em relação a seco)', c.diferencaPct, -20);
+    verificar('média por tipo de chuva', [c.porCategoria.pouca, c.porCategoria.boa, c.porCategoria.forte], [{ dias:2, media:90 }, { dias:2, media:80 }, { dias:2, media:70 }]);
+    verificar('diferença positiva quando chove e produz mais', F.compararProducaoPorChuva([...seisSecos, ...seisChuva.map(r => ({ ...r, litros_manha: 80, litros_tarde: 50 }))], HC).diferencaPct, 30);
+
+    c = F.compararProducaoPorChuva([...seisSecos.slice(0, 4), ...seisChuva.slice(0, 5)], HC);
+    verificar('4 dias secos e 5 de chuva: insuficiente, falta 1 dia seco', [c.estado, c.faltamSecos, c.faltamChuva], ['insuficiente', 1, 0]);
+    c = F.compararProducaoPorChuva([...seisSecos.slice(0, 5), ...seisChuva.slice(0, 5)], HC);
+    verificar('exatamente 5 de cada: já compara', c.estado, 'ok');
+    c = F.compararProducaoPorChuva(seisSecos, HC);
+    verificar('só dias secos: insuficiente, faltam 5 dias de chuva e sem percentual', [c.estado, c.faltamChuva, c.diferencaPct], ['insuficiente', 5, null]);
+    verificar('sem nenhuma chuva anotada: sem dados', [F.compararProducaoPorChuva([dia(1, null, 50, 50), dia(2, '', 40, 40)], HC).estado, F.compararProducaoPorChuva([], HC).estado, F.compararProducaoPorChuva(null, HC).estado], ['sem_dados', 'sem_dados', 'sem_dados']);
+
+    const dozeBase = [...seisSecos, ...seisChuva];
+    verificar('dia sem leite lançado não entra', F.compararProducaoPorChuva([...dozeBase, dia(13, 'nao_choveu', 0, 0)], HC).secos.dias, 6);
+    verificar('dia mais antigo que 90 dias não entra, o do limite entra', [F.compararProducaoPorChuva([...dozeBase, dia(91, 'nao_choveu', 10, 10)], HC).secos.dias, F.compararProducaoPorChuva([...dozeBase, dia(90, 'nao_choveu', 10, 10)], HC).secos.dias], [6, 7]);
+    verificar('hoje entra e data futura não entra', [F.compararProducaoPorChuva([...dozeBase, dia(0, 'nao_choveu', 10, 10)], HC).secos.dias, F.compararProducaoPorChuva([...dozeBase, dia(-1, 'nao_choveu', 10, 10)], HC).secos.dias], [7, 6]);
+    verificar('litros que chegam como texto são somados como número', F.compararProducaoPorChuva([{ data: F.somarDias(HC, -1), chuva:'nao_choveu', litros_manha:'12.5', litros_tarde:'7.5' }], HC).secos, { dias:1, media:20 });
+    verificar('média arredondada em 1 casa', F.compararProducaoPorChuva([dia(1, 'nao_choveu', 33.33, 33.33), dia(2, 'nao_choveu', 33.34, 33.34)], HC).secos.media, 66.7);
   }
 
   console.log('\n' + '-'.repeat(50));
