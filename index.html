@@ -462,7 +462,8 @@ function montarLinhasCSVProducao(producao, individual, incluirMetodo){
   });
   return (producao||[]).map(r=>{
     const m = Number(r.litros_manha||0), t = Number(r.litros_tarde||0);
-    const o = { data:r.data, litros_manha:m, litros_tarde:t, total:arredondar1(m + t), vacas_ordenhadas: vacasPorData[r.data] ? vacasPorData[r.data].size : '' };
+    const o = { data:r.data, litros_manha:m, litros_tarde:t, total:arredondar1(m + t), vacas_ordenhadas: vacasPorData[r.data] ? vacasPorData[r.data].size : '',
+      chuva: r.chuva || '', chuva_mm: (r.chuva_mm !== null && r.chuva_mm !== undefined) ? r.chuva_mm : '' };
     if(incluirMetodo) o.metodo = r.metodo_registro || 'rebanho';
     return o;
   });
@@ -819,7 +820,8 @@ async function ligarAvisosPeloPrimeirosPassos(){
 const PERGUNTAS_AJUDA = [
   { p:'Por onde eu começo?', r:'Faça nesta ordem. <strong>1.</strong> Na aba <strong>Propriedade</strong>, preencha estado, município e área. <strong>2.</strong> Na aba <strong>Meus animais</strong>, toque em <strong>Adicionar animal</strong> e cadastre suas vacas. <strong>3.</strong> Na aba <strong>Produção</strong>, toque em <strong>Registrar produção do dia</strong> e lance o leite. <strong>4.</strong> No <strong>Perfil</strong>, ligue os <strong>Avisos no celular</strong>. O cartão <strong>Primeiros passos</strong>, na tela Início, mostra o que ainda falta.' },
   { p:'Como cadastro um animal?', r:'Na aba <strong>Meus animais</strong>, toque em <strong>Adicionar animal</strong>. Informe o número ou brinco e a data de nascimento. Os outros campos (nome da mãe, pai, avós, grau de sangue) são opcionais. Se a vaca já tinha parido antes de entrar no LeiteFácil, o próprio formulário tem uma opção para informar a data do último parto. Assim o app coloca a vaca no lote certo (lactante, seca ou novilha).' },
-  { p:'Como lanço o leite do dia?', r:'Na aba <strong>Produção</strong>, toque em <strong>Registrar produção do dia</strong>. Escolha como quer lançar: <strong>Por rebanho</strong> (você digita o total do dia) ou <strong>Por vaca</strong> (você lança vaca por vaca e o app soma). Preencha a ordenha da manhã e a da tarde e salve.' },
+  { p:'Como lanço o leite do dia?', r:'Na aba <strong>Produção</strong>, toque em <strong>Registrar produção do dia</strong>. Escolha como quer lançar: <strong>Por rebanho</strong> (você digita o total do dia) ou <strong>Por vaca</strong> (você lança vaca por vaca e o app soma). Preencha a ordenha da manhã e a da tarde. Se quiser, anote também se choveu naquele dia (campo <strong>Choveu neste dia?</strong>) e salve.' },
+  { p:'Para que serve anotar a chuva?', r:'Em dias de chuva as vacas gastam mais energia e podem produzir menos leite. Ao anotar, no lançamento do dia, se <strong>Não choveu</strong>, houve <strong>Pouca chuva</strong>, <strong>Chuva boa</strong> ou <strong>Chuva forte</strong>, o app compara a média de leite dos dias secos com a dos dias de chuva e mostra o resultado no cartão <strong>Chuva e produção</strong>, na aba Produção. Os milímetros são opcionais: só preencha se você tiver pluviômetro. A comparação aparece depois de pelo menos 5 dias secos e 5 dias de chuva anotados nos últimos 90 dias. É só uma comparação, não prova que a chuva foi a causa.' },
   { p:'Lancei errado. Como corrijo?', r:'Na aba <strong>Produção</strong>, toque no dia que quer mudar (ou no ícone de lápis ao lado dele). O formulário abre já preenchido. Corrija e salve, ou use o botão de excluir se quiser apagar o dia.' },
   { p:'Como registro cio, cobertura, parto e outros eventos da vaca?', r:'Pela aba <strong>Reprodução</strong>, no botão <strong>Registrar evento</strong>, ou pela ficha da vaca (aba <strong>Meus animais</strong>, toque no animal). Você pode registrar: cio, cobertura ou inseminação, parto, indução de lactação, aborto e secagem.' },
   { p:'O que são os avisos da tela Início?', r:'O app faz as contas das datas a partir do que você registra: previsão de parto (283 dias depois da cobertura), previsão de secagem, próximo cio (21 dias depois do cio), fim da carência de medicamento, próxima dose de vacina e a qualidade do leite. Quando uma data está chegando, aparece um aviso. Se um aviso não serve mais, use <strong>Dar baixa</strong> para tirá-lo da tela ou <strong>Adiar</strong> para ele voltar mais tarde.' },
@@ -2827,12 +2829,135 @@ function alternarMesProducao(chave){
   desenharProducaoLitros();
 }
 
+/* ======================= CHUVA E PRODUÇÃO ======================= */
+// A chuva do dia é anotada junto com a produção (uma categoria e, se o produtor tiver pluviômetro, os milímetros).
+// Com alguns dias anotados, o app compara a produção dos dias de chuva com a dos dias secos. É só uma comparação
+// de médias: fase da lactação, alimentação e número de vacas ordenhadas também mexem na produção.
+const CATEGORIAS_CHUVA = { nao_choveu:'Não choveu', pouca:'Pouca chuva', boa:'Chuva boa', forte:'Chuva forte' };
+const CHUVA_MM_MAXIMO = 500;
+const MIN_DIAS_COMPARACAO_CHUVA = 5;      // mínimo de dias secos e de dias de chuva para mostrar a comparação
+const JANELA_DIAS_COMPARACAO_CHUVA = 90;  // só entram os últimos 90 dias
+
+// Texto curto da chuva de um dia, para a lista de produção. Vazio quando nada foi anotado.
+function rotuloChuvaDia(r){
+  if(!r) return '';
+  const cat = CATEGORIAS_CHUVA[r.chuva] || '';
+  const mm = (r.chuva_mm !== null && r.chuva_mm !== undefined && r.chuva_mm !== '') ? Number(r.chuva_mm) : null;
+  if(!cat && mm === null) return '';
+  return (cat || 'Chuva') + (mm !== null ? ' (' + String(mm).replace('.', ',') + ' mm)' : '');
+}
+
+// Confere o que foi digitado no formulário. Devolve { ok:true, chuva, mm } (vazio vira null) ou { ok:false, erro }.
+function validarChuvaDoDia(chuvaTexto, mmTexto){
+  const chuva = chuvaTexto ? String(chuvaTexto) : null;
+  if(chuva !== null && !CATEGORIAS_CHUVA[chuva]) return { ok:false, erro:'Escolha uma das opções de chuva da lista.' };
+  const bruto = String(mmTexto == null ? '' : mmTexto).trim().replace(',', '.');
+  let mm = null;
+  if(bruto !== ''){
+    mm = Number(bruto);
+    if(!(mm >= 0)) return { ok:false, erro:'Informe os milímetros com um número igual ou maior que zero.' };
+    if(mm > CHUVA_MM_MAXIMO) return { ok:false, erro:'Mais de '+CHUVA_MM_MAXIMO+' mm num só dia é muito raro. Confira se digitou certo.' };
+    mm = Math.round(mm * 10) / 10;
+    if(chuva === null) return { ok:false, erro:'Escolha também a categoria da chuva do dia.' };
+    if(chuva === 'nao_choveu' && mm > 0) return { ok:false, erro:'Você informou milímetros, mas marcou "Não choveu". Confira.' };
+    if(chuva !== 'nao_choveu' && mm === 0) return { ok:false, erro:'Você marcou que choveu, mas informou 0 mm. Confira.' };
+  }
+  return { ok:true, chuva, mm };
+}
+
+// O banco ainda não tem as colunas de chuva (o SQL não foi rodado)? Nesse caso a produção é salva sem a chuva.
+function colunaDeChuvaAusente(erro){
+  return !!erro && (erro.code === 'PGRST204' || /chuva/i.test(String(erro.message || '')));
+}
+
+// Compara a média diária de produção (manhã + tarde) nos dias secos e nos dias de chuva (pouca, boa ou forte),
+// nos últimos 90 dias. Só entram dias com chuva anotada e algum leite lançado. Com menos de 5 dias em cada grupo,
+// o resultado é "insuficiente" e o app mostra quanto falta, em vez de um número que não diz nada.
+function compararProducaoPorChuva(registros, hojeIso, janelaDias, minimoDias){
+  janelaDias = janelaDias || JANELA_DIAS_COMPARACAO_CHUVA;
+  minimoDias = minimoDias || MIN_DIAS_COMPARACAO_CHUVA;
+  const inicio = somarDias(hojeIso, -janelaDias);
+  const porCategoria = {};
+  Object.keys(CATEGORIAS_CHUVA).forEach(k => { porCategoria[k] = { dias:0, soma:0 }; });
+  (registros || []).forEach(r => {
+    if(!r || !r.data || r.data < inicio || r.data > hojeIso || !CATEGORIAS_CHUVA[r.chuva]) return;
+    const total = (Number(r.litros_manha) || 0) + (Number(r.litros_tarde) || 0);
+    if(!(total > 0)) return;
+    porCategoria[r.chuva].dias++;
+    porCategoria[r.chuva].soma += total;
+  });
+  const resumo = g => ({ dias:g.dias, media: g.dias ? arredondar1(g.soma / g.dias) : null });
+  const juntar = chaves => {
+    const g = chaves.reduce((t, k) => ({ dias: t.dias + porCategoria[k].dias, soma: t.soma + porCategoria[k].soma }), { dias:0, soma:0 });
+    return resumo(g);
+  };
+  const secos = juntar(['nao_choveu']);
+  const comChuva = juntar(['pouca', 'boa', 'forte']);
+  const diasInformados = secos.dias + comChuva.dias;
+  let estado = 'ok';
+  if(diasInformados === 0) estado = 'sem_dados';
+  else if(secos.dias < minimoDias || comChuva.dias < minimoDias) estado = 'insuficiente';
+  const diferencaPct = (secos.media > 0 && comChuva.media !== null) ? Math.round((comChuva.media - secos.media) / secos.media * 1000) / 10 : null;
+  return {
+    estado, janelaDias, minimoDias, diasInformados, secos, comChuva, diferencaPct,
+    faltamSecos: Math.max(0, minimoDias - secos.dias), faltamChuva: Math.max(0, minimoDias - comChuva.dias),
+    porCategoria: { nao_choveu: resumo(porCategoria.nao_choveu), pouca: resumo(porCategoria.pouca), boa: resumo(porCategoria.boa), forte: resumo(porCategoria.forte) }
+  };
+}
+
+// Campos da chuva no formulário de produção do dia (valem para os dois métodos, por rebanho e por vaca).
+function camposChuvaDia(registro){
+  const chuva = registro && registro.chuva ? registro.chuva : '';
+  const mm = (registro && registro.chuva_mm !== null && registro.chuva_mm !== undefined) ? registro.chuva_mm : '';
+  return '<div class="grupo-campo" style="margin-top:6px"><label for="campo-chuva">Choveu neste dia?</label><select id="campo-chuva">'
+      + '<option value="">Não informar</option>'
+      + Object.keys(CATEGORIAS_CHUVA).map(k => '<option value="'+k+'"'+(chuva===k?' selected':'')+'>'+CATEGORIAS_CHUVA[k]+'</option>').join('')
+    + '</select></div>'
+    + '<div class="grupo-campo"><label for="campo-chuva-mm">Chuva em milímetros (opcional, só se você tem pluviômetro)</label>'
+      + '<input id="campo-chuva-mm" type="number" min="0" step="0.1" inputmode="decimal" value="'+mm+'"></div>';
+}
+
+// Cartão "Chuva e produção" da aba Produção.
+function desenharBlocoChuvaProducao(){
+  const alvo = document.getElementById('bloco-chuva-producao');
+  if(!alvo) return;
+  const hojeIso = new Date().toISOString().slice(0,10);
+  const c = compararProducaoPorChuva(PRODUCAO_LEITE, hojeIso);
+  const L = v => formatarLitros(v) + ' L';
+  let corpo;
+  if(c.estado === 'sem_dados'){
+    corpo = '<div class="legenda-muted" style="margin-bottom:0">Ao lançar a produção do dia, marque se choveu. Com alguns dias anotados, o app compara a produção dos dias de chuva com a dos dias secos.</div>';
+  } else if(c.estado === 'insuficiente'){
+    const falta = [];
+    if(c.faltamSecos) falta.push(c.faltamSecos + (c.faltamSecos === 1 ? ' dia sem chuva' : ' dias sem chuva'));
+    if(c.faltamChuva) falta.push(c.faltamChuva + (c.faltamChuva === 1 ? ' dia de chuva' : ' dias de chuva'));
+    corpo = '<div class="legenda-muted" style="margin-bottom:0">Nos últimos '+c.janelaDias+' dias você anotou '+c.secos.dias+(c.secos.dias===1?' dia':' dias')+' sem chuva e '+c.comChuva.dias+(c.comChuva.dias===1?' dia':' dias')+' de chuva. Para comparar, faltam '+falta.join(' e ')+' (o mínimo é '+c.minimoDias+' de cada).</div>';
+  } else {
+    const dif = c.diferencaPct;
+    let frase;
+    if(dif === null || Math.abs(dif) < 2) frase = 'A produção nos dias de chuva ficou praticamente igual à dos dias sem chuva.';
+    else frase = 'Nos dias de chuva, a produção média foi '+String(Math.abs(dif).toFixed(1)).replace('.', ',')+'% '+(dif < 0 ? 'menor' : 'maior')+' que nos dias sem chuva.';
+    const linhaCat = k => {
+      const g = c.porCategoria[k];
+      return '<div style="display:flex; justify-content:space-between; gap:10px; font-size:13.5px; padding:3px 0"><span>'+CATEGORIAS_CHUVA[k]+'</span><span style="font-family:var(--fonte-dados)">'+(g.dias ? L(g.media)+' · '+g.dias+(g.dias===1?' dia':' dias') : '—')+'</span></div>';
+    };
+    corpo = '<div style="font-weight:700; margin-bottom:8px">'+frase+'</div>'
+      + '<div style="display:flex; justify-content:space-between; gap:10px; font-size:14px; padding:3px 0"><span>Dias sem chuva</span><span style="font-family:var(--fonte-dados); font-weight:600">'+L(c.secos.media)+' por dia · '+c.secos.dias+' dias</span></div>'
+      + '<div style="display:flex; justify-content:space-between; gap:10px; font-size:14px; padding:3px 0"><span>Dias de chuva</span><span style="font-family:var(--fonte-dados); font-weight:600">'+L(c.comChuva.media)+' por dia · '+c.comChuva.dias+' dias</span></div>'
+      + '<div class="legenda-muted" style="margin:10px 0 4px">Por tipo de chuva (média por dia):</div>'
+      + Object.keys(CATEGORIAS_CHUVA).map(linhaCat).join('')
+      + '<div class="legenda-muted" style="margin:10px 0 0; font-size:12.5px">Média dos últimos '+c.janelaDias+' dias, somando manhã e tarde. É só uma comparação: a fase da lactação, a alimentação e o número de vacas ordenhadas também mudam a produção. Use como pista, não como conclusão.</div>';
+  }
+  alvo.innerHTML = '<div class="rotulo-secao">Chuva e produção</div><div class="cartao">'+corpo+'</div>';
+}
+
 function htmlLinhaDiaProducao(r){
   const manha = Number(r.litros_manha)||0;
   const tarde = Number(r.litros_tarde)||0;
   const temProblema = r.problemas_animais_manha || r.problemas_equipamento_manha || r.problemas_animais_tarde || r.problemas_equipamento_tarde;
   const metodo = r.metodo_registro === 'individual' ? ' · por vaca' : '';
-  return linhaCompacta('gota', formatarData(r.data), 'Manhã: '+manha+' L · Tarde: '+tarde+' L'+metodo, formatarLitros(manha+tarde)+' L', 'abrirRegistroProducao(\''+r.data+'\')', temProblema ? 'var(--perigo)' : null);
+  const chuvaTxt = rotuloChuvaDia(r) ? ' · '+rotuloChuvaDia(r) : '';
+  return linhaCompacta('gota', formatarData(r.data), 'Manhã: '+manha+' L · Tarde: '+tarde+' L'+metodo+chuvaTxt, formatarLitros(manha+tarde)+' L', 'abrirRegistroProducao(\''+r.data+'\')', temProblema ? 'var(--perigo)' : null);
 }
 
 function desenharProducaoLitros(){
@@ -2889,9 +3014,10 @@ async function renderProducao(){
   const cabecalho = '<div class="rotulo-secao" style="margin-top:0">Produção de leite</div>'
     + '<button class="botao botao-primario" style="margin-bottom:18px; padding:9px 16px; font-size:13px" onclick="abrirRegistroProducao()">'+iconeInline('gota',15)+' Registrar produção do dia</button>';
 
-  document.getElementById('tela-producao').innerHTML = cabecalho + '<div class="rotulo-secao">Histórico anual de produção</div><div id="producao-litros"></div><div id="bloco-preco-leite"></div>' + renderSecaoQualidade();
+  document.getElementById('tela-producao').innerHTML = cabecalho + '<div class="rotulo-secao">Histórico anual de produção</div><div id="producao-litros"></div><div id="bloco-preco-leite"></div><div id="bloco-chuva-producao"></div>' + renderSecaoQualidade();
   desenharProducaoLitros();
   desenharBlocoPrecoLeite();
+  desenharBlocoChuvaProducao();
 }
 
 /* ======================= PREÇO DO LEITE E VALOR RECEBIDO (por mês) ======================= */
@@ -3298,6 +3424,7 @@ function abrirFormularioProducaoRebanho(data){
     '<button onclick="abrirEscolhaMetodoProducao(\''+data+'\')" style="background:none; border:none; color:var(--azul); padding:0; margin-bottom:12px; cursor:pointer; font-size:14px">‹ Voltar / trocar método</button>'
     + '<div class="rotulo-secao" style="margin-top:0">Produção por rebanho — '+formatarData(data)+'</div>'
     + '<input type="hidden" id="campo-data-producao" value="'+data+'">'
+    + camposChuvaDia(registro)
     + camposSessaoOrdenha('manha', 'Ordenha da manhã', registro)
     + camposSessaoOrdenha('tarde', 'Ordenha da tarde', registro)
     + '<div id="mensagem-producao" class="legenda-muted" style="min-height:18px; margin-top:14px"></div>'
@@ -3317,6 +3444,7 @@ async function abrirFormularioProducaoIndividual(data){
     + '<div class="rotulo-secao" style="margin-top:0; color:var(--azul); font-weight:800">Produção por vaca — '+formatarData(data)+'</div>'
     + '<div class="legenda-muted" style="margin-bottom:10px">Digite o volume de cada vaca lactante. O total de cada sessão é somado automaticamente logo abaixo da tabela.'+(SINCRONIZAR_TOTAL_DIA ? ' O total do dia já fica salvo a cada valor digitado; o botão Salvar grava também os detalhes da ordenha (tipo, ordenhador, higienização e problemas).' : '')+'</div>'
     + '<input type="hidden" id="campo-data-producao" value="'+data+'">'
+    + camposChuvaDia(registro)
     + '<div id="aviso-vacas-faltando" class="legenda-muted" style="margin-bottom:8px"></div>'
     + '<div id="tabela-ordenha-individual-modal"><div class="legenda-muted">Carregando vacas...</div></div>'
     + camposSessaoOrdenha('manha', 'Ordenha da manhã', registro, true)
@@ -3487,19 +3615,31 @@ async function salvarProducao(){
     ['problemas_equipamento_'+sufixo]: document.getElementById('campo-prob-equip-'+sufixo).value.trim() || null
   });
 
-  const registro = { produtor_id: usuarioAtual.id, data, metodo_registro: METODO_PRODUCAO_ATUAL, ...lerSessao('manha'), ...lerSessao('tarde') };
+  const chuvaLida = validarChuvaDoDia(document.getElementById('campo-chuva').value, document.getElementById('campo-chuva-mm').value);
+  if(!chuvaLida.ok){ msg.textContent = chuvaLida.erro; msg.style.color = 'var(--perigo)'; return; }
+
+  const registro = { produtor_id: usuarioAtual.id, data, metodo_registro: METODO_PRODUCAO_ATUAL, ...lerSessao('manha'), ...lerSessao('tarde'), chuva: chuvaLida.chuva, chuva_mm: chuvaLida.mm };
 
   msg.textContent = 'Salvando...';
   msg.style.color = 'var(--tinta-suave)';
 
-  const { error } = await sb.from('producao_leite')
+  let { error } = await sb.from('producao_leite')
     .upsert(registro, { onConflict: 'produtor_id,data' });
+
+  // Se o banco ainda não tem as colunas de chuva, a produção não pode ficar sem ser salva: grava sem a chuva e avisa.
+  let chuvaNaoGravada = false;
+  if(error && colunaDeChuvaAusente(error)){
+    const { chuva, chuva_mm, ...semChuva } = registro;
+    ({ error } = await sb.from('producao_leite').upsert(semChuva, { onConflict: 'produtor_id,data' }));
+    chuvaNaoGravada = !error && chuvaLida.chuva !== null;
+  }
 
   if(error){ msg.textContent = mensagemErroAmigavel(error, 'salvar'); msg.style.color = 'var(--perigo)'; return; }
 
   PRODUCAO_DESATUALIZADA = false;
   fecharModal();
   renderProducao();
+  if(chuvaNaoGravada) avisar('A produção foi salva, mas a chuva não foi gravada porque o banco de dados ainda não foi atualizado. Avise o responsável pelo aplicativo.', 'Produção salva');
 }
 
 function excluirProducao(data){
@@ -5141,7 +5281,7 @@ async function exportarCSVProdutor(){
   const { data: individual, error: erroInd } = await buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', usuarioAtual.id).gte('data', inicio).lte('data', fim).order('data', { ascending:true }).order('animal_id', { ascending:true }));
   if(erroInd){ avisar(mensagemErroAmigavel(erroInd, 'gerar o CSV')); return; }
   const linhas = montarLinhasCSVProducao(data, individual, false);
-  baixarCSV('leitefacil_producao_'+inicio+'_a_'+fim+'.csv', ['data','litros_manha','litros_tarde','total','vacas_ordenhadas'], linhas);
+  baixarCSV('leitefacil_producao_'+inicio+'_a_'+fim+'.csv', ['data','litros_manha','litros_tarde','total','vacas_ordenhadas','chuva','chuva_mm'], linhas);
 }
 
 async function gerarPDFProdutor(){
@@ -6233,7 +6373,7 @@ async function baixarCSVProducaoCompleta(produtorId, nomeProdutor){
   if(erroInd){ avisar(mensagemErroAmigavel(erroInd, 'gerar o CSV')); return; }
   const linhas = montarLinhasCSVProducao(data, individual, true);
   const nomeArquivo = 'leitefacil_producao_'+(nomeProdutor||'produtor').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'_')+'.csv';
-  baixarCSV(nomeArquivo, ['data','litros_manha','litros_tarde','total','vacas_ordenhadas','metodo'], linhas);
+  baixarCSV(nomeArquivo, ['data','litros_manha','litros_tarde','total','vacas_ordenhadas','chuva','chuva_mm','metodo'], linhas);
 }
 
 async function exportarCSVFichaProdutorAdmin(produtorId){
@@ -6302,7 +6442,7 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p, ja
     conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção de leite (histórico completo)</h2>';
     conteudo += '<div class="cartao">Total histórico: <strong>'+totalLitros.toFixed(1)+' L</strong> — Registros: '+producao.length+'</div>';
     conteudo += producao.length
-      ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Manhã (L)</th><th>Tarde (L)</th><th>Método</th></tr></thead><tbody>'+producao.slice(-28).map(r=>'<tr><td>'+formatarData(r.data)+'</td><td>'+(r.litros_manha||0)+'</td><td>'+(r.litros_tarde||0)+'</td><td>'+(r.metodo_registro==='individual'?'Por vaca':'Por rebanho')+'</td></tr>').join('')+'</tbody></table>'
+      ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Manhã (L)</th><th>Tarde (L)</th><th>Chuva</th><th>Método</th></tr></thead><tbody>'+producao.slice(-28).map(r=>'<tr><td>'+formatarData(r.data)+'</td><td>'+(r.litros_manha||0)+'</td><td>'+(r.litros_tarde||0)+'</td><td>'+(rotuloChuvaDia(r)||'—')+'</td><td>'+(r.metodo_registro==='individual'?'Por vaca':'Por rebanho')+'</td></tr>').join('')+'</tbody></table>'
       : '<div class="legenda-muted">Nenhum registro de produção.</div>';
 
     conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Produção por vaca (litros por dia)</h2>';
