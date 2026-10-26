@@ -1,5 +1,77 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
+<!--
+==============================================================================
+ LEITEFÁCIL — MAPA DO ARQUIVO (leia isto primeiro)
+==============================================================================
+ Todo o aplicativo está neste único arquivo, em três partes, nesta ordem:
+
+   1) VISUAL (CSS)        entre <style> e </style>
+   2) TELAS (HTML)        logo depois de <body>; quase todas começam vazias
+   3) LÓGICA (JavaScript) entre <script> e </script>, no final do arquivo
+
+ Como navegar: cada trecho importante tem uma marca com um código entre
+ colchetes, como [J05]. Use a busca do editor (Ctrl+F) e digite o código.
+ Os códigos começam com C (CSS), H (HTML) ou J (JavaScript).
+
+ Como o app funciona, em resumo: o JavaScript fala com o banco de dados
+ (Supabase), pega os dados do produtor logado e desenha o conteúdo dentro das
+ <section id="tela-..."> da parte H2. As funções "render..." desenham uma tela,
+ as "abrir..." abrem um formulário, as "salvar..." gravam no banco, e as
+ "calcular..." são contas puras (testadas em testes/testar-calculos.js).
+ O banco de dados está descrito em schema.sql, fora deste arquivo.
+
+ VISUAL (CSS)
+   [C1] cores e fontes            [C5] botões e campos de formulário
+   [C2] tela de login             [C6] perfil, menus, tabelas e cartões
+   [C3] menu lateral e topo       [C7] menu inferior (celular) e janelas
+   [C4] vídeo, primeiros passos e Ajuda
+
+ TELAS (HTML)
+   [H1] login e cadastro          [H3] janela (modal)
+   [H2] app: menu e as telas      [H4] caixa de confirmação
+
+ LÓGICA (JavaScript), na ordem em que aparece no arquivo
+   [J01] conexão com o banco e monitoramento de erros
+   [J02] funções de apoio: ícones, textos, CSV e relatórios
+   [J03] entrada no app: login, cadastro e início da sessão
+   [J04] navegação entre as abas e tela Início
+   [J05] primeiros passos e Ajuda
+   [J06] avisos do Início (dar baixa, adiar, o que fazer hoje)
+   [J07] ficha do produtor e visão do colaborador
+   [J08] meus animais: lista, busca, cadastro e curva de lactação
+   [J09] regras da reprodução e avisos de parto, secagem e cio
+   [J10] eventos reprodutivos: cio, cobertura, parto, aborto, secagem
+   [J22] manejo sanitário (vacinas, tratamentos, carência)
+   [J23] produção de leite: histórico por ano e mês
+   [J24] chuva e produção
+   [J25] preço do leite e valor recebido
+   [J26] qualidade do leite (CCS e CBT)
+   [J11] formulário da produção do dia (por rebanho e por vaca)
+   [J27] pesagem dos animais
+   [J28] calendário de atividades
+   [J29] aba Reprodução (painel do rebanho)
+   [J13] estoque (também há trechos de apoio logo antes da Nutrição)
+   [J12] nutrição: alimentação e pastagem
+   [J30] financeiro (privado do produtor)
+   [J31] indicadores do produtor
+   [J14] relatórios do produtor (CSV e PDF)
+   [J15] meus animais: edição e exclusão
+   [J32] propriedade
+   [J16] perfil e colaboradores
+   [J17] painel do administrador
+   [J18] fichas e exportações (Excel, CSV e PDF)
+   [J19] janelas, confirmações e termos de uso
+   [J20] avisos no celular (notificações)
+   [J21] sair e inicialização final
+
+ Atenção ao mexer: os testes (testes/testar-calculos.js) procuram as funções
+ de cálculo pelo NOME, dentro deste arquivo. Se mudar o nome de uma função
+ que aparece lá, atualize também o teste.
+ Arquivos ao lado deste: service-worker.js (uso sem internet), manifest.json
+ (instalação no celular), schema.sql (banco), supabase/ (avisos das 7h).
+==============================================================================
+-->
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -14,6 +86,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="LeiteFácil">
 <style>
+  /* [C1] CORES E FONTES (para mudar o visual do app, comece por aqui) */
   :root{
     --creme: #FAF6EC;
     --creme-alt: #F1EADA;
@@ -64,6 +137,7 @@
       repeating-linear-gradient(115deg, rgba(255,255,255,0.04) 0px, rgba(255,255,255,0.04) 2px, transparent 2px, transparent 30px),
       linear-gradient(165deg, #35638C 0%, #16324A 100%);
   }
+  /* [C2] TELA DE LOGIN */
   .cartao-login{
     background: var(--branco);
     width:100%; max-width:420px;
@@ -84,6 +158,7 @@
 
   #aplicativo{ display:flex; height:100vh; }
 
+  /* [C3] MENU LATERAL E BARRA DO TOPO */
   .barra-lateral{
     display:none;
     width:244px; flex-shrink:0;
@@ -130,6 +205,7 @@
 
   .saudacao{ font-family: var(--fonte-titulo); font-weight:700; font-size:27px; margin-bottom:4px; }
   .legenda-muted{ color: var(--tinta-suave); font-size:14.5px; margin-bottom:26px; }
+  /* [C4] BOTÃO DO VÍDEO, PRIMEIROS PASSOS E AJUDA */
   .botao-video{ width:100%; flex-direction:column; gap:2px; margin:2px 0 20px; padding:12px 18px; background: var(--creme-alt); color: var(--azul); border:1.5px solid var(--azul); text-decoration:none; }
   .botao-video .linha-principal{ display:inline-flex; align-items:center; gap:8px; }
   .botao-video .duracao{ font-size:12px; font-weight:600; color: var(--tinta-suave); }
@@ -146,6 +222,7 @@
   .ajuda-pergunta .resposta{ color: var(--tinta); font-size:14px; line-height:1.55; padding:0 0 14px; }
   .rotulo-secao{ font-family: var(--fonte-titulo); font-weight:600; font-size:14px; text-transform:uppercase; letter-spacing:0.4px; color: var(--celeiro); margin: 4px 0 14px; }
 
+  /* [C5] BOTÕES E CAMPOS DE FORMULÁRIO */
   .botao{ display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:14px 22px; border-radius:999px; font-weight:700; font-size:14.5px; transition: transform 0.12s ease, filter 0.12s ease; }
   .botao:active{ transform: scale(0.97); }
   .botao svg{ width:18px; height:18px; }
@@ -168,6 +245,7 @@
   .item-servico-extra{ display:flex; align-items:center; gap:8px; padding:7px 0; font-size:14px; font-weight:600; color:var(--tinta); cursor:pointer; }
   .item-servico-extra input{ width:auto; flex-shrink:0; margin:0; }
 
+  /* [C6] PERFIL, MENUS, TABELAS E CARTÕES */
   .capa-perfil{ background: linear-gradient(135deg, var(--azul) 0%, var(--azul-escuro) 100%); border-radius: var(--raio-lg); padding:22px 20px; color: var(--creme); margin-bottom:18px; position:relative; overflow:hidden; }
   .capa-perfil::after{ content:""; position:absolute; inset:0; background-image: repeating-linear-gradient(120deg, rgba(255,255,255,0.05) 0px, rgba(255,255,255,0.05) 2px, transparent 2px, transparent 22px); }
   .capa-perfil .conteudo{ position:relative; display:flex; gap:14px; align-items:center; text-align:left; }
@@ -211,6 +289,7 @@
   table.tabela-admin.matriz th, table.tabela-admin.matriz td{ padding:4px 5px; font-size:11px; text-align:right; white-space:nowrap; }
   table.tabela-admin.matriz th:first-child, table.tabela-admin.matriz td:first-child{ text-align:left; }
 
+  /* [C7] MENU INFERIOR (CELULAR) E JANELAS */
   .nav-inferior-mobile{ display:flex; position:fixed; left:0; right:0; bottom:0; z-index:30; background: var(--branco); border-top:1px dashed var(--zinco-claro); padding: 8px 6px calc(env(safe-area-inset-bottom, 8px) + 8px); }
   @media (min-width:900px){ .nav-inferior-mobile{ display:none; } }
   .nav-inferior-mobile button{ flex:1; display:flex; flex-direction:column; align-items:center; gap:4px; padding:6px 0; font-size:11px; font-weight:700; color: var(--zinco); border-radius:12px; }
@@ -235,6 +314,7 @@
 </head>
 <body>
 
+<!-- [H1] TELA DE LOGIN E CADASTRO -->
 <div id="pagina-login">
   <div class="cartao-login">
     <div class="selo-grande" id="icone-login"></div>
@@ -266,6 +346,7 @@
   </div>
 </div>
 
+<!-- [H2] O APP DEPOIS DE ENTRAR: menu lateral, barra do topo e as telas (cada <section id="tela-..."> é preenchida pelo JavaScript) -->
 <div id="aplicativo" class="oculto">
   <aside class="barra-lateral">
     <div class="lockup">
@@ -303,6 +384,7 @@
   <nav class="nav-inferior-mobile" id="nav-inferior-mobile"></nav>
 </div>
 
+<!-- [H3] JANELA (MODAL) USADA PELOS FORMULÁRIOS E FICHAS -->
 <div id="camada-modal">
   <div class="modal">
     <button class="fechar-modal" onclick="fecharModal()" id="icone-fechar-modal"></button>
@@ -310,6 +392,7 @@
   </div>
 </div>
 
+<!-- [H4] CAIXA DE CONFIRMAÇÃO ("Tem certeza?") -->
 <div id="camada-confirmacao">
   <div class="caixa-confirmacao" id="caixa-confirmacao"></div>
 </div>
@@ -318,6 +401,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+/* ======================= [J01] CONEXÃO COM O BANCO DE DADOS E MONITORAMENTO DE ERROS ======================= */
 const SUPABASE_URL = 'https://uknaypyjykbetxdwgnxv.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_sOtcjxZ9R7ZyE-CkphzRdw_HV2QeeJz';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -351,6 +435,7 @@ window.addEventListener('unhandledrejection', function(evento){
   registrarErro('Promise rejeitada: ' + (motivo && motivo.message ? motivo.message : motivo), motivo && motivo.stack, 'promise rejeitada');
 });
 
+/* ======================= [J02] FUNÇÕES DE APOIO: ÍCONES, TEXTOS, CSV E RELATÓRIOS ======================= */
 function ic(inner, size){ size = size || 24; return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+inner+'</svg>'; }
 const ICONES = {
   logo: '<path d="M9 3h6l1 4H8z"/><path d="M8 7h8l-1 13a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1z"/>',
@@ -548,6 +633,7 @@ const TERMO_USO_HTML =
   + '<p style="margin-bottom:0"><strong>Dúvidas ou pedido de exclusão de dados:</strong> cbemm2@gmail.com. Última atualização: outubro de 2026.</p>'
   + '</div>';
 
+/* ======================= [J03] ENTRADA NO APP: LOGIN, CADASTRO E INÍCIO DA SESSÃO ======================= */
 function mostrarMensagemLogin(msg, tipo){
   const el = document.getElementById('mensagem-login');
   el.textContent = msg || '';
@@ -666,6 +752,7 @@ async function verificarSeSouAdmin(){
   souAdmin = !!data;
 }
 
+/* ======================= [J04] NAVEGAÇÃO ENTRE AS ABAS E TELA INÍCIO ======================= */
 function abasAtivas(){
   const abas = [
     { id:'tela-inicio', rot:'Início', ic:'casa' },
@@ -738,6 +825,7 @@ async function renderInicio(){
   await renderAlertasNoInicio();
 }
 
+/* ======================= [J05] PRIMEIROS PASSOS E AJUDA ======================= */
 // ---------- Primeiros passos (cartão no Início) ----------
 // Lista curta do que um produtor novo precisa fazer para o app começar a servir. Cada passo se marca
 // sozinho a partir dos dados que já existem. Quando todos estão feitos, o cartão desaparece. Se não for
@@ -855,6 +943,7 @@ let AVISO_EM_ADIAMENTO = null;
 let AVISOS_VIGENTES = null;
 let GERACAO_AVISOS = 0;
 
+/* ======================= [J06] AVISOS DA TELA INÍCIO (dar baixa, adiar, o que fazer hoje) ======================= */
 // Recarrega os avisos dispensados e redesenha os três blocos que dependem deles. Se a tabela não puder ser lida,
 // nada é escondido (melhor mostrar um aviso a mais do que sumir com um aviso importante).
 async function atualizarAvisosInicio(){
@@ -1015,6 +1104,7 @@ async function renderAlertaQualidadeInicio(){
   return { html, vigentes };
 }
 
+/* ======================= [J07] FICHA DO PRODUTOR E VISÃO DO COLABORADOR ======================= */
 function blocoAcessosColaborador(){
   if(!MEUS_ACESSOS_COLABORADOR.length) return '';
   const linhas = MEUS_ACESSOS_COLABORADOR.map(c=>{
@@ -1171,6 +1261,7 @@ const STATUS_ANIMAL = {
 let MEUS_ANIMAIS = [];
 let FILTRO_LOTE_ATUAL = 'todos';
 
+/* ======================= [J08] MEUS ANIMAIS (lista, busca, cadastro e curva de lactação) ======================= */
 // Calcula automaticamente o lote do animal (bezerra / novilha / lactante /
 // seca) a partir da idade e do histórico de eventos reprodutivos — o
 // produtor não escolhe mais isso manualmente, o app decide sozinho.
@@ -1644,6 +1735,7 @@ const DIAS_MAX_AVISO_SEM_DIAGNOSTICO = 180; // depois disso o parto já está pe
 const DIAS_MAX_DIAGNOSTICO = 300;           // diagnóstico de gestação além disso depois da cobertura é quase certamente erro de digitação
 const DIAS_JANELA_REPETICAO_CIO = 35; // cio após a cobertura dentro desse prazo conta como "repetição" (volta ao cio)
 
+/* ======================= [J09] REGRAS DA REPRODUÇÃO E AVISOS DE PARTO, SECAGEM E CIO ======================= */
 // ---------- Diagnóstico de gestação (guardado na própria cobertura) ----------
 // Cada cobertura pode ter o resultado do diagnóstico: diagnostico_gestacao ('prenhe' | 'vazia') e
 // diagnostico_data. Sem diagnóstico, a prenhez continua "presumida" (como sempre foi). Fica na cobertura,
@@ -2155,6 +2247,7 @@ function somarDias(dataIso, dias){
   return d.toISOString().slice(0,10);
 }
 
+/* ======================= [J10] EVENTOS REPRODUTIVOS (cio, cobertura, parto, aborto, secagem) ======================= */
 async function renderHistoricoReprodutivo(animalId){
   const alvo = document.getElementById('secao-reprodutivo');
   if(!alvo) return;
@@ -2507,7 +2600,7 @@ function excluirEventoReprodutivo(id, animalId){
   }, { textoConfirmar:'Excluir' });
 }
 
-/* ======================= MANEJO SANITÁRIO ======================= */
+/* ======================= [J22] MANEJO SANITÁRIO ======================= */
 // Tipos antigos (vacina/tratamento/medicamento/outro) ficam aqui só para continuar
 // exibindo corretamente registros já salvos antes desta atualização. O formulário
 // de novos registros usa apenas as chaves de CATEGORIAS_SANITARIO_FORM, abaixo.
@@ -2667,7 +2760,7 @@ function excluirEventoSanitario(id, animalId){
   }, { textoConfirmar:'Excluir' });
 }
 
-/* ======================= PRODUÇÃO DE LEITE (por rebanho, manhã/tarde) ======================= */
+/* ======================= [J23] PRODUÇÃO DE LEITE (por rebanho, manhã/tarde) ======================= */
 let PRODUCAO_LEITE = [];
 
 function linhaCompacta(icone, titulo, subtitulo, valorDireita, onclickAttr, corBorda){
@@ -2829,7 +2922,7 @@ function alternarMesProducao(chave){
   desenharProducaoLitros();
 }
 
-/* ======================= CHUVA E PRODUÇÃO ======================= */
+/* ======================= [J24] CHUVA E PRODUÇÃO ======================= */
 // A chuva do dia é anotada junto com a produção (uma categoria e, se o produtor tiver pluviômetro, os milímetros).
 // Com alguns dias anotados, o app compara a produção dos dias de chuva com a dos dias secos. É só uma comparação
 // de médias: fase da lactação, alimentação e número de vacas ordenhadas também mexem na produção.
@@ -3020,7 +3113,7 @@ async function renderProducao(){
   desenharBlocoChuvaProducao();
 }
 
-/* ======================= PREÇO DO LEITE E VALOR RECEBIDO (por mês) ======================= */
+/* ======================= [J25] PREÇO DO LEITE E VALOR RECEBIDO (por mês) ======================= */
 const PRECO_MAX_LITRO = 20;   // acima disso, quase certamente é erro de digitação (preço do litro em R$)
 
 function formatarReais(v){
@@ -3200,7 +3293,7 @@ function removerPrecoLeiteMes(){
   }, { textoConfirmar:'Remover' });
 }
 
-/* ======================= QUALIDADE DO LEITE (CCS/CBT) ======================= */
+/* ======================= [J26] QUALIDADE DO LEITE (CCS/CBT) ======================= */
 let QUALIDADE_LEITE = [];
 const LIMITE_CCS = 500000; // células/mL — IN 76/77 MAPA (máximo, média geom. trimestral)
 const LIMITE_CBT = 300000; // UFC/mL — IN 76/77 MAPA (máximo, média geom. trimestral)
@@ -3339,6 +3432,7 @@ const TIPOS_ORDENHA = { manual:'Manual', mecanica:'Mecânica', robotica:'Robóti
 const HIGIENIZACAO_ORDENHA = { total:'Cumpridos totalmente', parcial:'Cumprido parcialmente', nao_cumprido:'Não cumpridos' };
 const TIPOS_RESFRIAMENTO = { individual:'Individual (latão/recipiente por vaca)', coletivo:'Tanque coletivo' };
 
+/* ======================= [J11] FORMULÁRIO DA PRODUÇÃO DO DIA (por rebanho e por vaca) ======================= */
 function camposSessaoOrdenha(sufixo, tituloSessao, registro, litrosReadonly){
   const g = campo => (registro && registro[campo] !== null && registro[campo] !== undefined) ? registro[campo] : '';
   return '<div class="rotulo-secao" style="font-size:14px; margin-top:18px; color:var(--azul); font-weight:800">'+tituloSessao+'</div>'
@@ -3651,7 +3745,7 @@ function excluirProducao(data){
   }, { textoConfirmar:'Excluir' });
 }
 
-/* ======================= PESAGEM (bezerras, novilhas, secas e lactantes) =======================
+/* ======================= [J27] PESAGEM (bezerras, novilhas, secas e lactantes) =======================
    Pedido da FEI (set/2026): acompanhar o peso dos animais, pesados mensalmente. A tela é em
    lote (uma linha por animal, igual à ordenha por vaca), mas o produtor escolhe livremente quais
    lotes pesar num dia — pode ser só as bezerras, só as lactantes, o rebanho todo, o que fizer
@@ -3877,7 +3971,7 @@ function excluirPesagem(id, animalId){
   }, { textoConfirmar:'Excluir' });
 }
 
-/* ======================= CALENDÁRIO DE ATIVIDADES (exibido na tela de Início) ======================= */
+/* ======================= [J28] CALENDÁRIO DE ATIVIDADES (exibido na tela de Início) ======================= */
 async function buscarAlertasCalendario(){
   const [{ data: meusAnimais, error: erroAnimais }, { data: eventosRepro, error: erroRepro }, { data: eventosSan, error: erroSan }, { data: eventosDose, error: erroDose }] = await Promise.all([
     sb.from('animais').select('id, identificacao').eq('produtor_id', usuarioAtual.id),
@@ -3922,7 +4016,7 @@ async function buscarAlertasCalendario(){
 }
 
 
-/* ======================= ABA REPRODUÇÃO (painel do rebanho) ======================= */
+/* ======================= [J29] ABA REPRODUÇÃO (painel do rebanho) ======================= */
 const DIAS_PAINEL_SECAGEM = 60;   // secagens previstas daqui a mais que isso ainda não aparecem no painel
 const TAMANHO_PAGINA_HISTORICO_REPRO = 30;
 
@@ -4085,7 +4179,7 @@ async function renderReproducao(){
   desenharHistoricoRepro();
 }
 
-/* ======================= ESTOQUE (por categoria) ======================= */
+/* ======================= [J13] ESTOQUE (por categoria) ======================= */
 /* ======================= ESTOQUE ======================= */
 // Mesma estrutura de 7 categorias do Financeiro, mas aqui cada categoria tem
 // "grupos" (a subcategoria) e cada grupo tem uma lista de itens específicos.
@@ -4164,6 +4258,7 @@ let MEUS_PIQUETES = [];
 let MINHA_ALIMENTACAO = [];
 let MEUS_CICLOS_PASTEJO = [];
 
+/* ======================= [J12] NUTRIÇÃO (alimentação e pastagem) ======================= */
 async function renderNutricao(){
   document.getElementById('tela-nutricao').innerHTML = '<div class="legenda-muted">Carregando nutrição...</div>';
   const [{ data: piquetes, error: erroPiquetes }] = await Promise.all([
@@ -4408,6 +4503,7 @@ function excluirCiclo(piqueteId, cicloId){
   }, { titulo:'Excluir ciclo de pastejo?', textoConfirmar:'Excluir' });
 }
 
+/* ======================= [J13] ESTOQUE (telas, continuação) ======================= */
 async function renderEstoque(){
   document.getElementById('tela-estoque').innerHTML = '<div class="legenda-muted">Carregando estoque...</div>';
   const { data, error } = await sb.from('estoque_itens').select('*').eq('produtor_id', usuarioAtual.id).order('nome', { ascending:true });
@@ -4646,7 +4742,7 @@ function excluirItemEstoque(id, categoriaOrigem){
   }, { textoConfirmar:'Excluir' });
 }
 
-/* ======================= FINANCEIRO (privado do produtor) ======================= */
+/* ======================= [J30] FINANCEIRO (privado do produtor) ======================= */
 /* ======================= FINANCEIRO ======================= */
 const CATEGORIAS_RECEITA = ['Venda de leite','Venda de animais','Outros'];
 
@@ -5126,7 +5222,7 @@ function excluirLancamento(id){
   }, { textoConfirmar:'Excluir' });
 }
 
-/* ======================= INDICADORES (produtor) ======================= */
+/* ======================= [J31] INDICADORES (produtor) ======================= */
 function diasEntre(dataIsoA, dataIsoB){
   const a = new Date(dataIsoA + 'T00:00:00');
   const b = new Date(dataIsoB + 'T00:00:00');
@@ -5259,6 +5355,7 @@ async function renderIndicadores(){
     + blocoRelatorios();
 }
 
+/* ======================= [J14] RELATÓRIOS DO PRODUTOR (CSV e PDF) ======================= */
 function blocoRelatorios(){
   const hoje = new Date().toISOString().slice(0,10);
   const trintaDiasAtras = somarDias(hoje, -30);
@@ -5374,6 +5471,7 @@ async function gerarPDFProdutor(){
   imprimirRelatorio(janela, 'Relatório LeiteFácil', conteudo);
 }
 
+/* ======================= [J15] MEUS ANIMAIS (edição e exclusão, continuação) ======================= */
 async function salvarEdicaoAnimal(id){
   const identificacao = document.getElementById('campo-identificacao').value.trim();
   const grau_sangue = document.getElementById('campo-grau-sangue').value.trim();
@@ -5414,7 +5512,7 @@ function excluirAnimal(id){
   }, { textoConfirmar:'Excluir' });
 }
 
-/* ======================= PROPRIEDADE ======================= */
+/* ======================= [J32] PROPRIEDADE ======================= */
 const ESTADOS_BR = [
   ['AC','Acre'],['AL','Alagoas'],['AP','Amapá'],['AM','Amazonas'],['BA','Bahia'],['CE','Ceará'],
   ['DF','Distrito Federal'],['ES','Espírito Santo'],['GO','Goiás'],['MA','Maranhão'],['MT','Mato Grosso'],
@@ -5646,6 +5744,7 @@ async function salvarPropriedade(){
   msg.style.color = 'var(--sucesso)';
 }
 
+/* ======================= [J16] PERFIL E COLABORADORES ======================= */
 function renderPerfil(){
   const p = meuProdutor || {};
   document.getElementById('tela-perfil').innerHTML =
@@ -5779,6 +5878,7 @@ async function salvarPerfil(){
   renderInicio();
 }
 
+/* ======================= [J17] PAINEL DO ADMINISTRADOR ======================= */
 // Cadastro "sem uso": nenhum animal e nenhuma produção lançada. Quem passar a usar o app deixa de ser sem uso sozinho.
 function ehCadastroSemUso(qtdAnimais, temProducao){
   return !(Number(qtdAnimais) > 0) && !temProducao;
@@ -6012,6 +6112,7 @@ async function abrirFichaProdutorAdmin(produtorId){
   document.getElementById('secao-ficha-admin').innerHTML = blocoPerfilPropriedade + blocoIndicadores + htmlModulos;
 }
 
+/* ======================= [J18] FICHAS E EXPORTAÇÕES (Excel, CSV e PDF, para admin e colaborador) ======================= */
 // Texto de um item de "alimentos produzidos" (Propriedade), independente do tipo dele.
 function formatarItemAlimentoProduzido(item){
   let texto = escaparHTML(item.chave);
@@ -6566,6 +6667,7 @@ function gerarPDFAdmin(){
   imprimirRelatorio(janela, 'Relatório LeiteFácil — Painel administrativo', conteudo);
 }
 
+/* ======================= [J19] JANELAS, CONFIRMAÇÕES E TERMOS DE USO ======================= */
 function abrirModal(bloqueado){
   MODAL_BLOQUEADO = !!bloqueado;
   document.getElementById('icone-fechar-modal').style.display = MODAL_BLOQUEADO ? 'none' : '';
@@ -6641,6 +6743,7 @@ async function aceitarTermosDeUso(){
 // Chave pública VAPID (não é segredo — pode ficar exposta no código do site).
 const VAPID_CHAVE_PUBLICA = 'BGTcEfnGzWkzQLdaznjDLKpJY9UlEQ1Nwt5NQk44D3PMJtG1GsK5P3CHlz4g0W78mojw3ksK_jB3ZQgq7MnFrMA';
 
+/* ======================= [J20] AVISOS NO CELULAR (notificações) ======================= */
 function base64UrlParaUint8Array(base64Url){
   const preenchimento = '='.repeat((4 - base64Url.length % 4) % 4);
   const base64 = (base64Url + preenchimento).replace(/-/g, '+').replace(/_/g, '/');
@@ -6754,6 +6857,7 @@ async function alternarNotificacoesPush(){
   await atualizarStatusNotificacoesPush();
 }
 
+/* ======================= [J21] SAIR E INICIALIZAÇÃO FINAL ======================= */
 async function sair(){
   await sb.auth.signOut();
   usuarioAtual = null;
