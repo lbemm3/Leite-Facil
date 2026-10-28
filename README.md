@@ -53,4 +53,4 @@ A ordem do passo 1 importa: se o `index.html` novo for publicado antes de o banc
 
 ## Contato
 
-Laerte Bemm: cbemm2@gmail.com
+Laerte Bemm: lbemm2@uem.br
