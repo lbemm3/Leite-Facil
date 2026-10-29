@@ -163,6 +163,33 @@ create policy "Produtor gerencia seus eventos reprodutivos" on eventos_reproduti
   using (auth.uid() = produtor_id);
 
 
+-- ============================== conferencias_cio ==============================
+-- Respostas do produtor à pergunta "A vaca entrou em cio?" da tela Início, feita 21 e 42 dias depois de uma
+-- cobertura (janelas de 21 a 24 e de 42 a 45 dias). O app grava só as respostas "nao"; o "sim" vira um cio
+-- registrado na ficha da vaca. Duas respostas "nao" na mesma cobertura fazem o app sugerir confirmar a gestação.
+-- Criada em 29/10/2026 por criar-conferencias-cio.sql, que também cria a chave primária (id, identity), as chaves
+-- estrangeiras (animal e cobertura, com on delete cascade) e as validações: marco 21 ou 42; resposta sim ou nao;
+-- uma resposta por cobertura e marco. Mesma regra de acesso do reprodutivo.
+create table conferencias_cio (
+  id             bigint not null,
+  produtor_id    uuid not null,
+  animal_id      bigint not null,
+  cobertura_id   bigint not null,
+  marco          smallint not null,
+  resposta       text not null,
+  respondido_em  timestamptz not null default now()
+);
+
+alter table conferencias_cio enable row level security;
+create policy "Produtor gerencia suas conferencias de cio" on conferencias_cio for all to public
+  using (auth.uid() = produtor_id)
+  with check (auth.uid() = produtor_id);
+create policy "Admin ve conferencias de cio" on conferencias_cio for select to public
+  using (exists (select 1 from administradores a where a.user_id = auth.uid()));
+create policy "Colaborador ve conferencias de cio liberadas" on conferencias_cio for select to public
+  using (exists (select 1 from colaboradores c where c.produtor_id = conferencias_cio.produtor_id and c.user_id = auth.uid() and c.status = 'ativo' and c.ve_reprodutivo = true));
+
+
 -- ============================== eventos_sanitarios ==============================
 create table eventos_sanitarios (
   id                  bigint not null,
@@ -210,8 +237,11 @@ create table producao_leite (
   problemas_equipamento_tarde    text,
   metodo_registro                text default 'rebanho',  -- 'rebanho' ou 'individual'
   resfriamento_manha             text,
-  resfriamento_tarde             text
+  resfriamento_tarde             text,
+  chuva                          text,      -- adicionar-chuva-producao.sql: nao_choveu, pouca, boa ou forte (vazio = não informado)
+  chuva_mm                       numeric    -- milímetros de chuva (opcional, 0 a 500)
 );
+-- CHECKs (adicionar-chuva-producao.sql): producao_leite_chuva_valida e producao_leite_chuva_mm_valida.
 
 alter table producao_leite enable row level security;
 create policy "Admin ve producao" on producao_leite for select to public
