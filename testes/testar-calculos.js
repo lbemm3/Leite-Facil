@@ -92,7 +92,8 @@ function carregarFuncoesReais(){
     'ehInicioLactacao', 'dataPrevistaSecagemPorTempo', 'TIPOS_SERVICO', 'TIPOS_SERVICO_CURTO', 'normalizarTipoServico', 'opcoesTipoServicoHTML', 'linhaConcepcaoPorServico',
     'calcularPrimeirosPassos',
     'CATEGORIAS_CHUVA', 'CHUVA_MM_MAXIMO', 'MIN_DIAS_COMPARACAO_CHUVA', 'JANELA_DIAS_COMPARACAO_CHUVA',
-    'rotuloChuvaDia', 'validarChuvaDoDia', 'colunaDeChuvaAusente', 'compararProducaoPorChuva'
+    'rotuloChuvaDia', 'validarChuvaDoDia', 'colunaDeChuvaAusente', 'compararProducaoPorChuva',
+    'MARCOS_CONFERENCIA_CIO', 'DIAS_JANELA_CONFERENCIA_CIO', 'chaveRespostaCio', 'mapaRespostasCio', 'calcularConferenciasCio'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -1120,6 +1121,64 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('hoje entra e data futura não entra', [F.compararProducaoPorChuva([...dozeBase, dia(0, 'nao_choveu', 10, 10)], HC).secos.dias, F.compararProducaoPorChuva([...dozeBase, dia(-1, 'nao_choveu', 10, 10)], HC).secos.dias], [7, 6]);
     verificar('litros que chegam como texto são somados como número', F.compararProducaoPorChuva([{ data: F.somarDias(HC, -1), chuva:'nao_choveu', litros_manha:'12.5', litros_tarde:'7.5' }], HC).secos, { dias:1, media:20 });
     verificar('média arredondada em 1 casa', F.compararProducaoPorChuva([dia(1, 'nao_choveu', 33.33, 33.33), dia(2, 'nao_choveu', 33.34, 33.34)], HC).secos.media, 66.7);
+  }
+
+  // ---------- Conferência de cio aos 21 e 42 dias ----------
+  {
+    console.log('\nConferência de cio (21 e 42 dias depois da cobertura)');
+    const H = '2026-10-30';
+    const d = n => F.somarDias(H, n);
+    const vaca = (id) => ({ id, identificacao: String(530 + id), data_nascimento: '2020-01-01' });
+    const cob = (id, animal, dias, extra) => ({ id, animal_id: animal, tipo: 'cobertura', data: d(-dias), ...(extra || {}) });
+    const perg = (animais, eventos, respostas) => F.calcularConferenciasCio(animais, eventos, respostas || [], H);
+    const resumo = r => r.map(q => [q.animalId, q.marco, q.dias]);
+    const nao = (cobId, marco) => ({ cobertura_id: cobId, animal_id: 1, marco, resposta: 'nao' });
+
+    verificar('constantes: marcos 21 e 42, janela de 3 dias', [F.MARCOS_CONFERENCIA_CIO, F.DIAS_JANELA_CONFERENCIA_CIO], [[21, 42], 3]);
+    verificar('janela dos 21 dias: dias 20 e 25 não perguntam; 21, 22, 23 e 24 perguntam', [20, 21, 22, 23, 24, 25].map(n => perg([vaca(1)], [cob(10, 1, n)]).length), [0, 1, 1, 1, 1, 0]);
+    verificar('janela dos 42 dias: dias 41 e 46 não perguntam; 42 a 45 perguntam', [41, 42, 43, 44, 45, 46].map(n => perg([vaca(1)], [cob(10, 1, n)]).length), [0, 1, 1, 1, 1, 0]);
+    verificar('entre as duas janelas (30 dias) não pergunta', perg([vaca(1)], [cob(10, 1, 30)]).length, 0);
+    verificar('a pergunta traz vaca, cobertura, marco, data e dias', perg([vaca(1)], [cob(10, 1, 22)])[0], { animalId: 1, animal: 'Nº 531', coberturaId: 10, marco: 21, dataCobertura: d(-22), dias: 22, ordem: -1 });
+    verificar('resposta "não" já dada aos 21 dias: não pergunta de novo', perg([vaca(1)], [cob(10, 1, 22)], [nao(10, 21)]).length, 0);
+    verificar('resposta aos 21 dias não impede a pergunta dos 42', resumo(perg([vaca(1)], [cob(10, 1, 43)], [nao(10, 21)])), [[1, 42, 43]]);
+    verificar('resposta de outra cobertura não vale para esta', perg([vaca(1)], [cob(10, 1, 22)], [nao(99, 21)]).length, 1);
+    verificar('resposta do outro marco não vale para este', perg([vaca(1)], [cob(10, 1, 22)], [nao(10, 42)]).length, 1);
+    verificar('resposta "sim" também encerra a pergunta', perg([vaca(1)], [cob(10, 1, 22)], [{ cobertura_id: 10, marco: 21, resposta: 'sim' }]).length, 0);
+    verificar('cobertura com diagnóstico (prenhe ou vazia) não gera pergunta', [perg([vaca(1)], [cob(10, 1, 22, { diagnostico_gestacao: 'prenhe', diagnostico_data: d(-1) })]).length, perg([vaca(1)], [cob(10, 1, 22, { diagnostico_gestacao: 'vazia', diagnostico_data: d(-1) })]).length], [0, 0]);
+    verificar('cio registrado depois da cobertura encerra a pergunta', perg([vaca(1)], [cob(10, 1, 22), { id: 11, animal_id: 1, tipo: 'cio', data: d(-1) }]).length, 0);
+    verificar('parto ou aborto depois da cobertura também encerram', [perg([vaca(1)], [cob(10, 1, 22), { id: 11, animal_id: 1, tipo: 'aborto', data: d(-1) }]).length, perg([vaca(1)], [cob(10, 1, 22), { id: 11, animal_id: 1, tipo: 'parto', data: d(-1) }]).length], [0, 0]);
+    verificar('secagem depois da cobertura não encerra a pergunta', perg([vaca(1)], [cob(10, 1, 22), { id: 11, animal_id: 1, tipo: 'secagem', data: d(-5) }]).length, 1);
+    verificar('nova cobertura reinicia a contagem (a antiga não pergunta mais)', resumo(perg([vaca(1)], [cob(10, 1, 22), cob(11, 1, 3)])), []);
+    verificar('cobertura nova há 22 dias, depois de cio antigo: pergunta pela nova', resumo(perg([vaca(1)], [{ id: 5, animal_id: 1, tipo: 'cio', data: d(-60) }, cob(10, 1, 22)])), [[1, 21, 22]]);
+    verificar('cobertura e cio no mesmo dia: vale o de maior id (cio depois: sem pergunta)', perg([vaca(1)], [{ id: 11, animal_id: 1, tipo: 'cio', data: d(-22) }, cob(10, 1, 22)]).length, 0);
+    verificar('cobertura e cio no mesmo dia: cobertura de maior id pergunta', perg([vaca(1)], [{ id: 9, animal_id: 1, tipo: 'cio', data: d(-22) }, cob(10, 1, 22)]).length, 1);
+    verificar('evento sem id (dado antigo) não gera pergunta', perg([vaca(1)], [{ animal_id: 1, tipo: 'cobertura', data: d(-22) }]).length, 0);
+    verificar('sem eventos, sem animais ou com listas nulas: nada e sem erro', [perg([], []).length, perg([vaca(1)], []).length, F.calcularConferenciasCio(null, null, null, H).length], [0, 0, 0]);
+    verificar('várias vacas: a que está para sair da janela vem primeiro', resumo(perg([vaca(1), vaca(2), vaca(3)], [cob(10, 1, 21), cob(20, 2, 24), cob(30, 3, 22)])), [[2, 21, 24], [3, 21, 22], [1, 21, 21]]);
+    verificar('eventos de uma vaca não contaminam a outra', resumo(perg([vaca(1), vaca(2)], [cob(10, 1, 22), { id: 21, animal_id: 2, tipo: 'cio', data: d(-1) }])), [[1, 21, 22]]);
+
+    // mapa de respostas e sugestão de ultrassom (em calcularAcoesDoDia)
+    verificar('mapa de respostas', [...F.mapaRespostasCio([nao(10, 21), nao(10, 42)]).entries()], [['10|21', 'nao'], ['10|42', 'nao']]);
+    verificar('mapa de respostas com lista nula', F.mapaRespostasCio(null).size, 0);
+    verificar('mapa de respostas ignora linha sem cobertura', F.mapaRespostasCio([{ marco: 21, resposta: 'nao' }, null]).size, 0);
+    const acoes = (eventos, respostas) => F.calcularAcoesDoDia([vaca(1)], eventos, null, H, respostas);
+    const grupo = (r, cod) => r.find(g => g.codigo === cod);
+    const cobAntiga = (dias, extra) => [cob(10, 1, dias, extra)];
+    verificar('uma resposta "não" só: sem sugestão de ultrassom', grupo(acoes(cobAntiga(43), [nao(10, 21)]), 'conferir_gestacao'), undefined);
+    let r = acoes(cobAntiga(43), [nao(10, 21), nao(10, 42)]);
+    verificar('duas respostas "não": sugere confirmar a gestação', [!!grupo(r, 'conferir_gestacao'), grupo(r, 'conferir_gestacao') && grupo(r, 'conferir_gestacao').itens[0].chave], [true, 'conferir_gestacao|1|' + d(-43)]);
+    verificar('o texto da sugestão cita ultrassom e a data da cobertura', grupo(r, 'conferir_gestacao').itens[0].texto.includes('ultrassom') && grupo(r, 'conferir_gestacao').itens[0].texto.includes(d(-43).slice(8, 10) + '/' + d(-43).slice(5, 7)), true);
+    r = acoes(cobAntiga(70), [nao(10, 21), nao(10, 42)]);
+    verificar('aos 70 dias com duas "não": só a sugestão, sem o aviso comum de "sem diagnóstico" repetido', [!!grupo(r, 'conferir_gestacao'), grupo(r, 'sem_diagnostico')], [true, undefined]);
+    r = acoes(cobAntiga(70), []);
+    verificar('aos 70 dias sem respostas: continua o aviso comum de "sem diagnóstico"', [grupo(r, 'conferir_gestacao'), !!grupo(r, 'sem_diagnostico')], [undefined, true]);
+    verificar('duas "não" mas já diagnosticada prenhe: sem sugestão', grupo(acoes(cobAntiga(70, { diagnostico_gestacao: 'prenhe', diagnostico_data: d(-5) }), [nao(10, 21), nao(10, 42)]), 'conferir_gestacao'), undefined);
+    verificar('duas "não" mas já diagnosticada vazia: sem sugestão', grupo(acoes(cobAntiga(70, { diagnostico_gestacao: 'vazia', diagnostico_data: d(-5) }), [nao(10, 21), nao(10, 42)]), 'conferir_gestacao'), undefined);
+    verificar('duas "não" de outra cobertura não valem', grupo(acoes(cobAntiga(70), [nao(99, 21), nao(99, 42)]), 'conferir_gestacao'), undefined);
+    verificar('depois de 180 dias a sugestão não aparece mais', grupo(acoes(cobAntiga(190), [nao(10, 21), nao(10, 42)]), 'conferir_gestacao'), undefined);
+    verificar('cio registrado depois: a sugestão some', grupo(acoes([...cobAntiga(50), { id: 11, animal_id: 1, tipo: 'cio', data: d(-1) }], [nao(10, 21), nao(10, 42)]), 'conferir_gestacao'), undefined);
+    verificar('sem o parâmetro de respostas (chamada antiga) nada muda', grupo(F.calcularAcoesDoDia([vaca(1)], cobAntiga(70), null, H), 'conferir_gestacao'), undefined);
+    verificar('a sugestão pode receber baixa: tem chave própria', grupo(acoes(cobAntiga(43), [nao(10, 21), nao(10, 42)]), 'conferir_gestacao').itens[0].chave.startsWith('conferir_gestacao|'), true);
   }
 
   console.log('\n' + '-'.repeat(50));
