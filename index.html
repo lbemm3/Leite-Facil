@@ -37,10 +37,10 @@
    [J03] entrada no app: login, cadastro e início da sessão
    [J04] navegação entre as abas e tela Início
    [J05] primeiros passos e Ajuda
-   [J06] avisos do Início (dar baixa, adiar, o que fazer hoje)
+   [J06] avisos do Início (dar baixa, adiar, o que fazer hoje, cartão Conferir cio)
    [J07] ficha do produtor e visão do colaborador
    [J08] meus animais: lista, busca, cadastro e curva de lactação
-   [J09] regras da reprodução e avisos de parto, secagem e cio
+   [J09] regras da reprodução e avisos de parto, secagem e cio (inclui a conferência de cio aos 21 e 42 dias)
    [J10] eventos reprodutivos: cio, cobertura, parto, aborto, secagem
    [J22] manejo sanitário (vacinas, tratamentos, carência)
    [J23] produção de leite: histórico por ano e mês
@@ -815,6 +815,7 @@ async function renderInicio(){
     + blocoAcessosColaborador()
     + '<div id="bloco-primeiros-passos"></div>'
     + '<div id="bloco-alerta-qualidade-inicio"></div>'
+    + '<div id="bloco-conferir-cio"></div>'
     + '<div id="bloco-o-que-fazer"></div>'
     + '<div id="bloco-avisos-dispensados"></div>'
     + '<div id="bloco-producao-mes"></div>'
@@ -909,6 +910,7 @@ const PERGUNTAS_AJUDA = [
   { p:'Por onde eu começo?', r:'Faça nesta ordem. <strong>1.</strong> Na aba <strong>Propriedade</strong>, preencha estado, município e área. <strong>2.</strong> Na aba <strong>Meus animais</strong>, toque em <strong>Adicionar animal</strong> e cadastre suas vacas. <strong>3.</strong> Na aba <strong>Produção</strong>, toque em <strong>Registrar produção do dia</strong> e lance o leite. <strong>4.</strong> No <strong>Perfil</strong>, ligue os <strong>Avisos no celular</strong>. O cartão <strong>Primeiros passos</strong>, na tela Início, mostra o que ainda falta.' },
   { p:'Como cadastro um animal?', r:'Na aba <strong>Meus animais</strong>, toque em <strong>Adicionar animal</strong>. Informe o número ou brinco e a data de nascimento. Os outros campos (nome da mãe, pai, avós, grau de sangue) são opcionais. Se a vaca já tinha parido antes de entrar no LeiteFácil, o próprio formulário tem uma opção para informar a data do último parto. Assim o app coloca a vaca no lote certo (lactante, seca ou novilha).' },
   { p:'Como lanço o leite do dia?', r:'Na aba <strong>Produção</strong>, toque em <strong>Registrar produção do dia</strong>. Escolha como quer lançar: <strong>Por rebanho</strong> (você digita o total do dia) ou <strong>Por vaca</strong> (você lança vaca por vaca e o app soma). Preencha a ordenha da manhã e a da tarde. Se quiser, anote também se choveu naquele dia (campo <strong>Choveu neste dia?</strong>) e salve.' },
+  { p:'O que é a pergunta "A vaca entrou em cio?" na tela Início?', r:'Depois que você registra uma cobertura ou inseminação, o app pergunta, 21 e 42 dias depois, se a vaca voltou ao cio. A pergunta fica na tela Início por 4 dias (de 21 a 24 dias e de 42 a 45 dias depois da cobertura). Toque em <strong>Sim</strong> para registrar o cio na ficha da vaca. Toque em <strong>Não</strong> para o app anotar a resposta. Se você responder "não" nas duas vezes, o app sugere confirmar a gestação, por ultrassom, por exemplo, e você registra o resultado na ficha da vaca. A pergunta deixa de aparecer quando a vaca já tem diagnóstico de gestação, cio, parto ou aborto registrado depois da cobertura.' },
   { p:'Para que serve anotar a chuva?', r:'Em dias de chuva as vacas gastam mais energia e podem produzir menos leite. Ao anotar, no lançamento do dia, se <strong>Não choveu</strong>, houve <strong>Pouca chuva</strong>, <strong>Chuva boa</strong> ou <strong>Chuva forte</strong>, o app compara a média de leite dos dias secos com a dos dias de chuva e mostra o resultado no cartão <strong>Chuva e produção</strong>, na aba Produção. Os milímetros são opcionais: só preencha se você tiver pluviômetro. A comparação aparece depois de pelo menos 5 dias secos e 5 dias de chuva anotados nos últimos 90 dias. É só uma comparação, não prova que a chuva foi a causa.' },
   { p:'Lancei errado. Como corrijo?', r:'Na aba <strong>Produção</strong>, toque no dia que quer mudar (ou no ícone de lápis ao lado dele). O formulário abre já preenchido. Corrija e salve, ou use o botão de excluir se quiser apagar o dia.' },
   { p:'Como registro cio, cobertura, parto e outros eventos da vaca?', r:'Pela aba <strong>Reprodução</strong>, no botão <strong>Registrar evento</strong>, ou pela ficha da vaca (aba <strong>Meus animais</strong>, toque no animal). Você pode registrar: cio, cobertura ou inseminação, parto, indução de lactação, aborto e secagem.' },
@@ -1063,13 +1065,19 @@ async function reativarAviso(botao){
 // Devolve o conjunto de chaves dos avisos que existem agora (ou null se não deu para saber).
 async function renderOQueFazerHoje(){
   const hoje = new Date().toISOString().slice(0,10);
-  const [{ data: animais, error: erroAnimais }, { data: eventos, error: erroEventos }, { data: individual, error: erroInd }] = await Promise.all([
+  const [{ data: animais, error: erroAnimais }, { data: eventos, error: erroEventos }, { data: individual, error: erroInd }, { data: respostasCio, error: erroCio }] = await Promise.all([
     sb.from('animais').select('id, identificacao, data_nascimento, partos_anteriores').eq('produtor_id', usuarioAtual.id),
-    buscarTodasAsLinhas(() => sb.from('eventos_reprodutivos').select('animal_id, tipo, data, diagnostico_gestacao, diagnostico_data').eq('produtor_id', usuarioAtual.id)),
-    buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', usuarioAtual.id).gte('data', somarDias(hoje, -10)))
+    buscarTodasAsLinhas(() => sb.from('eventos_reprodutivos').select('id, animal_id, tipo, data, diagnostico_gestacao, diagnostico_data').eq('produtor_id', usuarioAtual.id)),
+    buscarTodasAsLinhas(() => sb.from('producao_leite_individual').select('data, animal_id, litros_manha, litros_tarde').eq('produtor_id', usuarioAtual.id).gte('data', somarDias(hoje, -10))),
+    buscarTodasAsLinhas(() => sb.from('conferencias_cio').select('cobertura_id, animal_id, marco, resposta').eq('produtor_id', usuarioAtual.id))
   ]);
   if(erroAnimais || erroEventos) return null;
-  const todos = calcularAcoesDoDia(animais || [], eventos || [], erroInd ? null : individual, hoje);
+  // Se a tabela das conferências ainda não existe no banco (SQL não rodado), o app segue sem a pergunta de cio.
+  if(erroCio) console.warn('[LeiteFácil] conferência de cio indisponível', erroCio);
+  const perguntasCio = erroCio ? [] : calcularConferenciasCio(animais || [], eventos || [], respostasCio || [], hoje);
+  const alvoCio = document.getElementById('bloco-conferir-cio');
+  if(alvoCio) alvoCio.innerHTML = montarCartaoConferirCio(perguntasCio);
+  const todos = calcularAcoesDoDia(animais || [], eventos || [], erroInd ? null : individual, hoje, erroCio ? null : respostasCio);
   const alvo = document.getElementById('bloco-o-que-fazer');
   if(alvo){
     const grupos = filtrarAvisosDispensados(todos, AVISOS_DISPENSADOS, hoje).grupos;
@@ -1778,6 +1786,48 @@ function coberturaEmAberto(eventos){
   return (ultimo && ultimo.tipo === 'cobertura') ? ultimo : null;
 }
 
+// ---------- Conferência de cio aos 21 e 42 dias da cobertura ----------
+// A vaca que não emprenhou volta ao cio cerca de 21 dias depois da cobertura (e, às vezes, aos 42). Para o produtor
+// não depender de lembrar, a tela Início pergunta "A vaca entrou em cio?" nas janelas de 21 a 24 e de 42 a 45 dias
+// depois da cobertura em aberto. "Sim" leva ao registro do cio; "Não" fica gravado (tabela conferencias_cio) e, depois
+// de dois "não" na mesma cobertura, o app sugere confirmar a gestação (ultrassom, por exemplo). Não substitui o
+// diagnóstico de gestação: cobertura já diagnosticada (prenhe ou vazia) não gera a pergunta.
+const MARCOS_CONFERENCIA_CIO = [21, 42];
+const DIAS_JANELA_CONFERENCIA_CIO = 3;   // a pergunta vale do dia do marco até 3 dias depois (21 a 24, 42 a 45)
+
+function chaveRespostaCio(coberturaId, marco){ return coberturaId + '|' + marco; }
+
+// Transforma as linhas de conferencias_cio num mapa "cobertura|marco" -> resposta.
+function mapaRespostasCio(respostas){
+  const mapa = new Map();
+  (respostas || []).forEach(r => { if(r && r.cobertura_id != null) mapa.set(chaveRespostaCio(r.cobertura_id, Number(r.marco)), r.resposta); });
+  return mapa;
+}
+
+// Perguntas "A vaca entrou em cio?" que valem hoje. respostas: linhas de conferencias_cio (ou null).
+// Só considera a cobertura em aberto (o último evento que muda a situação reprodutiva da vaca) e sem diagnóstico.
+function calcularConferenciasCio(animais, eventos, respostas, hojeIso){
+  const respondidas = mapaRespostasCio(respostas);
+  const eventosPor = {};
+  (eventos || []).forEach(e => { (eventosPor[e.animal_id] = eventosPor[e.animal_id] || []).push(e); });
+  const perguntas = [];
+  (animais || []).forEach(a => {
+    const lista = (eventosPor[a.id] || [])
+      .filter(e => e.tipo === 'cobertura' || e.tipo === 'cio' || e.tipo === 'aborto' || e.tipo === 'parto' || e.tipo === 'inducao_lactacao')
+      .sort((x, y) => x.data.localeCompare(y.data) || (Number(x.id) || 0) - (Number(y.id) || 0));
+    const ultimo = lista.length ? lista[lista.length - 1] : null;
+    if(!ultimo || ultimo.tipo !== 'cobertura' || ultimo.id == null || ultimo.diagnostico_gestacao) return;
+    const dias = diasEntre(ultimo.data, hojeIso);
+    MARCOS_CONFERENCIA_CIO.forEach(marco => {
+      if(dias < marco || dias > marco + DIAS_JANELA_CONFERENCIA_CIO) return;
+      if(respondidas.has(chaveRespostaCio(ultimo.id, marco))) return;
+      perguntas.push({ animalId: a.id, animal: 'Nº ' + a.identificacao, coberturaId: ultimo.id, marco, dataCobertura: ultimo.data, dias, ordem: marco - dias });
+    });
+  });
+  // primeiro as perguntas que estão para sair da janela
+  return perguntas.sort((x, y) => x.ordem - y.ordem || x.animal.localeCompare(y.animal, 'pt-BR', { numeric: true }));
+}
+
 // Devolve o texto do erro, ou null se o diagnóstico é aceitável.
 function validarDiagnosticoGestacao(cob, resultado, dataDiag, hojeIso){
   if(!cob || cob.tipo !== 'cobertura') return 'O diagnóstico só pode ser registrado numa cobertura.';
@@ -2014,13 +2064,14 @@ const MAX_DIAS_ADIAR = 365;              // maior adiamento aceito, em dias
 // Recebe os animais, os eventos reprodutivos (animal_id, tipo, data), a produção por vaca dos últimos ~10 dias
 // (null se não foi carregada) e a data de hoje. Devolve grupos { codigo, titulo, itens: [{ animal, texto }] }
 // em ordem de importância. Não grava nada: são sugestões do que olhar hoje, sem campo novo no banco.
-function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
+function calcularAcoesDoDia(animais, eventos, individual, hojeIso, respostasCio){
+  const respondidasCio = mapaRespostasCio(respostasCio);
   const dm = d => d.slice(8,10) + '/' + d.slice(5,7);
   const eventosPor = {};
   (eventos||[]).forEach(e=>{ (eventosPor[e.animal_id] = eventosPor[e.animal_id] || []).push(e); });
   Object.values(eventosPor).forEach(l => l.sort((x,y)=>x.data.localeCompare(y.data)));
 
-  const partoProximo = [], secagem = [], semCobertura = [], semDiagnostico = [], quedaProducao = [];
+  const partoProximo = [], secagem = [], semCobertura = [], semDiagnostico = [], quedaProducao = [], conferirGestacao = [];
   const ordenar = (lista) => lista.sort((x,y)=>x.ordem - y.ordem);
 
   (animais||[]).forEach(a=>{
@@ -2042,7 +2093,11 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
     // Cobertura sem diagnóstico há tempo suficiente: vale confirmar se a vaca emprenhou.
     if(situacao === 'presumida'){
       const diasCobertura = diasEntre(ultimoRelevante.data, hojeIso);
-      if(diasCobertura >= DIAS_ALERTA_SEM_DIAGNOSTICO && diasCobertura <= DIAS_MAX_AVISO_SEM_DIAGNOSTICO){
+      // Duas respostas "não" na conferência de cio (21 e 42 dias): sugere confirmar a gestação, no lugar do aviso comum.
+      const duasRespostasNao = ultimoRelevante.id != null && MARCOS_CONFERENCIA_CIO.every(m => respondidasCio.get(chaveRespostaCio(ultimoRelevante.id, m)) === 'nao');
+      if(duasRespostasNao && diasCobertura <= DIAS_MAX_AVISO_SEM_DIAGNOSTICO){
+        conferirGestacao.push({ ordem: -diasCobertura, animal: nome, chave: 'conferir_gestacao|' + a.id + '|' + ultimoRelevante.data, texto: 'a vaca não entrou em cio nas conferências de 21 e 42 dias depois da cobertura de ' + dm(ultimoRelevante.data) + ' (' + diasCobertura + ' dias). Vale confirmar a gestação, por ultrassom, por exemplo, e registrar o diagnóstico na ficha da vaca.' });
+      } else if(diasCobertura >= DIAS_ALERTA_SEM_DIAGNOSTICO && diasCobertura <= DIAS_MAX_AVISO_SEM_DIAGNOSTICO){
         semDiagnostico.push({ ordem: -diasCobertura, animal: nome, chave: 'sem_diagnostico|' + a.id + '|' + ultimoRelevante.data, texto: 'coberta em ' + dm(ultimoRelevante.data) + ' (' + diasCobertura + ' dias) e sem diagnóstico de gestação. Vale confirmar se está prenhe e registrar o resultado na ficha da vaca' });
       }
     }
@@ -2121,6 +2176,7 @@ function calcularAcoesDoDia(animais, eventos, individual, hojeIso){
     { codigo:'secagem', titulo:'Secagem', itens: ordenar(secagem) },
     { codigo:'queda_producao', titulo:'Queda de produção', itens: ordenar(quedaProducao) },
     { codigo:'sem_cobertura', titulo:'Sem cobertura há muito tempo', itens: ordenar(semCobertura) },
+    { codigo:'conferir_gestacao', titulo:'Conferir se a vaca emprenhou', itens: ordenar(conferirGestacao) },
     { codigo:'sem_diagnostico', titulo:'Cobertura sem diagnóstico de gestação', itens: ordenar(semDiagnostico) }
   ];
   return grupos.filter(g => g.itens.length).map(g => ({ codigo: g.codigo, titulo: g.titulo, itens: g.itens.map(i => ({ animal: i.animal, texto: i.texto, chave: i.chave, baixaDias: i.baixaDias || null, descricao: g.titulo + ': ' + i.animal })) }));
@@ -2195,6 +2251,39 @@ function botoesAviso(chave, descricao, baixaDias){
     + '<button class="botao botao-secundario" '+estilo+dados+' onclick="darBaixaAviso(this)">Dar baixa</button>'
     + '<button class="botao botao-secundario" '+estilo+dados+' onclick="abrirAdiarAviso(this)">Adiar</button>'
     + '</div>';
+}
+
+// Cartão "Conferir cio" da tela Início: uma pergunta por vaca, com os botões Sim e Não. Sem perguntas, não aparece.
+function montarCartaoConferirCio(perguntas){
+  if(!perguntas || !perguntas.length) return '';
+  const MAX = 8;
+  const estiloBotao = 'style="padding:7px 16px; font-size:13px; margin:0"';
+  return '<div class="rotulo-secao">Conferir cio</div><div class="cartao" style="border-color:var(--manteiga-escura)">'
+    + perguntas.slice(0, MAX).map(q => '<div style="margin-bottom:14px">'
+        + '<div style="font-weight:700">A vaca '+escaparHTML(q.animal)+' entrou em cio?</div>'
+        + '<div class="legenda-muted" style="font-size:13px; margin-bottom:6px">Coberta em '+formatarData(q.dataCobertura)+', há '+q.dias+' dias (conferência dos '+q.marco+' dias).</div>'
+        + '<div style="display:flex; gap:8px">'
+          + '<button class="botao botao-primario" '+estiloBotao+' onclick="abrirCioDaConferencia('+q.animalId+')">Sim</button>'
+          + '<button class="botao botao-secundario" '+estiloBotao+' onclick="responderNaoCio('+q.animalId+','+q.coberturaId+','+q.marco+')">Não</button>'
+        + '</div></div>').join('')
+    + (perguntas.length > MAX ? '<div class="legenda-muted" style="font-size:12px">e mais '+(perguntas.length - MAX)+'</div>' : '')
+    + '<div class="legenda-muted" style="font-size:11px; margin-bottom:0">"Sim" abre o registro do cio. "Não" fica anotado e o app pergunta de novo aos 42 dias. Depois de duas respostas "não", o app sugere confirmar a gestação.</div>'
+    + '</div>';
+}
+
+// "Sim": abre a ficha da vaca com o formulário de evento pronto (o primeiro tipo da lista é o cio).
+function abrirCioDaConferencia(animalId){
+  abrirFichaDoAnimal(animalId, true);
+}
+
+// "Não": grava a resposta e atualiza a tela. Resposta repetida (23505) conta como gravada.
+async function responderNaoCio(animalId, coberturaId, marco){
+  const { error } = await sb.from('conferencias_cio').insert({ produtor_id: usuarioAtual.id, animal_id: animalId, cobertura_id: coberturaId, marco, resposta: 'nao' });
+  if(error && error.code !== '23505'){
+    avisar(mensagemErroAmigavel(error, 'salvar a resposta'));
+    return;
+  }
+  atualizarAvisosInicio();
 }
 
 // Cartão "O que fazer hoje" da tela de Início. Sem nada a fazer, diz isso; sem animais cadastrados, não aparece.
@@ -6680,6 +6769,9 @@ function fecharModal(){
   // eventos registrados ou apagados na ficha mudam o painel da aba Reprodução
   const telaRepro = document.getElementById('tela-reproducao');
   if(telaRepro && telaRepro.classList.contains('ativa')) renderReproducao();
+  // o cio registrado a partir da pergunta da tela Início tira a pergunta de lá
+  const telaInicio = document.getElementById('tela-inicio');
+  if(telaInicio && telaInicio.classList.contains('ativa') && document.getElementById('bloco-conferir-cio')) atualizarAvisosInicio();
 }
 
 // Substitui o confirm() nativo do navegador por uma caixa com a cara do app.
