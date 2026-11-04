@@ -1383,13 +1383,42 @@ function filtrarAnimaisPorBusca(animais, termo){
     .sort((x,y)=> x.p - y.p || x.i - y.i).map(x => x.a);
 }
 
+// Idade em meses completos a partir da data de nascimento (yyyy-mm-dd). Devolve null sem data válida ou com nascimento no futuro.
+function calcularIdadeEmMeses(nascimentoIso, hojeIso){
+  const n = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(nascimentoIso || ''));
+  const h = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(hojeIso || ''));
+  if(!n || !h) return null;
+  let meses = (Number(h[1]) - Number(n[1])) * 12 + (Number(h[2]) - Number(n[2]));
+  if(Number(h[3]) < Number(n[3])) meses--;
+  return meses < 0 ? null : meses;
+}
+
+function formatarIdadeEmMeses(meses){
+  if(meses == null) return '';
+  if(meses === 0) return 'menos de 1 mês';
+  return meses + (meses === 1 ? ' mês' : ' meses');
+}
+
+// Texto "idade em meses" de um animal para as listas e fichas ('' quando não há data de nascimento).
+function textoIdadeAnimal(a, hojeIso){
+  return formatarIdadeEmMeses(calcularIdadeEmMeses(a && a.data_nascimento, hojeIso || agoraLocal().iso));
+}
+
+function atualizarIdadeNoFormulario(){
+  const el = document.getElementById('texto-idade-meses');
+  const campo = document.getElementById('campo-nascimento');
+  if(!el || !campo) return;
+  const t = formatarIdadeEmMeses(calcularIdadeEmMeses(campo.value, agoraLocal().iso));
+  el.textContent = t ? 'Idade: ' + t : '';
+}
+
 function linhaAnimalHTML(a){
   const st = STATUS_ANIMAL[a.lote] || { rot: a.lote || '—', cor:'var(--zinco)' };
   return '<button class="cartao" style="width:100%; text-align:left; display:flex; align-items:center; gap:14px; cursor:pointer" onclick="abrirEdicaoAnimal('+a.id+')">'
     + '<div class="avatar">'+iconeInline('vaca',22)+'</div>'
     + '<div style="flex:1">'
       + '<div style="font-weight:700; font-size:15px">Nº '+escaparHTML(a.identificacao)+'</div>'
-      + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+escaparHTML(a.grau_sangue||'Grau de sangue não informado')+'</div>'
+      + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+escaparHTML(a.grau_sangue||'Grau de sangue não informado')+(textoIdadeAnimal(a) ? ' · '+textoIdadeAnimal(a) : '')+'</div>'
     + '</div>'
     + '<span style="background:'+st.cor+'; color:var(--branco); font-size:11px; font-weight:800; padding:4px 10px; border-radius:999px; text-transform:uppercase">'+st.rot+'</span>'
     + '</button>';
@@ -1530,7 +1559,7 @@ function abrirEdicaoAnimal(id){
     '<div class="rotulo-secao" style="margin-top:0">Editar animal</div>'
     + '<div class="grupo-campo"><label for="campo-identificacao">Número / brinco</label><input id="campo-identificacao" type="text" value="'+escaparHTML(a.identificacao||'')+'"></div>'
     + '<div class="grupo-campo"><label for="campo-grau-sangue">Grau de sangue</label><input id="campo-grau-sangue" type="text" value="'+escaparHTML(a.grau_sangue||'')+'" placeholder="Ex.: 3/4 Holandês, 1/4 Jersey"></div>'
-    + '<div class="grupo-campo"><label for="campo-nascimento">Data de nascimento</label><input id="campo-nascimento" type="date" value="'+(a.data_nascimento||'')+'"></div>'
+    + '<div class="grupo-campo"><label for="campo-nascimento">Data de nascimento</label><input id="campo-nascimento" type="date" value="'+(a.data_nascimento||'')+'" oninput="atualizarIdadeNoFormulario()"><div id="texto-idade-meses" class="legenda-muted" style="font-size:13px; margin-top:4px">'+(textoIdadeAnimal(a) ? 'Idade: '+textoIdadeAnimal(a) : '')+'</div></div>'
     + '<div class="grupo-campo"><label for="campo-partos-anteriores">Partos anteriores aos registrados no app</label><input id="campo-partos-anteriores" type="number" min="0" max="19" step="1" value="'+(Number(a.partos_anteriores)||0)+'"><div class="legenda-muted" style="font-size:12px; margin-top:4px">Quantos partos a vaca teve antes do primeiro parto que aparece no histórico abaixo. Se o histórico estiver completo, deixe 0.</div></div>'
     + '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga); display:flex; align-items:center; justify-content:space-between; gap:10px">'
       + '<span class="legenda-muted" style="margin:0">Lote atual (calculado automaticamente)</span>'
