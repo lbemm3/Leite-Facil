@@ -96,6 +96,7 @@ function carregarFuncoesReais(){
     'MARCOS_CONFERENCIA_CIO', 'DIAS_JANELA_CONFERENCIA_CIO', 'chaveRespostaCio', 'mapaRespostasCio', 'calcularConferenciasCio',
     'CICLO_COMPLETO_MIN_DIAS', 'CICLO_COMPLETO_MAX_DIAS', 'MIN_INTERVALOS_MEDIA_CIO', 'JANELA_OBSERVACAO_CIO', 'DIAS_LISTA_CIOS_OBSERVAR', 'MAX_CICLOS_PROJETADOS_CIO', 'TIPOS_RELEVANTES_REPRO', 'DIAS_SEMANA_PT',
     'nomeDiaSemana', 'ordenarEventosReprodutivos', 'calcularIntervaloCioVaca', 'situacaoCicloVaca', 'calcularCiosParaObservar', 'descreverSituacaoCicloVaca', 'montarMesCalendarioCio',
+    'calcularIdadeEmMeses', 'formatarIdadeEmMeses', 'textoIdadeAnimal',
     'rotuloDataCioObservar', 'textoCioParaObservar', 'montarGrupoCiosParaObservar',
     'JANELA_INSEMINACAO_MIN_HORAS', 'JANELA_INSEMINACAO_MAX_HORAS', 'JANELA_INSEMINACAO_IDEAL_HORAS', 'MAX_HORAS_ENTRE_CIO_E_INSEMINACAO',
     'normalizarHoraEvento', 'minutosDeDataEHora', 'horasEntreRegistros', 'somarHorasNaData', 'formatarDuracaoHoras', 'avaliarJanelaInseminacao', 'textoAvaliacaoJanela',
@@ -1370,6 +1371,27 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('cio de outra vaca não vale para a inseminação', F.resumoJanelaInseminacao([{ id: 1, animal_id: 1, tipo: 'cio', data: '2026-11-01', hora: '06:00' }, { id: 2, animal_id: 2, tipo: 'cobertura', data: '2026-11-01', hora: '18:00' }]).avaliadas, 0);
     verificar('data e hora no histórico: só cio e cobertura mostram a hora', [F.dataHoraEvento(cio(1, '2026-11-04', '06:30:00')), F.dataHoraEvento(cob(2, '2026-11-04', null)), F.dataHoraEvento({ tipo: 'parto', data: '2026-11-04', hora: '06:30' })], ['04/11/2026 às 06:30', '04/11/2026', '04/11/2026']);
     verificar('constantes da janela (Fran): 8, 16 e 12 h', [F.JANELA_INSEMINACAO_MIN_HORAS, F.JANELA_INSEMINACAO_MAX_HORAS, F.JANELA_INSEMINACAO_IDEAL_HORAS], [8, 16, 12]);
+  }
+
+  // ---------- Idade em meses (Meus animais) ----------
+  {
+    console.log('\nIdade em meses');
+    const c = F.calcularIdadeEmMeses;
+    verificar('nasceu em 03/11/2025, hoje 03/11/2026: 12 meses', c('2025-11-03', '2026-11-03'), 12);
+    verificar('um dia antes de completar o mês: ainda 11 meses', c('2025-11-04', '2026-11-03'), 11);
+    verificar('virada de ano: 15/12/2025 até 14/01/2026 = 0 meses', c('2025-12-15', '2026-01-14'), 0);
+    verificar('virada de ano: 15/12/2025 até 15/01/2026 = 1 mês', c('2025-12-15', '2026-01-15'), 1);
+    verificar('vaca de 3 anos: 36 meses', c('2023-06-10', '2026-06-10'), 36);
+    verificar('nascimento no mesmo dia: 0 meses', c('2026-11-03', '2026-11-03'), 0);
+    verificar('nascimento no futuro: sem idade', c('2026-12-01', '2026-11-03'), null);
+    verificar('sem data de nascimento: sem idade', [c(null, '2026-11-03'), c('', '2026-11-03'), c(undefined, '2026-11-03')], [null, null, null]);
+    verificar('data inválida: sem idade', c('abc', '2026-11-03'), null);
+    verificar('texto: 0 mês', F.formatarIdadeEmMeses(0), 'menos de 1 mês');
+    verificar('texto: 1 mês (singular)', F.formatarIdadeEmMeses(1), '1 mês');
+    verificar('texto: 14 meses', F.formatarIdadeEmMeses(14), '14 meses');
+    verificar('texto: sem idade vira vazio', F.formatarIdadeEmMeses(null), '');
+    verificar('texto do animal usa a data de nascimento', F.textoIdadeAnimal({ data_nascimento: '2025-09-03' }, '2026-11-03'), '14 meses');
+    verificar('texto do animal sem nascimento é vazio', F.textoIdadeAnimal({ identificacao: '1' }, '2026-11-03'), '');
   }
 
   console.log('\n' + '-'.repeat(50));
