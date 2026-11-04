@@ -93,7 +93,13 @@ function carregarFuncoesReais(){
     'calcularPrimeirosPassos',
     'CATEGORIAS_CHUVA', 'CHUVA_MM_MAXIMO', 'MIN_DIAS_COMPARACAO_CHUVA', 'JANELA_DIAS_COMPARACAO_CHUVA',
     'rotuloChuvaDia', 'validarChuvaDoDia', 'colunaDeChuvaAusente', 'compararProducaoPorChuva',
-    'MARCOS_CONFERENCIA_CIO', 'DIAS_JANELA_CONFERENCIA_CIO', 'chaveRespostaCio', 'mapaRespostasCio', 'calcularConferenciasCio'
+    'MARCOS_CONFERENCIA_CIO', 'DIAS_JANELA_CONFERENCIA_CIO', 'chaveRespostaCio', 'mapaRespostasCio', 'calcularConferenciasCio',
+    'CICLO_COMPLETO_MIN_DIAS', 'CICLO_COMPLETO_MAX_DIAS', 'MIN_INTERVALOS_MEDIA_CIO', 'JANELA_OBSERVACAO_CIO', 'DIAS_LISTA_CIOS_OBSERVAR', 'MAX_CICLOS_PROJETADOS_CIO', 'TIPOS_RELEVANTES_REPRO', 'DIAS_SEMANA_PT',
+    'nomeDiaSemana', 'ordenarEventosReprodutivos', 'calcularIntervaloCioVaca', 'situacaoCicloVaca', 'calcularCiosParaObservar', 'descreverSituacaoCicloVaca', 'montarMesCalendarioCio',
+    'rotuloDataCioObservar', 'textoCioParaObservar', 'montarGrupoCiosParaObservar',
+    'JANELA_INSEMINACAO_MIN_HORAS', 'JANELA_INSEMINACAO_MAX_HORAS', 'JANELA_INSEMINACAO_IDEAL_HORAS', 'MAX_HORAS_ENTRE_CIO_E_INSEMINACAO',
+    'normalizarHoraEvento', 'minutosDeDataEHora', 'horasEntreRegistros', 'somarHorasNaData', 'formatarDuracaoHoras', 'avaliarJanelaInseminacao', 'textoAvaliacaoJanela',
+    'resumoJanelaInseminacao', 'janelaInseminacaoDoCio', 'rotuloMomentoInseminacao', 'textoJanelaInseminacao', 'dataHoraEvento'
   ];
   const trechos = nomes.map(n => extrairTrecho(codigo, n));
 
@@ -1179,6 +1185,191 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('cio registrado depois: a sugestão some', grupo(acoes([...cobAntiga(50), { id: 11, animal_id: 1, tipo: 'cio', data: d(-1) }], [nao(10, 21), nao(10, 42)]), 'conferir_gestacao'), undefined);
     verificar('sem o parâmetro de respostas (chamada antiga) nada muda', grupo(F.calcularAcoesDoDia([vaca(1)], cobAntiga(70), null, H), 'conferir_gestacao'), undefined);
     verificar('a sugestão pode receber baixa: tem chave própria', grupo(acoes(cobAntiga(43), [nao(10, 21), nao(10, 42)]), 'conferir_gestacao').itens[0].chave.startsWith('conferir_gestacao|'), true);
+  }
+
+  // ---------- Cios para observar e calendário do cio ----------
+  {
+    console.log('\nCios para observar e calendário do cio');
+    const H = '2026-11-03';
+    const d = n => F.somarDias(H, n);
+    const ev = (id, tipo, dias, extra) => ({ id, animal_id: 1, tipo, data: d(dias), ...(extra || {}) });
+    const intervalo = evs => F.calcularIntervaloCioVaca(evs);
+
+    verificar('dia da semana em português', [F.nomeDiaSemana('2026-11-03'), F.nomeDiaSemana('2026-11-01'), F.nomeDiaSemana('2026-11-07')], ['terça', 'domingo', 'sábado']);
+    verificar('constantes do ciclo', [F.CICLO_COMPLETO_MIN_DIAS, F.CICLO_COMPLETO_MAX_DIAS, F.MIN_INTERVALOS_MEDIA_CIO, F.JANELA_OBSERVACAO_CIO, F.DIAS_LISTA_CIOS_OBSERVAR, F.MAX_CICLOS_PROJETADOS_CIO], [17, 25, 2, 2, 7, 3]);
+
+    console.log('  intervalo do ciclo da vaca');
+    verificar('sem cios: padrão de 21 dias', intervalo([]), { dias: 21, amostras: 0, personalizado: false });
+    verificar('lista nula: padrão de 21 dias', intervalo(null), { dias: 21, amostras: 0, personalizado: false });
+    verificar('um único intervalo ainda não basta: padrão', intervalo([ev(1, 'cio', -40), ev(2, 'cio', -20)]), { dias: 21, amostras: 1, personalizado: false });
+    verificar('dois intervalos de 20 dias: média de 20', intervalo([ev(1, 'cio', -60), ev(2, 'cio', -40), ev(3, 'cio', -20)]), { dias: 20, amostras: 2, personalizado: true });
+    verificar('média arredondada (19 e 22 dão 20,5 e arredondam para 21)', intervalo([ev(1, 'cio', -41), ev(2, 'cio', -22), ev(3, 'cio', 0)]).dias, 21);
+    verificar('intervalo de 40 dias (cio perdido) não entra na média', intervalo([ev(1, 'cio', -80), ev(2, 'cio', -40), ev(3, 'cio', -20)]), { dias: 21, amostras: 1, personalizado: false });
+    verificar('limites: 17 e 25 dias entram; 16 e 26 não', [intervalo([ev(1, 'cio', -34), ev(2, 'cio', -17), ev(3, 'cio', 0)]).amostras, intervalo([ev(1, 'cio', -50), ev(2, 'cio', -25), ev(3, 'cio', 0)]).amostras, intervalo([ev(1, 'cio', -32), ev(2, 'cio', -16), ev(3, 'cio', 0)]).amostras, intervalo([ev(1, 'cio', -52), ev(2, 'cio', -26), ev(3, 'cio', 0)]).amostras], [2, 2, 0, 0]);
+    verificar('cobertura entre dois cios não atrapalha', intervalo([ev(1, 'cio', -62), ev(2, 'cobertura', -62), ev(3, 'cio', -42), ev(4, 'cio', -22)]), { dias: 20, amostras: 2, personalizado: true });
+    verificar('parto entre dois cios reinicia a contagem', intervalo([ev(1, 'cio', -50), ev(2, 'parto', -40), ev(3, 'cio', -20)]).amostras, 0);
+    verificar('aborto e indução entre dois cios também reiniciam', [intervalo([ev(1, 'cio', -50), ev(2, 'aborto', -40), ev(3, 'cio', -30)]).amostras, intervalo([ev(1, 'cio', -50), ev(2, 'inducao_lactacao', -40), ev(3, 'cio', -30)]).amostras], [0, 0]);
+    verificar('secagem entre dois cios não é evento de ciclo e é ignorada', intervalo([ev(1, 'cio', -62), ev(2, 'secagem', -50), ev(3, 'cio', -42), ev(4, 'cio', -22)]).amostras, 2);
+    verificar('eventos fora de ordem na lista dão o mesmo resultado', intervalo([ev(3, 'cio', -20), ev(1, 'cio', -60), ev(2, 'cio', -40)]), { dias: 20, amostras: 2, personalizado: true });
+
+    console.log('  situação da vaca no ciclo');
+    const sit = evs => F.situacaoCicloVaca(evs, H);
+    verificar('sem eventos: sem cio', [sit([]).estado, sit([]).proximo], ['sem_cio', null]);
+    verificar('só parto: sem cio registrado', sit([ev(1, 'parto', -30)]).estado, 'sem_cio');
+    verificar('cio há 5 dias: próximo cio em 16 dias', sit([ev(1, 'cio', -5)]).proximo, { data: d(16), tipo: 'ciclo', dias: 16 });
+    verificar('cio há 21 dias: o próximo cio é hoje', sit([ev(1, 'cio', -21)]).proximo, { data: d(0), tipo: 'ciclo', dias: 0 });
+    verificar('cio há 30 dias: o ciclo previsto já passou, projeta o seguinte', sit([ev(1, 'cio', -30)]).proximo, { data: d(12), tipo: 'ciclo', dias: 12 });
+    verificar('cio há 63 dias (3 ciclos): ainda prevê, para hoje', [sit([ev(1, 'cio', -63)]).estado, sit([ev(1, 'cio', -63)]).proximo.dias], ['ciclando', 0]);
+    verificar('cio há 64 dias: antigo demais para prever', [sit([ev(1, 'cio', -64)]).estado, sit([ev(1, 'cio', -64)]).proximo], ['ciclando_antigo', null]);
+    verificar('usa o ciclo da própria vaca (20 dias)', sit([ev(1, 'cio', -60), ev(2, 'cio', -40), ev(3, 'cio', -20)]).proximo.data, d(0));
+    verificar('cobertura há 10 dias: próxima conferência aos 21 dias', [sit([ev(1, 'cobertura', -10)]).estado, sit([ev(1, 'cobertura', -10)]).proximo], ['coberta', { data: d(11), tipo: 'retorno', marco: 21, dias: 11 }]);
+    verificar('cobertura há 21 dias: a conferência dos 21 dias é hoje (dias = 0)', sit([ev(1, 'cobertura', -21)]).proximo, { data: d(0), tipo: 'retorno', marco: 21, dias: 0 });
+    verificar('cobertura há 30 dias: próxima conferência aos 42 dias', sit([ev(1, 'cobertura', -30)]).proximo, { data: d(12), tipo: 'retorno', marco: 42, dias: 12 });
+    verificar('cobertura há 50 dias sem diagnóstico: sem próxima conferência', [sit([ev(1, 'cobertura', -50)]).estado, sit([ev(1, 'cobertura', -50)]).proximo], ['coberta', null]);
+    verificar('cobertura traz o parto previsto', sit([ev(1, 'cobertura', -10)]).partoPrevisto, d(273));
+    verificar('cobertura diagnosticada prenhe', [sit([ev(1, 'cobertura', -50, { diagnostico_gestacao: 'prenhe', diagnostico_data: d(-5) })]).estado, sit([ev(1, 'cobertura', -50, { diagnostico_gestacao: 'prenhe', diagnostico_data: d(-5) })]).proximo], ['prenhe', null]);
+    verificar('cobertura diagnosticada vazia', sit([ev(1, 'cobertura', -50, { diagnostico_gestacao: 'vazia', diagnostico_data: d(-5) })]).estado, 'vazia');
+    verificar('cio depois da cobertura volta a "ciclando"', sit([ev(1, 'cobertura', -30), ev(2, 'cio', -9)]).estado, 'ciclando');
+
+    console.log('  lista "Cios para observar nesta semana"');
+    const vaca = (id) => ({ id, identificacao: String(500 + id) });
+    const evA = (id, animal, tipo, dias, extra) => ({ id, animal_id: animal, tipo, data: d(dias), ...(extra || {}) });
+    const obs = (animais, eventos, respostas, janela) => F.calcularCiosParaObservar(animais, eventos, respostas || [], H, janela);
+    const res = r => r.map(i => [i.animalId, i.tipo, i.dataPrevista, i.dias]);
+    verificar('cio com próximo previsto em 6 dias entra; em 7 dias não', [obs([vaca(1)], [evA(1, 1, 'cio', -15)]).length, obs([vaca(1)], [evA(1, 1, 'cio', -14)]).length], [1, 0]);
+    verificar('cio com previsão para hoje entra (dias = 0)', res(obs([vaca(1)], [evA(1, 1, 'cio', -21)])), [[1, 'ciclo', d(0), 0]]);
+    verificar('traz a data do último cio e o ciclo usado', [obs([vaca(1)], [evA(1, 1, 'cio', -18)])[0].dataBase, obs([vaca(1)], [evA(1, 1, 'cio', -18)])[0].intervalo], [d(-18), 21]);
+    verificar('cio antigo cuja previsão já passou: projeta o próximo ciclo', res(obs([vaca(1)], [evA(1, 1, 'cio', -36)])), [[1, 'ciclo', d(6), 6]]);
+    verificar('cio antigo demais (mais de 3 ciclos): fica fora', obs([vaca(1)], [evA(1, 1, 'cio', -70)]).length, 0);
+    verificar('coberta há 15 dias: retorno dos 21 dias em 6 dias entra', res(obs([vaca(1)], [evA(1, 1, 'cobertura', -15)])), [[1, 'retorno', d(6), 6]]);
+    verificar('coberta há 14 dias: retorno ainda fora da janela', obs([vaca(1)], [evA(1, 1, 'cobertura', -14)]).length, 0);
+    verificar('coberta há 36 dias: entra o retorno dos 42 dias', [res(obs([vaca(1)], [evA(1, 1, 'cobertura', -36)])), obs([vaca(1)], [evA(1, 1, 'cobertura', -36)])[0].marco], [[[1, 'retorno', d(6), 6]], 42]);
+    verificar('retorno de hoje já é pergunta da tela Início: não repete na lista', obs([vaca(1)], [evA(1, 1, 'cobertura', -21)]).length, 0);
+    verificar('retorno de hoje de cobertura sem id (dado antigo) ainda entra', obs([vaca(1)], [{ animal_id: 1, tipo: 'cobertura', data: d(-21) }]).length, 1);
+    verificar('retorno já respondido "não" não entra', obs([vaca(1)], [evA(10, 1, 'cobertura', -17)], [{ cobertura_id: 10, marco: 21, resposta: 'nao' }]).length, 0);
+    verificar('resposta de outra cobertura não esconde este retorno', obs([vaca(1)], [evA(10, 1, 'cobertura', -17)], [{ cobertura_id: 99, marco: 21, resposta: 'nao' }]).length, 1);
+    verificar('prenhe diagnosticada, vazia, sem eventos, parto: nenhuma entra', obs([vaca(1), vaca(2), vaca(3), vaca(4)], [evA(1, 1, 'cobertura', -15, { diagnostico_gestacao: 'prenhe', diagnostico_data: d(-1) }), evA(2, 2, 'cobertura', -15, { diagnostico_gestacao: 'vazia', diagnostico_data: d(-1) }), evA(3, 4, 'parto', -15)]).length, 0);
+    verificar('ordem por data e, na mesma data, pelo número da vaca', res(obs([vaca(10), vaca(2), vaca(3)], [evA(1, 10, 'cio', -18), evA(2, 2, 'cio', -18), evA(3, 3, 'cio', -19)])), [[3, 'ciclo', d(2), 2], [2, 'ciclo', d(3), 3], [10, 'ciclo', d(3), 3]]);
+    verificar('mesma data: o número da vaca é comparado como número (9 antes de 10)', res(obs([{ id: 10, identificacao: '10' }, { id: 9, identificacao: '9' }], [evA(1, 10, 'cio', -18), evA(2, 9, 'cio', -18)])).map(r => r[0]), [9, 10]);
+    verificar('janela de 3 dias: só hoje e os 2 seguintes', [obs([vaca(1)], [evA(1, 1, 'cio', -19)], [], 3).length, obs([vaca(1)], [evA(1, 1, 'cio', -17)], [], 3).length], [1, 0]);
+    verificar('listas nulas: nada e sem erro', [F.calcularCiosParaObservar(null, null, null, H).length, obs([], []).length], [0, 0]);
+    verificar('eventos de uma vaca não contaminam a outra', res(obs([vaca(1), vaca(2)], [evA(1, 1, 'cio', -18), evA(2, 2, 'parto', -5)])), [[1, 'ciclo', d(3), 3]]);
+
+    console.log('  grupo e cartão na tela Início');
+    verificar('rótulo da data: hoje, amanhã e dia da semana com data', [F.rotuloDataCioObservar(0, d(0)), F.rotuloDataCioObservar(1, d(1)), F.rotuloDataCioObservar(3, d(3))], ['hoje', 'amanhã', 'sexta, 06/11']);
+    verificar('texto do cio provável', F.textoCioParaObservar({ tipo: 'ciclo', dias: 3, dataPrevista: d(3) }), 'provável cio sexta, 06/11');
+    verificar('texto do retorno dos 21 e 42 dias', [F.textoCioParaObservar({ tipo: 'retorno', marco: 21, dias: 1, dataPrevista: d(1) }), F.textoCioParaObservar({ tipo: 'retorno', marco: 42, dias: 0, dataPrevista: d(0) })], ['retorno ao cio previsto amanhã (21 dias depois da cobertura)', 'retorno ao cio previsto hoje (42 dias depois da cobertura)']);
+    verificar('sem itens não há grupo', [F.montarGrupoCiosParaObservar([]), F.montarGrupoCiosParaObservar(null)], [null, null]);
+    const itensCio = [{ animalId: 7, animal: 'Nº 536', tipo: 'ciclo', dias: 2, dataPrevista: d(2) }];
+    const grupoCio = F.montarGrupoCiosParaObservar(itensCio);
+    verificar('grupo: título, compacto, sem chave (sem baixa nem adiar)', [grupoCio.titulo, grupoCio.compacto, grupoCio.itens[0].chave, grupoCio.itens[0].animalId], ['Cios para observar nesta semana', true, null, 7]);
+    let cartaoCio = F.montarCartaoAcoesDoDia([grupoCio], true);
+    verificar('só com cios para observar, o cartão diz "Nada urgente hoje" e lista as vacas', [cartaoCio.includes('Nada urgente hoje'), cartaoCio.includes('Cios para observar nesta semana'), cartaoCio.includes('Nº 536'), cartaoCio.includes('provável cio ' + F.nomeDiaSemana(d(2)))], [true, true, true, true]);
+    verificar('o número da vaca abre o calendário dela', cartaoCio.includes('onclick="abrirCalendarioCio(7)"'), true);
+    verificar('a lista de cios não tem os botões Dar baixa e Adiar', cartaoCio.includes('Dar baixa') || cartaoCio.includes('Adiar'), false);
+    const seis = Array.from({ length: 6 }, (_, i) => ({ animalId: i + 1, animal: 'Nº ' + (i + 1), tipo: 'ciclo', dias: 2, dataPrevista: d(2) }));
+    cartaoCio = F.montarCartaoAcoesDoDia([F.montarGrupoCiosParaObservar(seis)], true);
+    verificar('mais de 5 vacas: 5 à vista e "Ver todas (6)" com o resto escondido', [cartaoCio.includes('Ver todas (6)'), cartaoCio.includes('data-resto-cios'), (cartaoCio.split('abrirCalendarioCio(').length - 1)], [true, true, 6]);
+    verificar('com 5 vacas ou menos não há "Ver todas"', F.montarCartaoAcoesDoDia([F.montarGrupoCiosParaObservar(seis.slice(0, 5))], true).includes('Ver todas'), false);
+    const urgente = { codigo: 'parto', titulo: 'Parto próximo ou atrasado', itens: [{ animal: 'Nº 9', texto: 'parto previsto', chave: 'parto|9|x' }] };
+    cartaoCio = F.montarCartaoAcoesDoDia([urgente, grupoCio], true);
+    verificar('com aviso urgente: os avisos vêm primeiro, depois os cios, e o cartão não diz "Nada urgente"', [cartaoCio.indexOf('Parto próximo') < cartaoCio.indexOf('Cios para observar'), cartaoCio.includes('Nada urgente hoje'), cartaoCio.includes('Dar baixa')], [true, false, true]);
+    verificar('nome da vaca com HTML é escapado na lista de cios', F.montarCartaoAcoesDoDia([F.montarGrupoCiosParaObservar([{ animalId: 1, animal: 'Nº <b>1</b>', tipo: 'ciclo', dias: 0, dataPrevista: d(0) }])], true).includes('<b>1</b>'), false);
+
+    console.log('  texto da situação');
+    const txt = evs => F.descreverSituacaoCicloVaca(F.situacaoCicloVaca(evs, H), H);
+    verificar('sem cio', txt([]).titulo, 'Sem cio registrado');
+    verificar('ciclando: em N dias, com a data', txt([ev(1, 'cio', -16)]).titulo, 'Próximo cio provável em 5 dias, 08/11');
+    verificar('ciclando: hoje e amanhã', [txt([ev(1, 'cio', -21)]).titulo, txt([ev(1, 'cio', -20)]).titulo], ['Próximo cio provável hoje, 03/11', 'Próximo cio provável amanhã, 04/11']);
+    verificar('ciclando: o detalhe traz a janela de observação e o ciclo padrão', txt([ev(1, 'cio', -16)]).detalhe.includes('de 06/11 a 10/11') && txt([ev(1, 'cio', -16)]).detalhe.includes('ciclo padrão de 21 dias'), true);
+    verificar('ciclando: com cios suficientes cita o ciclo da vaca', txt([ev(1, 'cio', -60), ev(2, 'cio', -40), ev(3, 'cio', -20)]).detalhe.includes('ciclo desta vaca: 20 dias'), true);
+    verificar('cio antigo', txt([ev(1, 'cio', -100)]).titulo, 'Último cio registrado há muito tempo');
+    verificar('coberta com próxima conferência', txt([ev(1, 'cobertura', -10)]).titulo, 'Coberta em 24/10, retorno ao cio previsto em 11 dias, 14/11');
+    verificar('coberta sem próxima conferência pede o diagnóstico', txt([ev(1, 'cobertura', -50)]).detalhe.includes('confirme a gestação'), true);
+    verificar('prenhe cita o parto previsto', txt([ev(1, 'cobertura', -50, { diagnostico_gestacao: 'prenhe', diagnostico_data: d(-5) })]).detalhe.includes('Parto previsto: ' + d(233).slice(8, 10) + '/' + d(233).slice(5, 7)), true);
+    verificar('vazia', txt([ev(1, 'cobertura', -50, { diagnostico_gestacao: 'vazia', diagnostico_data: d(-5) })]).titulo, 'Diagnosticada vazia');
+
+    console.log('  mês do calendário');
+    const mes = (evs, ano, m) => F.montarMesCalendarioCio(evs, ano, m, H);
+    const cel = (cs, iso) => cs.find(c => c && c.iso === iso);
+    verificar('novembro de 2026 começa no domingo: 30 dias, sem espaços antes', [mes([], 2026, 11).length, mes([], 2026, 11)[0].iso], [30, '2026-11-01']);
+    verificar('outubro de 2026 começa na quinta: 4 espaços e 31 dias', [mes([], 2026, 10).length, mes([], 2026, 10).slice(0, 4).every(c => c === null)], [35, true]);
+    verificar('fevereiro de 2028 (bissexto) tem 29 dias', mes([], 2028, 2).filter(Boolean).length, 29);
+    verificar('sem eventos: nenhuma marca nem número', mes([], 2026, 11).every(c => c.marcas.length === 0 && c.numero === null), true);
+    const cioRecente = [ev(1, 'cio', -5)];   // cio em 29/10/2026
+    verificar('o dia do cio tem a marca "cio" e é o dia 1 do ciclo', [cel(mes(cioRecente, 2026, 10), '2026-10-29').marcas, cel(mes(cioRecente, 2026, 10), '2026-10-29').numero], [['cio'], 1]);
+    verificar('os dias seguintes contam o ciclo (1 de novembro é o dia 4)', cel(mes(cioRecente, 2026, 11), '2026-11-01').numero, 4);
+    verificar('o ciclo vai até o dia 21 (18/11) e o dia previsto (19/11) começa um novo ciclo', [cel(mes(cioRecente, 2026, 11), '2026-11-18').numero, cel(mes(cioRecente, 2026, 11), '2026-11-19').numero, cel(mes(cioRecente, 2026, 11), '2026-11-20').numero], [21, 1, null]);
+    verificar('o dia previsto tem a marca "previsao_cio" e a janela vai de 17 a 21/11', [cel(mes(cioRecente, 2026, 11), '2026-11-19').marcas.includes('previsao_cio'), ['2026-11-16', '2026-11-17', '2026-11-21', '2026-11-22'].map(i => cel(mes(cioRecente, 2026, 11), i).marcas.includes('janela'))], [true, [false, true, true, false]]);
+    const doisCios = [ev(1, 'cio', -33), ev(2, 'cio', -12)];   // 01/10 e 22/10
+    verificar('com dois cios, o ciclo do primeiro termina no dia anterior ao segundo', [cel(mes(doisCios, 2026, 10), '2026-10-21').numero, cel(mes(doisCios, 2026, 10), '2026-10-22').numero, cel(mes(doisCios, 2026, 10), '2026-10-01').numero], [21, 1, 1]);
+    const cobertura = [ev(1, 'cio', -9), ev(2, 'cobertura', -9)];   // cio e cobertura em 25/10
+    verificar('coberta: marcas de cio e cobertura no mesmo dia', cel(mes(cobertura, 2026, 10), '2026-10-25').marcas, ['cio', 'cobertura']);
+    verificar('coberta: retornos de 21 e 42 dias marcados (15/11 e 06/12)', [cel(mes(cobertura, 2026, 11), '2026-11-15').marcas.includes('retorno'), cel(mes(cobertura, 2026, 12), '2026-12-06').marcas.includes('retorno')], [true, true]);
+    verificar('coberta: o dia do retorno de 21 dias é o dia 22 do ciclo', cel(mes(cobertura, 2026, 11), '2026-11-15').numero, 22);
+    verificar('coberta: parto previsto marcado (283 dias depois)', cel(mes(cobertura, 2027, 8), F.somarDias('2026-10-25', 283)).marcas.includes('parto_previsto'), true);
+    const prenhe = [ev(1, 'cobertura', -50, { diagnostico_gestacao: 'prenhe', diagnostico_data: d(-5) })];
+    verificar('prenhe: sem retornos nem números, só o parto previsto', [mes(prenhe, 2026, 11).every(c => !c.marcas.includes('retorno') && c.numero === null), cel(mes(prenhe, 2027, 6), F.somarDias(d(-50), 283)).marcas.includes('parto_previsto')], [true, true]);
+    verificar('parto reinicia: o ciclo antes do parto termina no dia anterior', [cel(mes([ev(1, 'cio', -33), ev(2, 'parto', -24)], 2026, 10), '2026-10-09').numero, cel(mes([ev(1, 'cio', -33), ev(2, 'parto', -24)], 2026, 10), '2026-10-10').numero, cel(mes([ev(1, 'cio', -33), ev(2, 'parto', -24)], 2026, 10), '2026-10-10').marcas], [9, null, ['parto']]);
+    verificar('prenhe: nenhum número de ciclo nem no mês da cobertura', mes([ev(1, 'cobertura', -20, { diagnostico_gestacao: 'prenhe', diagnostico_data: d(-2) })], 2026, 10).every(c => c === null || c.numero === null), true);
+    verificar('coberta: janela de observação de 13 a 17/11 em volta do retorno de 21 dias', ['2026-11-12', '2026-11-13', '2026-11-17', '2026-11-18'].map(i => cel(mes(cobertura, 2026, 11), i).marcas.includes('janela')), [false, true, true, false]);
+    verificar('vaca só com cobertura (sem cio antes): a cobertura é o dia 1', cel(mes([ev(1, 'cobertura', -9)], 2026, 10), '2026-10-25').numero, 1);
+    verificar('cio antigo demais: sem previsão marcada', mes([ev(1, 'cio', -100)], 2026, 11).every(c => !c.marcas.includes('previsao_cio') && !c.marcas.includes('janela')), true);
+  }
+
+  {
+    console.log('\nHora do cio e da inseminação (janela de 8 a 16 h)');
+    const cio = (id, data, hora, extra) => ({ id, animal_id: 1, tipo: 'cio', data, hora, ...(extra || {}) });
+    const cob = (id, data, hora, extra) => ({ id, animal_id: 1, tipo: 'cobertura', data, hora, ...(extra || {}) });
+    verificar('normaliza a hora do banco e a digitada', [F.normalizarHoraEvento('06:30:00'), F.normalizarHoraEvento('6:05'), F.normalizarHoraEvento('23:59')], ['06:30', '06:05', '23:59']);
+    verificar('hora inválida ou vazia vira null', [F.normalizarHoraEvento(''), F.normalizarHoraEvento(null), F.normalizarHoraEvento('24:00'), F.normalizarHoraEvento('12:60'), F.normalizarHoraEvento('abc')], [null, null, null, null, null]);
+    verificar('horas entre dois registros, inclusive virando o dia', [F.horasEntreRegistros('2026-11-04', '06:00', '2026-11-04', '18:30'), F.horasEntreRegistros('2026-11-04', '20:00', '2026-11-05', '08:00')], [12.5, 12]);
+    verificar('soma de horas passa para o dia seguinte', [F.somarHorasNaData('2026-11-04', '20:00', 8), F.somarHorasNaData('2026-12-31', '23:30', 1)], [{ iso: '2026-11-05', hora: '04:00' }, { iso: '2027-01-01', hora: '00:30' }]);
+    verificar('duração em texto', [F.formatarDuracaoHoras(12), F.formatarDuracaoHoras(11.5), F.formatarDuracaoHoras(0.25)], ['12 h', '11 h 30 min', '0 h 15 min']);
+
+    const av = (c, evs) => F.avaliarJanelaInseminacao(c, evs);
+    const c1 = cio(1, '2026-11-04', '06:00');
+    verificar('inseminação 12 h depois do cio: dentro', av(cob(2, '2026-11-04', '18:00'), [c1]).situacao, 'dentro');
+    verificar('limites: 8 h e 16 h estão dentro; 7 h 59 min é cedo; 16 h 01 min é tarde', [av(cob(2, '2026-11-04', '14:00'), [c1]).situacao, av(cob(2, '2026-11-04', '22:00'), [c1]).situacao, av(cob(2, '2026-11-04', '13:59'), [c1]).situacao, av(cob(2, '2026-11-04', '22:01'), [c1]).situacao], ['dentro', 'dentro', 'cedo', 'tarde']);
+    verificar('inseminação junto com o cio (0 h): cedo', av(cob(2, '2026-11-04', '06:00'), [c1]).situacao, 'cedo');
+    verificar('inseminação no dia seguinte, 24 h depois: tarde', [av(cob(2, '2026-11-05', '06:00'), [c1]).situacao, av(cob(2, '2026-11-05', '06:00'), [c1]).horas], ['tarde', 24]);
+    verificar('cio à noite e inseminação de manhã cruzando a meia-noite: 10 h, dentro', av(cob(2, '2026-11-05', '06:00'), [cio(1, '2026-11-04', '20:00')]).situacao, 'dentro');
+    verificar('sem hora na inseminação: não avalia', av(cob(2, '2026-11-04', null), [c1]), null);
+    verificar('cio sem hora: não avalia', av(cob(2, '2026-11-04', '18:00'), [cio(1, '2026-11-04', null)]), null);
+    verificar('cio depois da inseminação: não avalia', av(cob(2, '2026-11-04', '05:00'), [c1]), null);
+    verificar('cio há mais de 48 h: não avalia (48 h ainda conta)', [av(cob(2, '2026-11-06', '06:01'), [c1]), av(cob(2, '2026-11-06', '06:00'), [c1]).situacao], [null, 'tarde']);
+    verificar('vários cios: usa o mais próximo antes da inseminação', av(cob(3, '2026-11-25', '18:00'), [cio(1, '2026-11-04', '06:00'), cio(2, '2026-11-25', '06:00')]).cioId, 2);
+    verificar('dois cios dentro de 48 h: vale o mais próximo da inseminação', av(cob(3, '2026-11-04', '18:00'), [cio(1, '2026-11-03', '12:00'), cio(2, '2026-11-04', '06:00')]).cioId, 2);
+    verificar('evento que não é cobertura não é avaliado', av({ id: 9, tipo: 'cio', data: '2026-11-04', hora: '10:00' }, [c1]), null);
+    verificar('texto da avaliação', [F.textoAvaliacaoJanela(av(cob(2, '2026-11-04', '17:30'), [c1])), F.textoAvaliacaoJanela(av(cob(2, '2026-11-04', '09:00'), [c1])), F.textoAvaliacaoJanela(av(cob(2, '2026-11-05', '06:00'), [c1])), F.textoAvaliacaoJanela(null)],
+      ['Inseminada 11 h 30 min após o cio (dentro da janela de 8 a 16 h)', 'Inseminada 3 h após o cio (antes da janela de 8 a 16 h)', 'Inseminada 24 h após o cio (depois da janela de 8 a 16 h)', '']);
+
+    const agora = (iso, hora) => ({ iso, hora });
+    const j = F.janelaInseminacaoDoCio([c1], agora('2026-11-04', '08:00'));
+    verificar('janela do cio das 06:00: de 14:00 a 22:00, ideal 18:00', j && [j.inicio, j.fim, j.ideal], [{ iso: '2026-11-04', hora: '14:00' }, { iso: '2026-11-04', hora: '22:00' }, { iso: '2026-11-04', hora: '18:00' }]);
+    verificar('janela ainda vale até o último minuto e some depois', [F.janelaInseminacaoDoCio([c1], agora('2026-11-04', '22:00')) !== null, F.janelaInseminacaoDoCio([c1], agora('2026-11-04', '22:01'))], [true, null]);
+    verificar('janela some quando já houve cobertura depois do cio', F.janelaInseminacaoDoCio([c1, cob(2, '2026-11-04', '18:00')], agora('2026-11-04', '19:00')), null);
+    verificar('janela some quando o cio não tem hora', F.janelaInseminacaoDoCio([cio(1, '2026-11-04', null)], agora('2026-11-04', '08:00')), null);
+    verificar('janela some quando o último evento não é cio (parto depois)', F.janelaInseminacaoDoCio([c1, { id: 5, animal_id: 1, tipo: 'parto', data: '2026-11-04' }], agora('2026-11-04', '08:00')), null);
+    verificar('cio tarde da noite: a janela vai para o dia seguinte', F.janelaInseminacaoDoCio([cio(1, '2026-11-04', '21:00')], agora('2026-11-04', '22:00')).inicio, { iso: '2026-11-05', hora: '05:00' });
+    verificar('texto no mesmo dia', F.textoJanelaInseminacao(j, '2026-11-04'), 'Melhor momento para inseminar: hoje, das 14:00 às 22:00 (o ideal é hoje às 18:00, cerca de 12 h depois do cio das 06:00).');
+    verificar('texto no mesmo dia, mas amanhã', F.textoJanelaInseminacao(F.janelaInseminacaoDoCio([cio(1, '2026-11-04', '21:00')], agora('2026-11-04', '22:00')), '2026-11-04'), 'Melhor momento para inseminar: amanhã, das 05:00 às 13:00 (o ideal é amanhã às 09:00, cerca de 12 h depois do cio das 21:00).');
+    verificar('texto cruzando a meia-noite', F.textoJanelaInseminacao(F.janelaInseminacaoDoCio([cio(1, '2026-11-04', '10:00')], agora('2026-11-04', '11:00')), '2026-11-04'), 'Melhor momento para inseminar: de hoje às 18:00 até amanhã às 02:00 (o ideal é hoje às 22:00, cerca de 12 h depois do cio das 10:00).');
+    verificar('texto de dia mais distante usa a data', F.rotuloMomentoInseminacao({ iso: '2026-11-07', hora: '08:00' }, '2026-11-04'), '07/11 às 08:00');
+    verificar('texto vazio sem janela', F.textoJanelaInseminacao(null, '2026-11-04'), '');
+
+    const rebanho = [
+      cio(1, '2026-11-01', '06:00'), cob(2, '2026-11-01', '18:00'),                       // dentro
+      { id: 3, animal_id: 2, tipo: 'cio', data: '2026-11-01', hora: '06:00' }, { id: 4, animal_id: 2, tipo: 'cobertura', data: '2026-11-01', hora: '09:00' },   // cedo
+      { id: 5, animal_id: 3, tipo: 'cio', data: '2026-11-01', hora: '06:00' }, { id: 6, animal_id: 3, tipo: 'cobertura', data: '2026-11-02', hora: '06:00' },   // tarde
+      { id: 7, animal_id: 4, tipo: 'cobertura', data: '2026-11-01', hora: '10:00' },       // com hora, sem cio com hora
+      { id: 8, animal_id: 5, tipo: 'cobertura', data: '2026-11-01', hora: null }          // sem hora
+    ];
+    verificar('resumo do rebanho: cada vaca é avaliada com o próprio cio', F.resumoJanelaInseminacao(rebanho), { coberturas: 5, comHora: 4, avaliadas: 3, dentro: 1, cedo: 1, tarde: 1 });
+    verificar('resumo vazio', F.resumoJanelaInseminacao([]), { coberturas: 0, comHora: 0, avaliadas: 0, dentro: 0, cedo: 0, tarde: 0 });
+    verificar('cio de outra vaca não vale para a inseminação', F.resumoJanelaInseminacao([{ id: 1, animal_id: 1, tipo: 'cio', data: '2026-11-01', hora: '06:00' }, { id: 2, animal_id: 2, tipo: 'cobertura', data: '2026-11-01', hora: '18:00' }]).avaliadas, 0);
+    verificar('data e hora no histórico: só cio e cobertura mostram a hora', [F.dataHoraEvento(cio(1, '2026-11-04', '06:30:00')), F.dataHoraEvento(cob(2, '2026-11-04', null)), F.dataHoraEvento({ tipo: 'parto', data: '2026-11-04', hora: '06:30' })], ['04/11/2026 às 06:30', '04/11/2026', '04/11/2026']);
+    verificar('constantes da janela (Fran): 8, 16 e 12 h', [F.JANELA_INSEMINACAO_MIN_HORAS, F.JANELA_INSEMINACAO_MAX_HORAS, F.JANELA_INSEMINACAO_IDEAL_HORAS], [8, 16, 12]);
   }
 
   console.log('\n' + '-'.repeat(50));
