@@ -37,11 +37,11 @@
    [J03] entrada no app: login, cadastro e início da sessão
    [J04] navegação entre as abas e tela Início
    [J05] primeiros passos e Ajuda
-   [J06] avisos do Início (dar baixa, adiar, o que fazer hoje, cartão Conferir cio)
+   [J06] avisos do Início (dar baixa, adiar, o que fazer hoje, cartão Conferir cio, lista Cios para observar)
    [J07] ficha do produtor e visão do colaborador
    [J08] meus animais: lista, busca, cadastro e curva de lactação
-   [J09] regras da reprodução e avisos de parto, secagem e cio (inclui a conferência de cio aos 21 e 42 dias)
-   [J10] eventos reprodutivos: cio, cobertura, parto, aborto, secagem
+   [J09] regras da reprodução e avisos de parto, secagem e cio (inclui a conferência de cio aos 21 e 42 dias e as contas do ciclo e do calendário do cio)
+   [J10] eventos reprodutivos: cio, cobertura, parto, aborto, secagem (inclui o calendário do cio da vaca e a hora do cio/inseminação com a janela de 8 a 16 h)
    [J22] manejo sanitário (vacinas, tratamentos, carência)
    [J23] produção de leite: histórico por ano e mês
    [J24] chuva e produção
@@ -911,6 +911,8 @@ const PERGUNTAS_AJUDA = [
   { p:'Como cadastro um animal?', r:'Na aba <strong>Meus animais</strong>, toque em <strong>Adicionar animal</strong>. Informe o número ou brinco e a data de nascimento. Os outros campos (nome da mãe, pai, avós, grau de sangue) são opcionais. Se a vaca já tinha parido antes de entrar no LeiteFácil, o próprio formulário tem uma opção para informar a data do último parto. Assim o app coloca a vaca no lote certo (lactante, seca ou novilha).' },
   { p:'Como lanço o leite do dia?', r:'Na aba <strong>Produção</strong>, toque em <strong>Registrar produção do dia</strong>. Escolha como quer lançar: <strong>Por rebanho</strong> (você digita o total do dia) ou <strong>Por vaca</strong> (você lança vaca por vaca e o app soma). Preencha a ordenha da manhã e a da tarde. Se quiser, anote também se choveu naquele dia (campo <strong>Choveu neste dia?</strong>) e salve.' },
   { p:'O que é a pergunta "A vaca entrou em cio?" na tela Início?', r:'Depois que você registra uma cobertura ou inseminação, o app pergunta, 21 e 42 dias depois, se a vaca voltou ao cio. A pergunta fica na tela Início por 4 dias (de 21 a 24 dias e de 42 a 45 dias depois da cobertura). Toque em <strong>Sim</strong> para registrar o cio na ficha da vaca. Toque em <strong>Não</strong> para o app anotar a resposta. Se você responder "não" nas duas vezes, o app sugere confirmar a gestação, por ultrassom, por exemplo, e você registra o resultado na ficha da vaca. A pergunta deixa de aparecer quando a vaca já tem diagnóstico de gestação, cio, parto ou aborto registrado depois da cobertura.' },
+  { p:'O que são os "Cios para observar nesta semana" e o calendário do cio?', r:'Na tela Início, dentro de <strong>O que fazer hoje</strong>, o app lista as vacas que provavelmente entram em cio nos próximos 7 dias, para você ficar de olho nelas. Entram as vacas que tiveram um cio registrado e ainda não foram cobertas, e as vacas cobertas que ainda não têm diagnóstico de gestação (nessas, o app conta 21 e 42 dias depois da cobertura). Toque no número da vaca para abrir o <strong>calendário do cio</strong> dela, na ficha da vaca. O calendário mostra os cios e as coberturas já registrados, o dia do ciclo (o número pequeno no canto de cada dia), o próximo cio provável e uma janela de alguns dias para observar. Quando ela entrar em cio, toque em <strong>Registrar cio</strong>. As datas são estimativas: o app usa 21 dias como duração do ciclo e, depois que a vaca tem pelo menos três cios registrados, passa a usar a média dos ciclos dela.' },
+  { p:'Para que serve anotar a hora do cio e da inseminação?', r:'O melhor momento para inseminar é, em geral, de <strong>8 a 16 horas depois do início do cio</strong> (o ideal é cerca de 12 horas). No formulário de <strong>Cio</strong>, anote a hora em que o cio foi observado; no de <strong>Cobertura / Inseminação</strong>, a hora em que ela foi feita. As duas horas são opcionais. Com a hora do cio, o calendário da vaca mostra o <strong>melhor momento para inseminar</strong>. Com as duas horas, a ficha da vaca diz se a inseminação ficou dentro da janela, e a aba <strong>Reprodução</strong> mostra quantas ficaram dentro no rebanho. Se muitas ficarem fora da janela, esse pode ser um dos motivos de falha de prenhez.' },
   { p:'Para que serve anotar a chuva?', r:'Em dias de chuva as vacas gastam mais energia e podem produzir menos leite. Ao anotar, no lançamento do dia, se <strong>Não choveu</strong>, houve <strong>Pouca chuva</strong>, <strong>Chuva boa</strong> ou <strong>Chuva forte</strong>, o app compara a média de leite dos dias secos com a dos dias de chuva e mostra o resultado no cartão <strong>Chuva e produção</strong>, na aba Produção. Os milímetros são opcionais: só preencha se você tiver pluviômetro. A comparação aparece depois de pelo menos 5 dias secos e 5 dias de chuva anotados nos últimos 90 dias. É só uma comparação, não prova que a chuva foi a causa.' },
   { p:'Lancei errado. Como corrijo?', r:'Na aba <strong>Produção</strong>, toque no dia que quer mudar (ou no ícone de lápis ao lado dele). O formulário abre já preenchido. Corrija e salve, ou use o botão de excluir se quiser apagar o dia.' },
   { p:'Como registro cio, cobertura, parto e outros eventos da vaca?', r:'Pela aba <strong>Reprodução</strong>, no botão <strong>Registrar evento</strong>, ou pela ficha da vaca (aba <strong>Meus animais</strong>, toque no animal). Você pode registrar: cio, cobertura ou inseminação, parto, indução de lactação, aborto e secagem.' },
@@ -1081,7 +1083,8 @@ async function renderOQueFazerHoje(){
   const alvo = document.getElementById('bloco-o-que-fazer');
   if(alvo){
     const grupos = filtrarAvisosDispensados(todos, AVISOS_DISPENSADOS, hoje).grupos;
-    alvo.innerHTML = montarCartaoAcoesDoDia(grupos, (animais || []).length > 0);
+    const grupoCios = montarGrupoCiosParaObservar(calcularCiosParaObservar(animais || [], eventos || [], erroCio ? [] : respostasCio, hoje));
+    alvo.innerHTML = montarCartaoAcoesDoDia(grupoCios ? [...grupos, grupoCios] : grupos, (animais || []).length > 0);
   }
   // Sem a produção por vaca, a regra de queda não rodou e as chaves ficam incompletas: melhor não afirmar nada.
   return erroInd ? null : chavesDosGrupos(todos);
@@ -1828,6 +1831,340 @@ function calcularConferenciasCio(animais, eventos, respostas, hojeIso){
   return perguntas.sort((x, y) => x.ordem - y.ordem || x.animal.localeCompare(y.animal, 'pt-BR', { numeric: true }));
 }
 
+// ---------- Cios para observar e calendário do cio ----------
+// O ciclo da vaca dura cerca de 21 dias (a faixa normal vai de 18 a 24). A data provável do próximo cio sai do último
+// cio registrado mais a duração do ciclo daquela vaca: a média dos intervalos entre os cios dela, quando há pelo menos
+// dois intervalos normais registrados, e 21 dias nos outros casos. É sempre uma estimativa (por isso a janela de
+// observação de alguns dias para mais e para menos). Usada na lista "Cios para observar nesta semana" da tela Início
+// e no calendário da ficha da vaca.
+const CICLO_COMPLETO_MIN_DIAS = 17;     // intervalo entre dois cios menor que isso não conta na média
+const CICLO_COMPLETO_MAX_DIAS = 25;     // maior que isso (cio perdido ou repetição tardia) também não conta
+const MIN_INTERVALOS_MEDIA_CIO = 2;     // com menos intervalos que isso, vale o padrão de 21 dias
+const JANELA_OBSERVACAO_CIO = 2;        // a data provável vale com 2 dias para mais e para menos
+const DIAS_LISTA_CIOS_OBSERVAR = 7;     // a lista cobre hoje e os 6 dias seguintes
+const MAX_CICLOS_PROJETADOS_CIO = 3;    // sem cio novo há mais de 3 ciclos, a previsão deixa de ser confiável e não é feita
+const TIPOS_RELEVANTES_REPRO = ['cobertura', 'cio', 'aborto', 'parto', 'inducao_lactacao'];
+const DIAS_SEMANA_PT = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+
+function nomeDiaSemana(iso){
+  return DIAS_SEMANA_PT[new Date(iso + 'T12:00:00Z').getUTCDay()];
+}
+
+// Eventos em ordem de data e, no mesmo dia, de id (o mais novo vale por último).
+function ordenarEventosReprodutivos(eventos){
+  return (eventos || []).filter(e => e && e.data).slice()
+    .sort((x, y) => x.data.localeCompare(y.data) || (Number(x.id) || 0) - (Number(y.id) || 0));
+}
+
+// Duração do ciclo da vaca: média dos intervalos entre cios seguidos (a cobertura entre dois cios não atrapalha;
+// parto, aborto ou indução reiniciam a contagem). Devolve { dias, amostras, personalizado }.
+function calcularIntervaloCioVaca(eventos){
+  const evs = ordenarEventosReprodutivos(eventos).filter(e => TIPOS_RELEVANTES_REPRO.includes(e.tipo));
+  const validos = [];
+  for(let i = 0; i < evs.length; i++){
+    if(evs[i].tipo !== 'cio') continue;
+    for(let j = i + 1; j < evs.length; j++){
+      if(evs[j].tipo === 'cio'){
+        const d = diasEntre(evs[i].data, evs[j].data);
+        if(d >= CICLO_COMPLETO_MIN_DIAS && d <= CICLO_COMPLETO_MAX_DIAS) validos.push(d);
+        break;
+      }
+      if(evs[j].tipo !== 'cobertura') break;
+    }
+  }
+  if(validos.length >= MIN_INTERVALOS_MEDIA_CIO){
+    return { dias: Math.round(validos.reduce((t, x) => t + x, 0) / validos.length), amostras: validos.length, personalizado: true };
+  }
+  return { dias: DIAS_CICLO_ESTRO, amostras: validos.length, personalizado: false };
+}
+
+// ---------- Horário do cio e da inseminação ----------
+// A Fran (zootecnista) recomenda inseminar cerca de 12 h depois do início do cio. O app aceita a hora (opcional) no cio e na
+// cobertura e confere se a inseminação ficou entre 8 e 16 h depois do cio. Horas são "de relógio", sem fuso: a hora digitada é a hora lida.
+const JANELA_INSEMINACAO_MIN_HORAS = 8;
+const JANELA_INSEMINACAO_MAX_HORAS = 16;
+const JANELA_INSEMINACAO_IDEAL_HORAS = 12;
+const MAX_HORAS_ENTRE_CIO_E_INSEMINACAO = 48;
+
+// Aceita "6:30", "06:30" e "06:30:00" (formato do banco); devolve "HH:MM" ou null.
+function normalizarHoraEvento(h){
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(h == null ? '' : h).trim());
+  if(!m) return null;
+  const hh = Number(m[1]), mm = Number(m[2]);
+  if(hh > 23 || mm > 59) return null;
+  return String(hh).padStart(2, '0') + ':' + m[2];
+}
+
+function minutosDeDataEHora(iso, hora){
+  const [a, m, d] = iso.split('-').map(Number);
+  const [hh, mm] = hora.split(':').map(Number);
+  return Date.UTC(a, m - 1, d, hh, mm) / 60000;
+}
+
+function horasEntreRegistros(isoA, horaA, isoB, horaB){
+  return (minutosDeDataEHora(isoB, horaB) - minutosDeDataEHora(isoA, horaA)) / 60;
+}
+
+function somarHorasNaData(iso, hora, horas){
+  const t = new Date((minutosDeDataEHora(iso, hora) + Math.round(horas * 60)) * 60000).toISOString();
+  return { iso: t.slice(0, 10), hora: t.slice(11, 16) };
+}
+
+function formatarDuracaoHoras(h){
+  const total = Math.round(h * 60);
+  const hh = Math.floor(total / 60), mm = total % 60;
+  return mm ? hh + ' h ' + mm + ' min' : hh + ' h';
+}
+
+// Como foi uma inseminação em relação ao cio: usa o cio com hora mais próximo antes dela (até 48 h).
+// Devolve null se a inseminação ou o cio estiverem sem hora. situacao: cedo (antes de 8 h), dentro (8 a 16 h) ou tarde (depois de 16 h).
+function avaliarJanelaInseminacao(cobertura, eventos){
+  const hc = cobertura && cobertura.tipo === 'cobertura' && cobertura.data ? normalizarHoraEvento(cobertura.hora) : null;
+  if(!hc) return null;
+  let melhor = null;
+  for(const e of (eventos || [])){
+    if(!e || e.tipo !== 'cio' || !e.data) continue;
+    const he = normalizarHoraEvento(e.hora);
+    if(!he) continue;
+    const h = horasEntreRegistros(e.data, he, cobertura.data, hc);
+    if(h < 0 || h > MAX_HORAS_ENTRE_CIO_E_INSEMINACAO) continue;
+    if(!melhor || h < melhor.horas) melhor = { horas: h, cioId: e.id, cioData: e.data, cioHora: he };
+  }
+  if(!melhor) return null;
+  melhor.situacao = melhor.horas < JANELA_INSEMINACAO_MIN_HORAS ? 'cedo' : (melhor.horas > JANELA_INSEMINACAO_MAX_HORAS ? 'tarde' : 'dentro');
+  return melhor;
+}
+
+function textoAvaliacaoJanela(av){
+  if(!av) return '';
+  const faixa = JANELA_INSEMINACAO_MIN_HORAS + ' a ' + JANELA_INSEMINACAO_MAX_HORAS + ' h';
+  const quando = av.situacao === 'dentro' ? 'dentro da janela de ' + faixa : (av.situacao === 'cedo' ? 'antes da janela de ' + faixa : 'depois da janela de ' + faixa);
+  return 'Inseminada ' + formatarDuracaoHoras(av.horas) + ' após o cio (' + quando + ')';
+}
+
+// Resumo das inseminações do rebanho: só entram as que têm hora e um cio com hora logo antes.
+function resumoJanelaInseminacao(eventos){
+  const porAnimal = {};
+  (eventos || []).forEach(e => { if(e && e.animal_id != null) (porAnimal[e.animal_id] = porAnimal[e.animal_id] || []).push(e); });
+  const r = { coberturas: 0, comHora: 0, avaliadas: 0, dentro: 0, cedo: 0, tarde: 0 };
+  Object.keys(porAnimal).forEach(id => {
+    porAnimal[id].forEach(e => {
+      if(e.tipo !== 'cobertura') return;
+      r.coberturas++;
+      if(!normalizarHoraEvento(e.hora)) return;
+      r.comHora++;
+      const av = avaliarJanelaInseminacao(e, porAnimal[id]);
+      if(!av) return;
+      r.avaliadas++;
+      r[av.situacao]++;
+    });
+  });
+  return r;
+}
+
+// Quando inseminar uma vaca que está em cio: só se o último evento dela é um cio com hora e a janela ainda não acabou.
+// "agora" = { iso, hora } no relógio local.
+function janelaInseminacaoDoCio(eventos, agora){
+  const evs = ordenarEventosReprodutivos(eventos).filter(e => TIPOS_RELEVANTES_REPRO.includes(e.tipo));
+  const ultimo = evs.length ? evs[evs.length - 1] : null;
+  if(!ultimo || ultimo.tipo !== 'cio') return null;
+  const hora = normalizarHoraEvento(ultimo.hora);
+  if(!hora) return null;
+  const j = {
+    cioData: ultimo.data, cioHora: hora,
+    inicio: somarHorasNaData(ultimo.data, hora, JANELA_INSEMINACAO_MIN_HORAS),
+    fim: somarHorasNaData(ultimo.data, hora, JANELA_INSEMINACAO_MAX_HORAS),
+    ideal: somarHorasNaData(ultimo.data, hora, JANELA_INSEMINACAO_IDEAL_HORAS)
+  };
+  if(agora && agora.iso && agora.hora && minutosDeDataEHora(j.fim.iso, j.fim.hora) < minutosDeDataEHora(agora.iso, agora.hora)) return null;
+  return j;
+}
+
+function rotuloMomentoInseminacao(p, hojeIso){
+  const dia = p.iso === hojeIso ? 'hoje' : (p.iso === somarDias(hojeIso, 1) ? 'amanhã' : formatarData(p.iso).slice(0, 5));
+  return dia + ' às ' + p.hora;
+}
+
+function textoJanelaInseminacao(j, hojeIso){
+  if(!j) return '';
+  const ini = rotuloMomentoInseminacao(j.inicio, hojeIso), fim = rotuloMomentoInseminacao(j.fim, hojeIso);
+  const faixa = j.inicio.iso === j.fim.iso ? ini.replace(' às ', ', das ') + ' às ' + j.fim.hora : 'de ' + ini + ' até ' + fim;
+  return 'Melhor momento para inseminar: ' + faixa + ' (o ideal é ' + rotuloMomentoInseminacao(j.ideal, hojeIso) + ', cerca de 12 h depois do cio das ' + j.cioHora + ').';
+}
+
+function agoraLocal(){
+  const d = new Date();
+  const p = n => String(n).padStart(2, '0');
+  return { iso: d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()), hora: p(d.getHours()) + ':' + p(d.getMinutes()) };
+}
+
+// "25/10/2026 às 06:30" quando o cio ou a cobertura tem hora.
+function dataHoraEvento(ev){
+  const h = (ev.tipo === 'cio' || ev.tipo === 'cobertura') ? normalizarHoraEvento(ev.hora) : null;
+  return formatarData(ev.data) + (h ? ' às ' + h : '');
+}
+
+// Onde a vaca está no ciclo, pelo último evento que muda a situação reprodutiva:
+//   sem_cio          nenhum cio ou cobertura registrados (ou o último evento foi parto, aborto ou indução)
+//   ciclando         último evento é um cio; "proximo" é a data provável do próximo cio
+//   ciclando_antigo  o último cio é antigo demais para prever
+//   coberta          cobertura sem diagnóstico; "proximo" é a próxima conferência (21 ou 42 dias)
+//   prenhe / vazia   cobertura com diagnóstico
+function situacaoCicloVaca(eventos, hojeIso){
+  const evs = ordenarEventosReprodutivos(eventos).filter(e => TIPOS_RELEVANTES_REPRO.includes(e.tipo));
+  const intervalo = calcularIntervaloCioVaca(eventos);
+  const ultimo = evs.length ? evs[evs.length - 1] : null;
+  const r = { estado: 'sem_cio', intervalo, ultimo, proximo: null, partoPrevisto: null };
+  if(!ultimo) return r;
+  if(ultimo.tipo === 'cio'){
+    r.estado = 'ciclando_antigo';
+    for(let k = 1; k <= MAX_CICLOS_PROJETADOS_CIO; k++){
+      const data = somarDias(ultimo.data, k * intervalo.dias);
+      if(data >= hojeIso){ r.estado = 'ciclando'; r.proximo = { data, tipo: 'ciclo', dias: diasEntre(hojeIso, data) }; break; }
+    }
+    return r;
+  }
+  if(ultimo.tipo === 'cobertura'){
+    const gest = situacaoGestacaoCobertura(ultimo);
+    r.partoPrevisto = somarDias(ultimo.data, DIAS_GESTACAO);
+    if(gest === 'confirmada'){ r.estado = 'prenhe'; return r; }
+    if(gest === 'vazia'){ r.estado = 'vazia'; return r; }
+    r.estado = 'coberta';
+    for(const marco of MARCOS_CONFERENCIA_CIO){
+      const data = somarDias(ultimo.data, marco);
+      if(data >= hojeIso){ r.proximo = { data, tipo: 'retorno', marco, dias: diasEntre(hojeIso, data) }; break; }
+    }
+  }
+  return r;
+}
+
+// Vacas para observar nos próximos dias (hoje e os 6 seguintes): as que têm cio registrado e ainda não foram cobertas
+// (próximo cio provável) e as cobertas sem diagnóstico (retornos aos 21 e 42 dias). Retorno que já virou pergunta na
+// tela Início (conferência de cio) ou já foi respondido não entra aqui, para não repetir.
+function calcularCiosParaObservar(animais, eventos, respostasCio, hojeIso, janelaDias){
+  const fim = somarDias(hojeIso, (janelaDias || DIAS_LISTA_CIOS_OBSERVAR) - 1);
+  const respondidas = mapaRespostasCio(respostasCio);
+  const eventosPor = {};
+  (eventos || []).forEach(e => { (eventosPor[e.animal_id] = eventosPor[e.animal_id] || []).push(e); });
+  const itens = [];
+  (animais || []).forEach(a => {
+    const sit = situacaoCicloVaca(eventosPor[a.id] || [], hojeIso);
+    const nome = 'Nº ' + a.identificacao;
+    if(sit.estado === 'ciclando' && sit.proximo.data <= fim){
+      itens.push({ animalId: a.id, animal: nome, tipo: 'ciclo', dataPrevista: sit.proximo.data, dias: sit.proximo.dias, dataBase: sit.ultimo.data, intervalo: sit.intervalo.dias });
+    }
+    if(sit.estado === 'coberta'){
+      MARCOS_CONFERENCIA_CIO.forEach(marco => {
+        const data = somarDias(sit.ultimo.data, marco);
+        if(data < hojeIso || data > fim) return;
+        if(sit.ultimo.id != null && (respondidas.has(chaveRespostaCio(sit.ultimo.id, marco)) || data === hojeIso)) return;
+        itens.push({ animalId: a.id, animal: nome, tipo: 'retorno', marco, dataPrevista: data, dias: diasEntre(hojeIso, data), dataBase: sit.ultimo.data });
+      });
+    }
+  });
+  return itens.sort((x, y) => x.dataPrevista.localeCompare(y.dataPrevista) || x.animal.localeCompare(y.animal, 'pt-BR', { numeric: true }));
+}
+
+// Quando: "hoje", "amanhã" ou "quinta, 05/11".
+function rotuloDataCioObservar(dias, iso){
+  if(dias === 0) return 'hoje';
+  if(dias === 1) return 'amanhã';
+  return nomeDiaSemana(iso) + ', ' + iso.slice(8, 10) + '/' + iso.slice(5, 7);
+}
+
+function textoCioParaObservar(item){
+  const quando = rotuloDataCioObservar(item.dias, item.dataPrevista);
+  if(item.tipo === 'retorno') return 'retorno ao cio previsto ' + quando + ' (' + item.marco + ' dias depois da cobertura)';
+  return 'provável cio ' + quando;
+}
+
+// Grupo "Cios para observar nesta semana" para o cartão "O que fazer hoje": só informa (sem baixa nem adiar) e abre o
+// calendário da vaca. Sem vacas na lista, não há grupo (devolve null).
+function montarGrupoCiosParaObservar(itens){
+  if(!itens || !itens.length) return null;
+  return { codigo: 'cios_observar', titulo: 'Cios para observar nesta semana', compacto: true,
+    itens: itens.map(i => ({ animal: i.animal, animalId: i.animalId, texto: textoCioParaObservar(i), chave: null })) };
+}
+
+// Texto que acompanha o calendário: { titulo, detalhe } conforme a situação da vaca.
+function descreverSituacaoCicloVaca(sit, hojeIso){
+  const dm = d => d.slice(8, 10) + '/' + d.slice(5, 7);
+  const quando = dias => dias === 0 ? 'hoje' : (dias === 1 ? 'amanhã' : 'em ' + dias + ' dias');
+  if(sit.estado === 'sem_cio'){
+    return { titulo: 'Sem cio registrado', detalhe: 'Quando esta vaca entrar em cio, registre. O calendário passa a mostrar o próximo cio provável.' };
+  }
+  if(sit.estado === 'ciclando'){
+    const p = sit.proximo;
+    const dica = sit.intervalo.personalizado ? 'ciclo desta vaca: ' + sit.intervalo.dias + ' dias (média dos cios registrados)' : 'ciclo padrão de 21 dias (ainda não há cios suficientes para calcular o desta vaca)';
+    return { titulo: 'Próximo cio provável ' + quando(p.dias) + ', ' + dm(p.data), detalhe: 'Se ela não for coberta. Observe de ' + dm(somarDias(p.data, -JANELA_OBSERVACAO_CIO)) + ' a ' + dm(somarDias(p.data, JANELA_OBSERVACAO_CIO)) + '; ' + dica + '.' };
+  }
+  if(sit.estado === 'ciclando_antigo'){
+    return { titulo: 'Último cio registrado há muito tempo', detalhe: 'O último cio foi em ' + dm(sit.ultimo.data) + ', então não dá para prever o próximo. Se ela entrou em cio depois, registre.' };
+  }
+  if(sit.estado === 'coberta'){
+    if(sit.proximo) return { titulo: 'Coberta em ' + dm(sit.ultimo.data) + ', retorno ao cio previsto ' + quando(sit.proximo.dias) + ', ' + dm(sit.proximo.data), detalhe: 'Conferência dos ' + sit.proximo.marco + ' dias depois da cobertura. Se ela entrar em cio, registre.' };
+    return { titulo: 'Coberta em ' + dm(sit.ultimo.data), detalhe: 'Já passaram as conferências de cio. Se ainda não foi feito, confirme a gestação e registre o diagnóstico.' };
+  }
+  if(sit.estado === 'prenhe'){
+    return { titulo: 'Prenhe (diagnosticada)', detalhe: 'Sem previsão de cio. Parto previsto: ' + dm(sit.partoPrevisto) + '.' };
+  }
+  return { titulo: 'Diagnosticada vazia', detalhe: 'Registre o próximo cio ou a próxima cobertura.' };
+}
+
+// Mês do calendário da vaca: células com as marcas de cada dia. mes de 1 a 12. Cada célula: { iso, dia, numero, marcas }.
+//   numero  dia do ciclo (1 = dia do cio, ou da cobertura quando não há cio antes)
+//   marcas  lista: cio, cobertura, parto, aborto, previsao_cio, retorno, parto_previsto, janela
+function montarMesCalendarioCio(eventos, ano, mes, hojeIso){
+  const sit = situacaoCicloVaca(eventos, hojeIso);
+  const evs = ordenarEventosReprodutivos(eventos).filter(e => TIPOS_RELEVANTES_REPRO.includes(e.tipo));
+  const por = {};
+  const marcar = (iso, marca) => { (por[iso] = por[iso] || []); if(!por[iso].includes(marca)) por[iso].push(marca); };
+  const numeros = {};
+  evs.forEach(e => {
+    if(e.tipo === 'cio' || e.tipo === 'cobertura' || e.tipo === 'parto' || e.tipo === 'aborto') marcar(e.data, e.tipo);
+  });
+  // dia do ciclo: começa no cio (ou na cobertura sem cio antes) e vai até o próximo cio, parto, aborto ou indução
+  const segmentos = [];
+  let ancora = null;
+  evs.forEach(e => {
+    if(e.tipo === 'cio'){ if(ancora) ancora.fim = e.data; ancora = { inicio: e.data, fim: null }; segmentos.push(ancora); }
+    else if(e.tipo === 'cobertura'){ if(!ancora){ ancora = { inicio: e.data, fim: null }; segmentos.push(ancora); } }
+    else { if(ancora) ancora.fim = e.data; ancora = null; }
+  });
+  const ultimoSeg = segmentos.length ? segmentos[segmentos.length - 1] : null;
+  if(ultimoSeg && ultimoSeg.fim === null){
+    if(sit.estado === 'ciclando' || sit.estado === 'ciclando_antigo') ultimoSeg.fim = somarDias(ultimoSeg.inicio, sit.intervalo.dias);
+    else if(sit.estado === 'coberta') ultimoSeg.fim = somarDias(ultimoSeg.inicio, MARCOS_CONFERENCIA_CIO[MARCOS_CONFERENCIA_CIO.length - 1] + 1);
+    else ultimoSeg.fim = ultimoSeg.inicio;
+  }
+  segmentos.forEach(sg => {
+    for(let n = 0, d = sg.inicio; d < sg.fim && n < 60; n++, d = somarDias(d, 1)) numeros[d] = n + 1;
+  });
+  // previsões
+  const comJanela = (data, marca) => { marcar(data, marca); for(let k = -JANELA_OBSERVACAO_CIO; k <= JANELA_OBSERVACAO_CIO; k++) marcar(somarDias(data, k), 'janela'); };
+  if(sit.estado === 'ciclando'){
+    comJanela(sit.proximo.data, 'previsao_cio');
+    numeros[sit.proximo.data] = 1;
+  }
+  if(sit.estado === 'coberta'){
+    MARCOS_CONFERENCIA_CIO.forEach(marco => {
+      const data = somarDias(sit.ultimo.data, marco);
+      comJanela(data, 'retorno');
+    });
+  }
+  if(sit.partoPrevisto && (sit.estado === 'coberta' || sit.estado === 'prenhe')) marcar(sit.partoPrevisto, 'parto_previsto');
+
+  const diasNoMes = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  const primeiroDiaSemana = new Date(Date.UTC(ano, mes - 1, 1)).getUTCDay();
+  const celulas = [];
+  for(let i = 0; i < primeiroDiaSemana; i++) celulas.push(null);
+  for(let dia = 1; dia <= diasNoMes; dia++){
+    const iso = ano + '-' + String(mes).padStart(2, '0') + '-' + String(dia).padStart(2, '0');
+    celulas.push({ iso, dia, numero: numeros[iso] || null, marcas: por[iso] || [] });
+  }
+  return celulas;
+}
+
 // Devolve o texto do erro, ou null se o diagnóstico é aceitável.
 function validarDiagnosticoGestacao(cob, resultado, dataDiag, hojeIso){
   if(!cob || cob.tipo !== 'cobertura') return 'O diagnóstico só pode ser registrado numa cobertura.';
@@ -2290,18 +2627,49 @@ async function responderNaoCio(animalId, coberturaId, marco){
 function montarCartaoAcoesDoDia(grupos, temAnimais){
   if(!temAnimais) return '';
   const titulo = '<div class="rotulo-secao">O que fazer hoje</div>';
-  if(!grupos.length){
+  // grupos "compactos" só informam (lista curta, sem Dar baixa nem Adiar), como os cios para observar na semana
+  const urgentes = (grupos || []).filter(g => !g.compacto);
+  const informativos = (grupos || []).filter(g => g.compacto);
+  const htmlInformativos = informativos.map(g => {
+    const VISIVEIS = 5;
+    const linha = i => '<div class="legenda-muted" style="font-size:13px; margin:0 0 5px"><button type="button" class="link-fino" style="padding:0; font-weight:700" onclick="abrirCalendarioCio('+Number(i.animalId)+')">'+escaparHTML(i.animal)+'</button> · '+escaparHTML(i.texto)+'</div>';
+    return '<div style="margin-bottom:12px"><div style="font-weight:700; margin-bottom:4px">'+escaparHTML(g.titulo)+'</div>'
+      + g.itens.slice(0, VISIVEIS).map(linha).join('')
+      + (g.itens.length > VISIVEIS
+          ? '<div class="oculto" data-resto-cios="1">'+g.itens.slice(VISIVEIS).map(linha).join('')+'</div><button type="button" class="link-fino" style="padding:0; font-size:13px" onclick="mostrarTodosOsCios(this)">Ver todas ('+g.itens.length+')</button>'
+          : '')
+      + '<div class="legenda-muted" style="font-size:12px; margin:2px 0 0">Datas estimadas. Toque no número da vaca para abrir o calendário dela.</div>'
+      + '</div>';
+  }).join('');
+  if(!urgentes.length){
     return titulo + '<div class="cartao" style="padding:12px 14px"><div style="font-weight:700">Nada urgente hoje</div>'
-      + '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Os avisos aparecem aqui quando houver parto ou secagem se aproximando, queda de produção de uma vaca ou vaca sem cobertura há muito tempo.</div></div>';
+      + (htmlInformativos
+          ? '<div style="margin-top:8px">'+htmlInformativos+'</div>'
+          : '<div class="legenda-muted" style="margin-bottom:0; font-size:13px">Os avisos aparecem aqui quando houver parto ou secagem se aproximando, queda de produção de uma vaca ou vaca sem cobertura há muito tempo.</div>')
+      + '</div>';
   }
   const MAX = 8;
   return titulo + '<div class="cartao" style="border-color:var(--manteiga-escura)">'
-    + grupos.map(g => '<div style="margin-bottom:12px"><div style="font-weight:700; margin-bottom:4px">'+escaparHTML(g.titulo)+'</div>'
+    + urgentes.map(g => '<div style="margin-bottom:12px"><div style="font-weight:700; margin-bottom:4px">'+escaparHTML(g.titulo)+'</div>'
       + g.itens.slice(0, MAX).map(i => '<div style="margin-bottom:10px"><div class="legenda-muted" style="font-size:13px; margin-bottom:0"><strong>'+escaparHTML(i.animal)+'</strong>: '+escaparHTML(i.texto)+'</div>'+(i.chave ? botoesAviso(i.chave, i.descricao || (g.titulo + ': ' + i.animal), i.baixaDias) : '')+'</div>').join('')
       + (g.itens.length > MAX ? '<div class="legenda-muted" style="font-size:12px">e mais '+(g.itens.length - MAX)+'</div>' : '')
       + '</div>').join('')
+    + htmlInformativos
     + '<div class="legenda-muted" style="font-size:11px">Sugestões calculadas com o que foi lançado no app. "Dar baixa" some com o aviso (na queda de produção, por '+DIAS_BAIXA_QUEDA+' dias); "Adiar" esconde pelo número de dias que você escolher.</div>'
     + '</div>';
+}
+
+// "Ver todas" da lista de cios para observar.
+function mostrarTodosOsCios(botao){
+  const resto = botao.parentNode.querySelector('[data-resto-cios]');
+  if(resto) resto.classList.remove('oculto');
+  botao.remove();
+}
+
+// Abre a ficha da vaca já rolada até o calendário do cio.
+function abrirCalendarioCio(animalId){
+  ROLAR_PARA_CALENDARIO_CIO = animalId;
+  abrirFichaDoAnimal(animalId, false);
 }
 
 // HTML do cartão do Grupo 1, reaproveitado na tela de Indicadores e na ficha (tela e PDF).
@@ -2337,6 +2705,94 @@ function somarDias(dataIso, dias){
 }
 
 /* ======================= [J10] EVENTOS REPRODUTIVOS (cio, cobertura, parto, aborto, secagem) ======================= */
+// ---------- Calendário do cio na ficha da vaca ----------
+// Calendário mensal com o cio e a cobertura registrados, o dia do ciclo (número pequeno no canto), o próximo cio provável
+// (ou os retornos aos 21 e 42 dias, se ela foi coberta) e a janela de observação. As contas estão em
+// situacaoCicloVaca e montarMesCalendarioCio (testadas em testes/testar-calculos.js).
+let CALENDARIO_CIO_MES = null;          // "AAAA-MM" do mês que está na tela
+let CALENDARIO_CIO_ANIMAL = null;
+let EVENTOS_FICHA_CIO = [];
+let ROLAR_PARA_CALENDARIO_CIO = null;   // vindo da lista "Cios para observar": rola a ficha até o calendário
+
+const ROTULOS_MARCAS_CIO = { cio: 'Cio', cobertura: 'Cob.', parto: 'Parto', aborto: 'Aborto', previsao_cio: 'Prev.', retorno: 'Ret.', parto_previsto: 'Parto prev.' };
+const NOMES_MARCAS_CIO = { cio: 'cio', cobertura: 'cobertura', parto: 'parto', aborto: 'aborto', previsao_cio: 'cio provável', retorno: 'retorno ao cio previsto', parto_previsto: 'parto previsto', janela: 'janela de observação' };
+
+function celulaCalendarioCioHTML(c, hojeIso){
+  if(!c) return '<div></div>';
+  const m = c.marcas;
+  const tem = x => m.includes(x);
+  const fundo = tem('cio') && tem('cobertura') ? 'background:linear-gradient(135deg, var(--perigo) 50%, var(--azul) 50%); color:#fff;'
+    : tem('cio') ? 'background:var(--perigo); color:#fff;'
+    : tem('cobertura') ? 'background:var(--azul); color:#fff;'
+    : (tem('parto') || tem('aborto')) ? 'background:var(--azul-escuro); color:#fff;'
+    : tem('janela') ? 'background:rgba(231,178,63,.22);' : '';
+  const borda = (tem('previsao_cio') || tem('retorno')) ? 'border:2px solid var(--manteiga-escura);'
+    : tem('parto_previsto') ? 'border:2px dashed var(--sucesso);' : 'border:2px solid transparent;';
+  const hoje = c.iso === hojeIso ? ' outline:2px solid var(--azul); outline-offset:-1px;' : '';
+  const rotulos = m.filter(x => x !== 'janela').map(x => ROTULOS_MARCAS_CIO[x]).join(' ');
+  const nomes = m.map(x => NOMES_MARCAS_CIO[x]).join(', ');
+  return '<div role="gridcell" aria-label="'+c.dia+(nomes ? ': '+nomes : '')+'" style="position:relative; min-height:50px; border-radius:8px; padding:15px 1px 2px; text-align:center; box-sizing:border-box; '+fundo+borda+hoje+'">'
+    + (c.numero ? '<span style="position:absolute; top:2px; left:4px; font-size:9.5px; opacity:.8">'+c.numero+'</span>' : '')
+    + '<div style="font-size:14px; font-weight:'+(c.iso === hojeIso ? '800' : '600')+'; line-height:1.1">'+c.dia+'</div>'
+    + (rotulos ? '<div style="font-size:8.5px; line-height:1.1; font-weight:700; margin-top:1px">'+rotulos+'</div>' : '')
+    + '</div>';
+}
+
+function calendarioCioHTML(animalId, eventos){
+  const hoje = new Date().toISOString().slice(0, 10);
+  if(CALENDARIO_CIO_ANIMAL !== animalId){ CALENDARIO_CIO_ANIMAL = animalId; CALENDARIO_CIO_MES = null; }
+  if(!CALENDARIO_CIO_MES) CALENDARIO_CIO_MES = hoje.slice(0, 7);
+  const [ano, mes] = CALENDARIO_CIO_MES.split('-').map(Number);
+  const sit = situacaoCicloVaca(eventos, hoje);
+  const desc = descreverSituacaoCicloVaca(sit, hoje);
+  const celulas = montarMesCalendarioCio(eventos, ano, mes, hoje);
+  const setaMes = (delta, rotulo, aria) => '<button type="button" class="link-fino" style="font-size:20px; padding:4px 10px; margin:0" aria-label="'+aria+'" onclick="mudarMesCalendarioCio('+animalId+','+delta+')">'+rotulo+'</button>';
+  const legenda = (estilo, texto) => '<span style="display:inline-flex; align-items:center; gap:4px; margin-right:10px; white-space:nowrap"><span style="display:inline-block; width:12px; height:12px; border-radius:3px; '+estilo+'"></span>'+texto+'</span>';
+  const agora = agoraLocal();
+  const janelaInsem = janelaInseminacaoDoCio(eventos, agora);
+  return '<div style="font-weight:700">'+escaparHTML(desc.titulo)+'</div>'
+    + '<div class="legenda-muted" style="font-size:13px; margin-bottom:8px">'+escaparHTML(desc.detalhe)+'</div>'
+    + (janelaInsem ? '<div style="background:rgba(231,178,63,.22); border-radius:8px; padding:8px 10px; font-size:13px; margin-bottom:10px">'+escaparHTML(textoJanelaInseminacao(janelaInsem, agora.iso))+'</div>' : '')
+    + '<button class="botao botao-primario" style="padding:7px 16px; font-size:13px; margin-bottom:10px" onclick="abrirRegistroCioDoCalendario('+animalId+')">Registrar cio</button>'
+    + '<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px">'
+      + setaMes(-1, '‹', 'Mês anterior')
+      + '<div style="font-weight:700">'+NOMES_MESES[mes - 1]+' '+ano+'</div>'
+      + setaMes(1, '›', 'Próximo mês')
+    + '</div>'
+    + '<div role="grid" style="display:grid; grid-template-columns:repeat(7, 1fr); gap:3px">'
+      + ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map(x => '<div class="legenda-muted" style="text-align:center; font-size:11px; margin:0">'+x+'</div>').join('')
+      + celulas.map(c => celulaCalendarioCioHTML(c, hoje)).join('')
+    + '</div>'
+    + '<div class="legenda-muted" style="font-size:11.5px; margin:10px 0 0; line-height:1.9">'
+      + legenda('background:var(--perigo)', 'Cio') + legenda('background:var(--azul)', 'Cobertura')
+      + legenda('border:2px solid var(--manteiga-escura)', 'Cio provável') + legenda('background:rgba(231,178,63,.35)', 'Janela de observação')
+      + '<br>O número pequeno no canto do dia é o dia do ciclo. As datas previstas são estimativas.'
+    + '</div>';
+}
+
+function desenharCalendarioCio(animalId){
+  const alvo = document.getElementById('bloco-calendario-cio');
+  if(alvo) alvo.innerHTML = calendarioCioHTML(animalId, EVENTOS_FICHA_CIO);
+}
+
+function mudarMesCalendarioCio(animalId, delta){
+  const [ano, mes] = (CALENDARIO_CIO_MES || new Date().toISOString().slice(0, 7)).split('-').map(Number);
+  const d = new Date(Date.UTC(ano, mes - 1 + delta, 1));
+  CALENDARIO_CIO_MES = d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+  desenharCalendarioCio(animalId);
+}
+
+// "Registrar cio": abre o formulário de evento já no tipo Cio e com a data de hoje (pode ser trocada antes de salvar).
+function abrirRegistroCioDoCalendario(animalId){
+  if(!document.getElementById('form-evento')) abrirFormularioEvento(animalId);
+  const tipo = document.getElementById('campo-tipo-evento');
+  if(tipo && tipo.value !== 'cio') prepararFormularioComTipo('cio');
+  const data = document.getElementById('campo-data-evento');
+  if(data && !data.value) data.value = new Date().toISOString().slice(0, 10);
+  const f = document.getElementById('form-evento');
+  if(f && f.scrollIntoView) f.scrollIntoView({ block: 'center' });
+}
+
 async function renderHistoricoReprodutivo(animalId){
   const alvo = document.getElementById('secao-reprodutivo');
   if(!alvo) return;
@@ -2357,8 +2813,7 @@ async function renderHistoricoReprodutivo(animalId){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de secagem:</strong> '+formatarData(dataPrevistaSecagemPorTempo(maisRecente))+'</div>';
     } else if(maisRecente.tipo === 'inducao_lactacao'){
       previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Lactação induzida:</strong> sem previsão de secagem por tempo. Ela passa a ser prevista quando houver uma cobertura.</div>';
-    } else if(maisRecente.tipo === 'cio'){
-      previsaoHTML = '<div class="cartao" style="background:var(--creme-alt); border-color:var(--manteiga)"><strong>Previsão de próximo cio:</strong> '+formatarData(somarDias(maisRecente.data, DIAS_CICLO_ESTRO))+' <span class="legenda-muted" style="margin:0">(caso não tenha sido coberta)</span></div>';
+
     }
   }
 
@@ -2374,21 +2829,33 @@ async function renderHistoricoReprodutivo(animalId){
 
   EVENTOS_REPRO_FICHA = {};
   data.forEach(ev => { EVENTOS_REPRO_FICHA[ev.id] = ev; });
+  EVENTOS_FICHA_CIO = data;
+  // calendário do cio: só para quem já tem cio, cobertura, parto ou aborto registrado
+  const temEventoDeCiclo = data.some(e => TIPOS_RELEVANTES_REPRO.includes(e.tipo) && e.tipo !== 'inducao_lactacao');
+  const calendarioHTML = temEventoDeCiclo ? '<div class="cartao" id="bloco-calendario-cio">'+calendarioCioHTML(animalId, data)+'</div>' : '';
   const coberturaAberta = coberturaEmAberto(data);
   const lista = data.map(ev=>{
     const detalhesParto = ev.tipo === 'parto' ? formatarDetalhesParto(ev) : (ev.tipo === 'aborto' ? formatarDetalhesAborto(ev) : (ev.tipo === 'cobertura' ? formatarDetalhesCobertura(ev) : ''));
     const botaoDiagnostico = (coberturaAberta && coberturaAberta.id === ev.id)
       ? '<button class="botao botao-secundario" style="margin-top:6px; padding:6px 12px; font-size:13px" onclick="abrirDiagnosticoGestacao('+ev.id+','+animalId+')">'+(ev.diagnostico_gestacao ? 'Alterar diagnóstico' : 'Registrar diagnóstico de gestação')+'</button>'
       : '';
+    const avJanela = ev.tipo === 'cobertura' ? avaliarJanelaInseminacao(ev, data) : null;
+    const avJanelaHTML = avJanela ? '<div style="font-size:13px; margin-top:3px; font-weight:600; color:'+(avJanela.situacao === 'dentro' ? 'var(--sucesso)' : 'var(--perigo)')+'">'+escaparHTML(textoAvaliacaoJanela(avJanela))+'</div>' : '';
     return '<div class="cartao" style="display:flex; align-items:center; gap:12px; margin-bottom:8px">'
-    + '<div style="flex:1"><strong>'+TIPOS_EVENTO[ev.tipo]+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+formatarData(ev.data)+(detalhesParto ? ' · '+detalhesParto : '')+(ev.observacoes ? ' · '+escaparHTML(ev.observacoes) : '')+'</div>'+botaoDiagnostico+'</div>'
+    + '<div style="flex:1"><strong>'+TIPOS_EVENTO[ev.tipo]+'</strong><div class="legenda-muted" style="margin-bottom:0; font-size:13px">'+dataHoraEvento(ev)+(detalhesParto ? ' · '+detalhesParto : '')+(ev.observacoes ? ' · '+escaparHTML(ev.observacoes) : '')+'</div>'+avJanelaHTML+botaoDiagnostico+'</div>'
     + '<button class="botao-perigo-fino" style="margin-top:0" onclick="excluirEventoReprodutivo('+ev.id+','+animalId+')">'+iconeInline('lixo',15)+'</button>'
     + '</div>';
   }).join('');
 
-  alvo.innerHTML = previsaoHTML + abortoNatimortoHTML
+  alvo.innerHTML = previsaoHTML + calendarioHTML + abortoNatimortoHTML
     + (data.length ? lista : '<div class="legenda-muted">Nenhum evento registrado ainda.</div>')
     + '<button class="botao botao-secundario botao-bloco" onclick="abrirFormularioEvento('+animalId+')">'+iconeInline('coracao',18)+' Adicionar evento reprodutivo</button>';
+  // vindo da lista "Cios para observar": rola até o calendário, só uma vez
+  if(ROLAR_PARA_CALENDARIO_CIO === animalId){
+    ROLAR_PARA_CALENDARIO_CIO = null;
+    const c = document.getElementById('bloco-calendario-cio');
+    if(c && c.scrollIntoView) c.scrollIntoView({ block:'start' });
+  }
   // vindo da aba Reprodução ("Registrar evento"): já abre o formulário, só uma vez
   if(ABRIR_FORM_EVENTO_ANIMAL === animalId){
     ABRIR_FORM_EVENTO_ANIMAL = null;
@@ -2457,7 +2924,14 @@ function atualizarCamposFormularioEvento(tipo){
     return;
   }
   if(tipo === 'cobertura'){
-    alvo.innerHTML = '<div class="grupo-campo"><label for="campo-tipo-servico">Tipo de serviço (opcional)</label><select id="campo-tipo-servico">'+opcoesTipoServicoHTML('')+'</select></div>';
+    alvo.innerHTML = '<div class="grupo-campo"><label for="campo-tipo-servico">Tipo de serviço (opcional)</label><select id="campo-tipo-servico">'+opcoesTipoServicoHTML('')+'</select></div>'
+      + '<div class="grupo-campo"><label for="campo-hora-evento">Hora da inseminação ou monta (opcional)</label><input id="campo-hora-evento" type="time"></div>'
+      + '<div class="legenda-muted" style="font-size:12px; margin-bottom:10px">O ideal é inseminar de 8 a 16 horas depois do início do cio. Se você anotou a hora do cio, o app confere.</div>';
+    return;
+  }
+  if(tipo === 'cio'){
+    alvo.innerHTML = '<div class="grupo-campo"><label for="campo-hora-evento">Hora em que o cio foi observado (opcional)</label><input id="campo-hora-evento" type="time"></div>'
+      + '<div class="legenda-muted" style="font-size:12px; margin-bottom:10px">Se souber a hora em que a vaca aceitou a monta, anote: o app mostra o melhor momento para inseminar.</div>';
     return;
   }
   if(tipo !== 'parto'){ alvo.innerHTML = ''; return; }
@@ -2570,6 +3044,12 @@ async function executarSalvarEventoReprodutivo(animalId){
   if(!data){ msg.textContent = 'Preencha a data do evento.'; msg.style.color = 'var(--perigo)'; return; }
 
   const registro = { animal_id: animalId, produtor_id: usuarioAtual.id, tipo, data, observacoes };
+
+  if(tipo === 'cio' || tipo === 'cobertura'){
+    const elHora = document.getElementById('campo-hora-evento');
+    const hora = elHora ? normalizarHoraEvento(elHora.value) : null;
+    if(hora) registro.hora = hora;   // só envia quando preenchida, para o formulário seguir funcionando mesmo se a coluna ainda não existir
+  }
 
   let sexoBezerra = null, adicionarRebanho = null, brincoBezerra = '';
   const partoAnterior = tipo === 'parto' && document.getElementById('campo-parto-anterior-rebanho') && document.getElementById('campo-parto-anterior-rebanho').checked;
@@ -4187,7 +4667,7 @@ function desenharHistoricoRepro(){
   const chips = '<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px">' + chip('todos','Todos') + Object.keys(TIPOS_EVENTO).map(k => chip(k, TIPOS_EVENTO_CURTO[k] || TIPOS_EVENTO[k])).join('') + '</div>';
   const linhas = itens.map(ev => {
     const det = ev.tipo === 'parto' ? formatarDetalhesParto(ev) : (ev.tipo === 'aborto' ? formatarDetalhesAborto(ev) : (ev.tipo === 'cobertura' ? formatarDetalhesCobertura(ev) : ''));
-    return linhaCompacta('coracao', 'Nº '+escaparHTML(ev.identificacao)+' · '+TIPOS_EVENTO[ev.tipo], formatarData(ev.data)+(det ? ' · '+escaparHTML(det) : '')+(ev.observacoes ? ' · '+escaparHTML(ev.observacoes) : ''), '', 'abrirFichaDoAnimal('+ev.animal_id+')');
+    return linhaCompacta('coracao', 'Nº '+escaparHTML(ev.identificacao)+' · '+TIPOS_EVENTO[ev.tipo], dataHoraEvento(ev)+(det ? ' · '+escaparHTML(det) : '')+(ev.observacoes ? ' · '+escaparHTML(ev.observacoes) : ''), '', 'abrirFichaDoAnimal('+ev.animal_id+')');
   }).join('');
   alvo.innerHTML = chips
     + (itens.length ? linhas : '<div class="legenda-muted">Nenhum evento '+(REPRO_FILTRO_TIPO === 'todos' ? 'registrado ainda' : 'desse tipo')+'.</div>')
@@ -4240,6 +4720,17 @@ function escolherAnimalParaEvento(){
   if(achados.length === 1 || normalizarBuscaAnimal(achados[0].identificacao) === t) abrirFichaDoAnimal(achados[0].id, true);
 }
 
+// Cartão da aba Reprodução: quantas inseminações respeitaram a janela de 8 a 16 h depois do cio. Só aparece quando há inseminação com hora.
+function cartaoJanelaInseminacaoHTML(r){
+  if(!r || !r.comHora) return '';
+  const faixa = JANELA_INSEMINACAO_MIN_HORAS + ' a ' + JANELA_INSEMINACAO_MAX_HORAS + ' h';
+  const corpo = r.avaliadas
+    ? '<strong>'+r.dentro+' de '+r.avaliadas+'</strong> inseminação(ões) dentro da janela'+((r.cedo || r.tarde) ? ' ('+r.cedo+' antes e '+r.tarde+' depois)' : '')+'.'
+    : 'Ainda não dá para conferir: falta anotar a hora do cio das vacas inseminadas.';
+  return '<div class="rotulo-secao">Horário das inseminações</div><div class="cartao">'+corpo
+    + '<div class="legenda-muted" style="font-size:12px; margin:6px 0 0">A janela ideal é de '+faixa+' depois do início do cio. Contam as inseminações com hora que têm um cio com hora nas 48 horas anteriores ('+r.comHora+' de '+r.coberturas+' inseminação(ões) têm hora).</div></div>';
+}
+
 async function renderReproducao(){
   const tela = document.getElementById('tela-reproducao');
   tela.innerHTML = '<div class="legenda-muted">Carregando reprodução...</div>';
@@ -4264,6 +4755,7 @@ async function renderReproducao(){
         it => (it.situacao === 'confirmada' ? 'gestação confirmada' : 'gestação não confirmada') + (it.servico && TIPOS_SERVICO_CURTO[it.servico] ? ' · '+TIPOS_SERVICO_CURTO[it.servico] : ''))
       + blocoPrevisoesRepro('Secagens previstas (próximos '+DIAS_PAINEL_SECAGEM+' dias)', painel.secagens, 'Nenhuma secagem prevista para os próximos '+DIAS_PAINEL_SECAGEM+' dias.', DIAS_AVISO_SECAGEM, () => 'lactação de 305 dias')
       + blocoPrevisoesRepro('Próximos cios previstos', painel.cios, 'Nenhuma vaca com cio recente registrado.', 2, () => 'se não tiver sido coberta')
+      + cartaoJanelaInseminacaoHTML(resumoJanelaInseminacao(REPRO_DADOS.eventos))
       + '<div class="rotulo-secao">Histórico do rebanho</div><div id="historico-repro"></div>'));
   desenharHistoricoRepro();
 }
@@ -5534,7 +6026,7 @@ async function gerarPDFProdutor(){
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Eventos reprodutivos no período</h2>';
   conteudo += (eventosRepro&&eventosRepro.length)
-    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Evento</th></tr></thead><tbody>'+eventosRepro.map(ev=>'<tr><td>'+formatarData(ev.data)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+TIPOS_EVENTO[ev.tipo]+(ev.tipo==='parto' && formatarDetalhesParto(ev) ? ' — '+formatarDetalhesParto(ev) : '')+(ev.tipo==='cobertura' && formatarDetalhesCobertura(ev) ? ' — '+formatarDetalhesCobertura(ev) : '')+'</td></tr>').join('')+'</tbody></table>'
+    ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Evento</th></tr></thead><tbody>'+eventosRepro.map(ev=>'<tr><td>'+dataHoraEvento(ev)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+TIPOS_EVENTO[ev.tipo]+(ev.tipo==='parto' && formatarDetalhesParto(ev) ? ' — '+formatarDetalhesParto(ev) : '')+(ev.tipo==='cobertura' && formatarDetalhesCobertura(ev) ? ' — '+formatarDetalhesCobertura(ev) : '')+'</td></tr>').join('')+'</tbody></table>'
     : '<div class="legenda-muted">Nenhum evento no período.</div>';
 
   conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Manejo sanitário no período</h2>';
@@ -6675,7 +7167,7 @@ async function gerarPDFFichaProdutor(produtorId, nomeProdutor, permissoes, p, ja
     const eventosRepro = dados.eventosRepro || [];
     conteudo += '<h2 style="font-family:var(--fonte-titulo); margin-top:20px">Eventos reprodutivos (histórico completo)</h2>';
     conteudo += eventosRepro.length
-      ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Evento</th></tr></thead><tbody>'+eventosRepro.map(ev=>'<tr><td>'+formatarData(ev.data)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+TIPOS_EVENTO[ev.tipo]+(ev.tipo==='parto' && formatarDetalhesParto(ev) ? ' — '+formatarDetalhesParto(ev) : '')+(ev.tipo==='cobertura' && formatarDetalhesCobertura(ev) ? ' — '+formatarDetalhesCobertura(ev) : '')+'</td></tr>').join('')+'</tbody></table>'
+      ? '<table class="tabela-admin"><thead><tr><th>Data</th><th>Animal</th><th>Evento</th></tr></thead><tbody>'+eventosRepro.map(ev=>'<tr><td>'+dataHoraEvento(ev)+'</td><td>Nº '+escaparHTML((ev.animais&&ev.animais.identificacao)||'?')+'</td><td>'+TIPOS_EVENTO[ev.tipo]+(ev.tipo==='parto' && formatarDetalhesParto(ev) ? ' — '+formatarDetalhesParto(ev) : '')+(ev.tipo==='cobertura' && formatarDetalhesCobertura(ev) ? ' — '+formatarDetalhesCobertura(ev) : '')+'</td></tr>').join('')+'</tbody></table>'
       : '<div class="legenda-muted">Nenhum evento registrado.</div>';
   }
 
