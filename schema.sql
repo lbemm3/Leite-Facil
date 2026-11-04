@@ -144,10 +144,12 @@ create table eventos_reprodutivos (
   diagnostico_gestacao    text,                   -- só quando tipo = 'cobertura': 'prenhe' | 'vazia'
   diagnostico_data        date,                   -- data do diagnóstico (junto com o resultado)
   tipo_servico            text,                   -- só quando tipo = 'cobertura': 'inseminacao' | 'iatf' | 'monta_natural' (vazio = não informado)
+  hora                    time,                   -- só quando tipo = 'cio' (hora em que o cio foi observado) ou 'cobertura' (hora da inseminação); opcional
   constraint eventos_reprodutivos_diagnostico_valido check (
     (diagnostico_gestacao is null and diagnostico_data is null)
     or (diagnostico_gestacao is not null and diagnostico_gestacao in ('prenhe', 'vazia') and diagnostico_data is not null and tipo = 'cobertura')
   ),
+  constraint eventos_reprodutivos_hora_valida check (hora is null or tipo in ('cio', 'cobertura')),
   constraint eventos_reprodutivos_tipo_servico_valido check (
     tipo_servico is null
     or (tipo_servico in ('inseminacao', 'iatf', 'monta_natural') and tipo = 'cobertura')
