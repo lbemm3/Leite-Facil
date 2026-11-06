@@ -5,7 +5,7 @@
 -- no SQL Editor do Supabase. Ela devolve UMA tabela de resultado, com as
 -- linhas problemáticas primeiro (coluna "alerta" diferente de "ok").
 --
--- O que ela confere, tabela por tabela (as 22 do schema.sql):
+-- O que ela confere, tabela por tabela (as 23 do schema.sql):
 --   1. RLS ligado ou desligado.
 --   2. Quantidade de políticas no banco, comparada com a do schema.sql.
 --   3. Privilégios (S=select, I=insert, U=update, D=delete) de cada papel:
@@ -130,7 +130,7 @@ secao1 as (
       case when b.tabela = 'avisos_enviados' and b.aut <> '----'
            then 'authenticated com acesso a tabela que só a Edge Function usa (' || b.aut || ')' end,
       case when b.tabela in ('animais', 'eventos_reprodutivos', 'eventos_sanitarios', 'qualidade_leite',
-                             'inscricoes_push', 'avisos_enviados', 'avisos_dispensados')
+                             'inscricoes_push', 'avisos_enviados', 'avisos_dispensados', 'conferencias_cio')
                 and b.oid is not null and substr(b.svc, 1, 1) = '-'
            then 'service_role sem SELECT (usada pela Edge Function avisos-diarios)' end,
       case when b.tabela = 'avisos_enviados' and b.oid is not null and substr(b.svc, 2, 1) = '-'
