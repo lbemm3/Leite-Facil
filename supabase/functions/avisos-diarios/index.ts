@@ -7,8 +7,7 @@
 //   - Previsão de parto (cobertura + 283 dias)
 //   - Previsão de secagem (parto + 305 dias)
 //   - Fim da carência de medicamento
-//   - Previsão de próximo cio (21 dias após o último cio registrado, caso
-//     não tenha sido coberta depois)
+//   - Resumo semanal de cios (toda segunda-feira; ver a atualização de 06/11/2026)
 //   - Próxima dose de vacina/tratamento prevista (campo preenchido na hora
 //     de registrar o evento sanitário)
 //   - Qualidade do leite fora ou perto do limite legal (90 dias)
@@ -37,6 +36,18 @@
 //   - Esta função agora também fica guardada no projeto, em
 //     supabase/functions/avisos-diarios/index.ts, e é testada por
 //     testes/testar-avisos-diarios.js a cada publicação.
+//
+// Atualização de 06/11/2026 (rode antes liberar-conferencias-cio-para-a-funcao.sql):
+//   - O aviso de cio vaca por vaca (21 dias fixos depois do último cio) foi substituído por UM resumo na
+//     segunda-feira: "N vacas para observar nesta semana", com as vacas que provavelmente entram em cio
+//     hoje e nos 6 dias seguintes e as cobertas com retorno ao cio previsto aos 21 e 42 dias.
+//   - As datas são as mesmas da ficha da vaca e da tela de Início: o ciclo é o da própria vaca (média dos cios
+//     registrados, quando há pelo menos 2 intervalos normais) ou 21 dias. As regras foram copiadas do app e o teste
+//     testes/testar-equivalencia-cio.js garante que continuam iguais.
+//   - Vaca coberta que já respondeu "não" à pergunta "A vaca entrou em cio?" no app não entra no resumo
+//     (por isso a função passou a ler a tabela conferencias_cio).
+//   - O resumo sai só na segunda-feira, uma vez por semana. Para testar em outro dia, use o botão Test com o
+//     corpo {"forcar_resumo_semanal": true}.
 //
 // Como criar no painel do Supabase (igual fizemos com a enviar-push):
 // 1. Rode antes o script sql-etapa12-parte2-avisos-enviados.sql no SQL Editor.
@@ -160,7 +171,7 @@ async function lerTodasAsLinhas(montarConsulta: () => any, ordemExtra?: string):
   return { data: todas, error: null };
 }
 
-// Previsões de parto, secagem e cio. A função ordena os eventos por data e id por conta própria.
+// Previsões de parto e secagem. A função ordena os eventos por data e id por conta própria.
 function calcularAvisosReprodutivos(
   eventosRepro: any[],
   mapaAnimais: Record<string, string>,
@@ -215,23 +226,169 @@ function calcularAvisosReprodutivos(
           corpo: `Animal ${nome} — previsão para ${dataPrevista.split("-").reverse().join("/")}`,
         });
       }
-    } else if (ev.tipo === "cio") {
-      const dataPrevista = somarDias(ev.data, DIAS_CICLO_ESTRO);
-      if (dataPrevista >= inicioJanela && dataPrevista <= fimJanela) {
-        avisos.push({
-          tipo: "previsao_cio",
-          chave: String(ev.id),
-          titulo: "Previsão de próximo cio",
-          corpo: `Animal ${nome} — previsto para ${dataPrevista.split("-").reverse().join("/")} (caso não tenha sido coberta)`,
-        });
-      }
     }
+    // O cio não é mais avisado vaca por vaca: vai no resumo de segunda-feira (resumoSemanalCios, mais abaixo).
   });
 
   return { avisos, ocultos };
 }
 
-Deno.serve(async (_req) => {
+// ---------- Cio: regras COPIADAS do index.html ([J09], "Cios para observar e calendário do cio") ----------
+// Esta função roda no Supabase e não consegue importar código do index.html, então as regras abaixo são uma cópia.
+// Elas precisam continuar IGUAIS às do app: o teste testes/testar-equivalencia-cio.js roda o código do app e este
+// aqui com os mesmos dados e falha se o resultado for diferente. Se mudar uma regra no app, mude aqui também.
+const MARCOS_CONFERENCIA_CIO = [21, 42];
+const CICLO_COMPLETO_MIN_DIAS = 17;
+const CICLO_COMPLETO_MAX_DIAS = 25;
+const MIN_INTERVALOS_MEDIA_CIO = 2;
+const DIAS_LISTA_CIOS_OBSERVAR = 7;
+const MAX_CICLOS_PROJETADOS_CIO = 3;
+const TIPOS_RELEVANTES_REPRO = ["cobertura", "cio", "aborto", "parto", "inducao_lactacao"];
+const DIAS_SEMANA_PT = ["domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado"];
+
+function diasEntre(dataIsoA: string, dataIsoB: string): number {
+  const a = new Date(dataIsoA + "T00:00:00");
+  const b = new Date(dataIsoB + "T00:00:00");
+  return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function nomeDiaSemana(iso: string): string {
+  return DIAS_SEMANA_PT[new Date(iso + "T12:00:00Z").getUTCDay()];
+}
+
+function chaveRespostaCio(coberturaId: any, marco: number): string {
+  return coberturaId + "|" + marco;
+}
+
+function mapaRespostasCio(respostas: any[] | null) {
+  const mapa = new Map();
+  (respostas || []).forEach((r: any) => {
+    if (r && r.cobertura_id != null) mapa.set(chaveRespostaCio(r.cobertura_id, Number(r.marco)), r.resposta);
+  });
+  return mapa;
+}
+
+function situacaoGestacaoCobertura(cob: any): string | null {
+  if (!cob || cob.tipo !== "cobertura") return null;
+  if (cob.diagnostico_gestacao === "vazia") return "vazia";
+  if (cob.diagnostico_gestacao === "prenhe") return "confirmada";
+  return "presumida";
+}
+
+function ordenarEventosReprodutivos(eventos: any[]): any[] {
+  return (eventos || []).filter((e) => e && e.data).slice()
+    .sort((x, y) => x.data.localeCompare(y.data) || (Number(x.id) || 0) - (Number(y.id) || 0));
+}
+
+function calcularIntervaloCioVaca(eventos: any[]) {
+  const evs = ordenarEventosReprodutivos(eventos).filter((e) => TIPOS_RELEVANTES_REPRO.includes(e.tipo));
+  const validos: number[] = [];
+  for (let i = 0; i < evs.length; i++) {
+    if (evs[i].tipo !== "cio") continue;
+    for (let j = i + 1; j < evs.length; j++) {
+      if (evs[j].tipo === "cio") {
+        const d = diasEntre(evs[i].data, evs[j].data);
+        if (d >= CICLO_COMPLETO_MIN_DIAS && d <= CICLO_COMPLETO_MAX_DIAS) validos.push(d);
+        break;
+      }
+      if (evs[j].tipo !== "cobertura") break;
+    }
+  }
+  if (validos.length >= MIN_INTERVALOS_MEDIA_CIO) {
+    return { dias: Math.round(validos.reduce((t, x) => t + x, 0) / validos.length), amostras: validos.length, personalizado: true };
+  }
+  return { dias: DIAS_CICLO_ESTRO, amostras: validos.length, personalizado: false };
+}
+
+function situacaoCicloVaca(eventos: any[], hojeIso: string) {
+  const evs = ordenarEventosReprodutivos(eventos).filter((e) => TIPOS_RELEVANTES_REPRO.includes(e.tipo));
+  const intervalo = calcularIntervaloCioVaca(eventos);
+  const ultimo = evs.length ? evs[evs.length - 1] : null;
+  const r: any = { estado: "sem_cio", intervalo, ultimo, proximo: null, partoPrevisto: null };
+  if (!ultimo) return r;
+  if (ultimo.tipo === "cio") {
+    r.estado = "ciclando_antigo";
+    for (let k = 1; k <= MAX_CICLOS_PROJETADOS_CIO; k++) {
+      const data = somarDias(ultimo.data, k * intervalo.dias);
+      if (data >= hojeIso) { r.estado = "ciclando"; r.proximo = { data, tipo: "ciclo", dias: diasEntre(hojeIso, data) }; break; }
+    }
+    return r;
+  }
+  if (ultimo.tipo === "cobertura") {
+    const gest = situacaoGestacaoCobertura(ultimo);
+    r.partoPrevisto = somarDias(ultimo.data, DIAS_GESTACAO);
+    if (gest === "confirmada") { r.estado = "prenhe"; return r; }
+    if (gest === "vazia") { r.estado = "vazia"; return r; }
+    r.estado = "coberta";
+    for (const marco of MARCOS_CONFERENCIA_CIO) {
+      const data = somarDias(ultimo.data, marco);
+      if (data >= hojeIso) { r.proximo = { data, tipo: "retorno", marco, dias: diasEntre(hojeIso, data) }; break; }
+    }
+  }
+  return r;
+}
+
+function calcularCiosParaObservar(animais: any[], eventos: any[], respostasCio: any[] | null, hojeIso: string, janelaDias?: number) {
+  const fim = somarDias(hojeIso, (janelaDias || DIAS_LISTA_CIOS_OBSERVAR) - 1);
+  const respondidas = mapaRespostasCio(respostasCio);
+  const eventosPor: Record<string, any[]> = {};
+  (eventos || []).forEach((e) => { (eventosPor[e.animal_id] = eventosPor[e.animal_id] || []).push(e); });
+  const itens: any[] = [];
+  (animais || []).forEach((a) => {
+    const sit = situacaoCicloVaca(eventosPor[a.id] || [], hojeIso);
+    const nome = "Nº " + a.identificacao;
+    if (sit.estado === "ciclando" && sit.proximo.data <= fim) {
+      itens.push({ animalId: a.id, animal: nome, tipo: "ciclo", dataPrevista: sit.proximo.data, dias: sit.proximo.dias, dataBase: sit.ultimo.data, intervalo: sit.intervalo.dias });
+    }
+    if (sit.estado === "coberta") {
+      MARCOS_CONFERENCIA_CIO.forEach((marco) => {
+        const data = somarDias(sit.ultimo.data, marco);
+        if (data < hojeIso || data > fim) return;
+        if (sit.ultimo.id != null && (respondidas.has(chaveRespostaCio(sit.ultimo.id, marco)) || data === hojeIso)) return;
+        itens.push({ animalId: a.id, animal: nome, tipo: "retorno", marco, dataPrevista: data, dias: diasEntre(hojeIso, data), dataBase: sit.ultimo.data });
+      });
+    }
+  });
+  return itens.sort((x, y) => x.dataPrevista.localeCompare(y.dataPrevista) || x.animal.localeCompare(y.animal, "pt-BR", { numeric: true }));
+}
+
+function rotuloDataCioObservar(dias: number, iso: string): string {
+  if (dias === 0) return "hoje";
+  if (dias === 1) return "amanhã";
+  return nomeDiaSemana(iso) + ", " + iso.slice(8, 10) + "/" + iso.slice(5, 7);
+}
+
+function textoCioParaObservar(item: any): string {
+  const quando = rotuloDataCioObservar(item.dias, item.dataPrevista);
+  if (item.tipo === "retorno") return "retorno ao cio previsto " + quando + " (" + item.marco + " dias depois da cobertura)";
+  return "provável cio " + quando;
+}
+
+// ---------- Resumo semanal (segunda-feira) ----------
+// Em vez de um aviso por vaca, o produtor recebe UMA notificação na segunda-feira com as vacas a observar naquela
+// semana (hoje e os 6 dias seguintes): as mesmas da lista "Cios para observar nesta semana" do app.
+const MAX_VACAS_NO_RESUMO_SEMANAL = 6;
+
+function ehSegundaFeira(hoje: string): boolean {
+  return new Date(hoje + "T12:00:00Z").getUTCDay() === 1;
+}
+
+// Devolve null quando não há nenhuma vaca para observar (nesse caso não se manda nada).
+function resumoSemanalCios(animais: any[], eventos: any[], respostasCio: any[] | null, hoje: string) {
+  const itens = calcularCiosParaObservar(animais, eventos, respostasCio, hoje);
+  if (!itens.length) return null;
+  const partes = itens.slice(0, MAX_VACAS_NO_RESUMO_SEMANAL).map((i) => i.animal + " (" + textoCioParaObservar(i) + ")");
+  const resto = itens.length - partes.length;
+  const corpo = partes.join("; ") + (resto > 0 ? "; e mais " + resto + (resto === 1 ? " vaca" : " vacas") + ". Veja a lista completa no app." : ".");
+  return {
+    tipo: "cios_semana",
+    chave: hoje, // uma vez por semana: a chave é a data da segunda-feira
+    titulo: itens.length === 1 ? "1 vaca para observar nesta semana" : itens.length + " vacas para observar nesta semana",
+    corpo,
+  };
+}
+
+Deno.serve(async (req) => {
   try {
     const chavesSecretas = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") ?? "{}");
     const chaveSecreta = chavesSecretas["default"] ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -251,6 +408,10 @@ Deno.serve(async (_req) => {
     );
 
     const hoje = hojeIso();
+    // O resumo de cios sai na segunda-feira. Para testar em outro dia pelo botão Test, use o corpo {"forcar_resumo_semanal": true}.
+    let corpoPedido: any = {};
+    try { corpoPedido = await req.json(); } catch (_e) { corpoPedido = {}; }
+    const mandarResumoSemanal = ehSegundaFeira(hoje) || (corpoPedido && corpoPedido.forcar_resumo_semanal === true);
     const inicioJanela = somarDias(hoje, -1); // pequena folga, caso a rotina não rode num dia
     const fimJanela = somarDias(hoje, 3); // avisa com até 3 dias de antecedência
 
@@ -355,6 +516,19 @@ Deno.serve(async (_req) => {
           });
         }
       });
+
+      // Resumo semanal de cios (só na segunda-feira). As respostas "não" da conferência de cio no app tiram a vaca da lista.
+      // Se a leitura das respostas falhar, o resumo sai do mesmo jeito (melhor uma vaca a mais do que a menos).
+      if (mandarResumoSemanal) {
+        const { data: respostasCio, error: erroRespostasCio } = await lerTodasAsLinhas(() =>
+          supabase.from("conferencias_cio").select("id, cobertura_id, marco, resposta").eq("produtor_id", produtorId)
+        );
+        if (erroRespostasCio) {
+          resumo.push({ produtor_id: produtorId, erro_ao_ler_conferencias_cio: erroRespostasCio.message, codigo: erroRespostasCio.code });
+        }
+        const resumoCios = resumoSemanalCios(animais ?? [], eventosRepro ?? [], erroRespostasCio ? [] : (respostasCio ?? []), hoje);
+        if (resumoCios) avisosParaEnviar.push(resumoCios);
+      }
 
       // Qualidade do leite (dedupe por semana, para não repetir todo dia).
       const statusQualidade = calcularStatusQualidade(qualidade ?? []);
