@@ -6,9 +6,10 @@
 # Este arquivo precisa ficar exatamente neste caminho dentro do repositório:
 # .github/workflows/testes.yml
 #
-# São dois testes: os cálculos do app (testar-calculos.js) e as regras da
-# função dos avisos das 7h (testar-avisos-diarios.js). Este último precisa do
-# Node 22.13 ou mais novo, por isso a versão abaixo é a 22.
+# São três testes: os cálculos do app (testar-calculos.js), as regras da função
+# dos avisos das 7h (testar-avisos-diarios.js) e a equivalência entre as regras
+# de cio do app e as da função (testar-equivalencia-cio.js). Os dois últimos
+# precisam do Node 22.13 ou mais novo, por isso a versão abaixo é a 22.
 
 name: Testes automatizados
 
@@ -32,3 +33,5 @@ jobs:
         run: node testes/testar-calculos.js
       - name: Rodar os testes dos avisos das 7h
         run: node testes/testar-avisos-diarios.js
+      - name: Conferir que as regras de cio do app e da função são iguais
+        run: node testes/testar-equivalencia-cio.js
