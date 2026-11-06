@@ -22,7 +22,7 @@ if(!fs.existsSync(CAMINHO)){
 process.removeAllListeners('warning');
 const ts = fs.readFileSync(CAMINHO, 'utf8').replace(/^import .*$/mg, '');
 const js = mod.stripTypeScriptTypes(ts);
-const F = new Function('Deno', js + '\nreturn { somarDias, avisoDispensadoAtivo, chavesDispensadasAtivas, chaveAvisoQualidade, calcularAvisosReprodutivos, ordenarPorDataEId, lerTodasAsLinhas };')({ serve(){}, env: { get(){ return undefined; } } });
+const F = new Function('Deno', js + '\nreturn { somarDias, avisoDispensadoAtivo, chavesDispensadasAtivas, chaveAvisoQualidade, calcularAvisosReprodutivos, ordenarPorDataEId, lerTodasAsLinhas, resumoSemanalCios, ehSegundaFeira, calcularCiosParaObservar, situacaoCicloVaca };')({ serve(){}, env: { get(){ return undefined; } } });
 
 let total = 0, falhas = 0;
 function verificar(descricao, obtido, esperado){
@@ -77,8 +77,45 @@ verificar('sem nenhuma baixa, avisa normalmente', tipos(r), ['previsao_parto']);
 console.log('\n--- secagem e cio continuam como antes ---');
 verificar('parto há 305 dias − 2: previsão de secagem em 2 dias avisa', tipos(calc([{ id: 30, animal_id: 2, tipo: 'parto', data: d(2 - 305) }])), ['previsao_secagem']);
 verificar('secagem registrada depois do parto: sem previsão de secagem', tipos(calc([{ id: 30, animal_id: 2, tipo: 'parto', data: d(2 - 305) }, { id: 31, animal_id: 2, tipo: 'secagem', data: d(-1) }])), []);
-verificar('cio há 19 dias: previsão do próximo cio em 2 dias', tipos(calc([{ id: 40, animal_id: 2, tipo: 'cio', data: d(2 - 21) }])), ['previsao_cio']);
-verificar('várias vacas: cada uma com o seu aviso', tipos(calc([cobParto(), { id: 41, animal_id: 2, tipo: 'cio', data: d(2 - 21) }])).sort(), ['previsao_cio', 'previsao_parto']);
+verificar('cio há 19 dias: não gera mais aviso diário (vai no resumo de segunda)', tipos(calc([{ id: 40, animal_id: 2, tipo: 'cio', data: d(2 - 21) }])), []);
+verificar('várias vacas: parto avisa, cio fica de fora do aviso diário', tipos(calc([cobParto(), { id: 41, animal_id: 2, tipo: 'cio', data: d(2 - 21) }])).sort(), ['previsao_parto']);
+
+console.log('\n--- resumo semanal de cios (segunda-feira) ---');
+const SEG = '2026-11-02', TER = '2026-11-03';
+const sd = (n) => F.somarDias(SEG, n);
+const vacas = [{ id: 1, identificacao: '536' }, { id: 2, identificacao: '12' }, { id: 3, identificacao: '7' }];
+verificar('2026-11-02 é segunda-feira', F.ehSegundaFeira(SEG), true);
+verificar('terça não é segunda-feira', F.ehSegundaFeira(TER), false);
+verificar('domingo não é segunda-feira', F.ehSegundaFeira('2026-11-01'), false);
+verificar('sem vacas para observar: não há resumo', F.resumoSemanalCios(vacas, [], [], SEG), null);
+let res = F.resumoSemanalCios(vacas, [{ id: 1, animal_id: 1, tipo: 'cio', data: sd(3 - 21) }], [], SEG);
+verificar('cio com ciclo de 21 dias previsto para daqui a 3 dias: entra no resumo', [res.tipo, res.chave, res.titulo], ['cios_semana', SEG, '1 vaca para observar nesta semana']);
+verificar('o texto traz o número da vaca e o dia da semana', res.corpo, 'Nº 536 (provável cio quinta, 05/11).');
+res = F.resumoSemanalCios(vacas, [{ id: 1, animal_id: 1, tipo: 'cio', data: sd(8 - 21) }], [], SEG);
+verificar('cio previsto para daqui a 8 dias (fora da semana): não entra', res, null);
+res = F.resumoSemanalCios(vacas, [{ id: 1, animal_id: 1, tipo: 'cio', data: sd(6 - 21) }], [], SEG);
+verificar('cio previsto para o sétimo dia (hoje + 6): entra', res && res.corpo, 'Nº 536 (provável cio domingo, 08/11).');
+res = F.resumoSemanalCios(vacas, [{ id: 2, animal_id: 2, tipo: 'cobertura', data: sd(5 - 21) }], [], SEG);
+verificar('coberta com retorno aos 21 dias em 5 dias: entra', res && res.corpo, 'Nº 12 (retorno ao cio previsto sábado, 07/11 (21 dias depois da cobertura)).');
+res = F.resumoSemanalCios(vacas, [{ id: 2, animal_id: 2, tipo: 'cobertura', data: sd(5 - 21) }], [{ cobertura_id: 2, marco: 21, resposta: 'nao' }], SEG);
+verificar('coberta que já respondeu "não" aos 21 dias: não entra de novo', res, null);
+res = F.resumoSemanalCios(vacas, [{ id: 2, animal_id: 2, tipo: 'cobertura', data: sd(5 - 21), diagnostico_gestacao: 'prenhe' }], [], SEG);
+verificar('coberta já diagnosticada prenhe: não entra', res, null);
+res = F.resumoSemanalCios(vacas, [{ id: 2, animal_id: 2, tipo: 'cobertura', data: sd(-21) }], [], SEG);
+verificar('retorno que cai hoje já é pergunta no app: não entra no resumo', res, null);
+res = F.resumoSemanalCios(vacas, [{ id: 2, animal_id: 2, tipo: 'cobertura', data: sd(5 - 42) }], [], SEG);
+verificar('retorno aos 42 dias em 5 dias: entra', res && res.corpo, 'Nº 12 (retorno ao cio previsto sábado, 07/11 (42 dias depois da cobertura)).');
+// ciclo da própria vaca: cios com 23 dias de intervalo (2 intervalos), próximo cio = último + 23
+const cicloLongo = [{ id: 1, animal_id: 1, tipo: 'cio', data: sd(-69 + 4) }, { id: 2, animal_id: 1, tipo: 'cio', data: sd(-46 + 4) }, { id: 3, animal_id: 1, tipo: 'cio', data: sd(-23 + 4) }];
+res = F.resumoSemanalCios(vacas, cicloLongo, [], SEG);
+verificar('ciclo de 23 dias da própria vaca: o cio previsto cai em 4 dias, não em 2 (21 dias fixos)', res && res.corpo, 'Nº 536 (provável cio sexta, 06/11).');
+// muitas vacas: lista as 6 primeiras e diz quantas faltam
+const muitas = Array.from({ length: 9 }, (_, i) => ({ id: 100 + i, identificacao: String(200 + i) }));
+const evMuitas = muitas.map((v, i) => ({ id: 500 + i, animal_id: v.id, tipo: 'cio', data: sd(1 + (i % 5) - 21) }));
+res = F.resumoSemanalCios(muitas, evMuitas, [], SEG);
+verificar('9 vacas: título com a contagem', res.titulo, '9 vacas para observar nesta semana');
+verificar('9 vacas: o texto mostra 6 e diz que faltam 3', res.corpo.endsWith('; e mais 3 vacas. Veja a lista completa no app.'), true);
+verificar('9 vacas: o texto lista exatamente 6 vacas', (res.corpo.match(/Nº /g) || []).length, 6);
 
 console.log('\n--- indução de lactação ---');
 verificar('indução depois da cobertura encerra o aviso de parto', tipos(calc([cobParto(), { id: 21, animal_id: 1, tipo: 'inducao_lactacao', data: d(-1) }])), []);
