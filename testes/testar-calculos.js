@@ -95,7 +95,7 @@ function carregarFuncoesReais(){
     'rotuloChuvaDia', 'validarChuvaDoDia', 'colunaDeChuvaAusente', 'compararProducaoPorChuva',
     'MARCOS_CONFERENCIA_CIO', 'DIAS_JANELA_CONFERENCIA_CIO', 'chaveRespostaCio', 'mapaRespostasCio', 'calcularConferenciasCio',
     'CICLO_COMPLETO_MIN_DIAS', 'CICLO_COMPLETO_MAX_DIAS', 'MIN_INTERVALOS_MEDIA_CIO', 'JANELA_OBSERVACAO_CIO', 'DIAS_LISTA_CIOS_OBSERVAR', 'MAX_CICLOS_PROJETADOS_CIO', 'TIPOS_RELEVANTES_REPRO', 'DIAS_SEMANA_PT',
-    'nomeDiaSemana', 'ordenarEventosReprodutivos', 'calcularIntervaloCioVaca', 'situacaoCicloVaca', 'calcularCiosParaObservar', 'descreverSituacaoCicloVaca', 'montarMesCalendarioCio',
+    'nomeDiaSemana', 'ordenarEventosReprodutivos', 'calcularIntervaloCioVaca', 'situacaoCicloVaca', 'calcularCiosParaObservar', 'calcularAlertasCioCalendario', 'descreverSituacaoCicloVaca', 'montarMesCalendarioCio',
     'calcularIdadeEmMeses', 'formatarIdadeEmMeses', 'textoIdadeAnimal',
     'rotuloDataCioObservar', 'textoCioParaObservar', 'montarGrupoCiosParaObservar',
     'JANELA_INSEMINACAO_MIN_HORAS', 'JANELA_INSEMINACAO_MAX_HORAS', 'JANELA_INSEMINACAO_IDEAL_HORAS', 'MAX_HORAS_ENTRE_CIO_E_INSEMINACAO',
@@ -1256,6 +1256,27 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
     verificar('listas nulas: nada e sem erro', [F.calcularCiosParaObservar(null, null, null, H).length, obs([], []).length], [0, 0]);
     verificar('eventos de uma vaca não contaminam a outra', res(obs([vaca(1), vaca(2)], [evA(1, 1, 'cio', -18), evA(2, 2, 'parto', -5)])), [[1, 'ciclo', d(3), 3]]);
 
+    console.log('  calendário de atividades do Início (mesma data da ficha e da lista da semana)');
+    const cal = (animais, eventos, respostas) => F.calcularAlertasCioCalendario(animais, eventos, respostas || [], H).map(a => [a.animal, a.titulo, a.data]);
+    verificar('cio com ciclo padrão: previsão no dia 21', cal([vaca(1)], [evA(1, 1, 'cio', -18)]), [['501', 'Previsão de próximo cio', d(3)]]);
+    verificar('ciclo da própria vaca (20 dias): a data do calendário não é mais a de 21 dias fixos', cal([vaca(1)], [evA(1, 1, 'cio', -60), evA(2, 1, 'cio', -40), evA(3, 1, 'cio', -20)]), [['501', 'Previsão de próximo cio', d(0)]]);
+    verificar('ciclo vencido sem novo registro: projeta o ciclo seguinte (como a ficha)', cal([vaca(1)], [evA(1, 1, 'cio', -36)]), [['501', 'Previsão de próximo cio', d(6)]]);
+    verificar('cio antigo demais: sem previsão', cal([vaca(1)], [evA(1, 1, 'cio', -70)]), []);
+    verificar('coberta há 10 dias: retornos aos 21 e 42 dias', cal([vaca(1)], [evA(5, 1, 'cobertura', -10)]), [['501', 'Retorno ao cio previsto (21 dias depois da cobertura)', d(11)], ['501', 'Retorno ao cio previsto (42 dias depois da cobertura)', d(32)]]);
+    verificar('coberta há 25 dias: só o retorno dos 42 dias', cal([vaca(1)], [evA(5, 1, 'cobertura', -25)]), [['501', 'Retorno ao cio previsto (42 dias depois da cobertura)', d(17)]]);
+    verificar('retorno que cai hoje aparece no calendário', cal([vaca(1)], [evA(5, 1, 'cobertura', -21)]).map(a => a[2]), [d(0), d(21)]);
+    verificar('retorno já respondido "não" não aparece', cal([vaca(1)], [evA(5, 1, 'cobertura', -10)], [{ cobertura_id: 5, marco: 21, resposta: 'nao' }]).map(a => a[2]), [d(32)]);
+    verificar('cobertura diagnosticada (prenhe ou vazia): sem cio no calendário', cal([vaca(1), vaca(2)], [evA(5, 1, 'cobertura', -10, { diagnostico_gestacao: 'prenhe' }), evA(6, 2, 'cobertura', -10, { diagnostico_gestacao: 'vazia' })]), []);
+    verificar('parto, aborto, indução e vaca sem eventos: sem cio no calendário', cal([vaca(1), vaca(2), vaca(3), vaca(4)], [evA(1, 1, 'parto', -5), evA(2, 2, 'aborto', -5), evA(3, 3, 'inducao_lactacao', -5)]), []);
+    verificar('secagem registrada depois do cio não esconde a previsão (como na ficha)', cal([vaca(1)], [evA(1, 1, 'cio', -18), evA(2, 1, 'secagem', -2)]), [['501', 'Previsão de próximo cio', d(3)]]);
+    verificar('listas nulas: nada e sem erro', F.calcularAlertasCioCalendario(null, null, null, H), []);
+    // a mesma data em todo o app: tudo que a lista da semana mostra tem a mesma data no calendário
+    const animaisX = [vaca(1), vaca(2), vaca(3)];
+    const eventosX = [evA(1, 1, 'cio', -60), evA(2, 1, 'cio', -40), evA(3, 1, 'cio', -22), evA(4, 2, 'cobertura', -16), evA(5, 3, 'cio', -19)];
+    const listaSemana = obs(animaisX, eventosX).map(i => i.animal.replace('Nº ', '') + '|' + i.dataPrevista).sort();
+    const datasCalendario = new Set(cal(animaisX, eventosX).map(a => a[0] + '|' + a[2]));
+    verificar('lista da semana e calendário do Início mostram as mesmas datas', [listaSemana.length > 0, listaSemana.every(x => datasCalendario.has(x))], [true, true]);
+
     console.log('  grupo e cartão na tela Início');
     verificar('rótulo da data: hoje, amanhã e dia da semana com data', [F.rotuloDataCioObservar(0, d(0)), F.rotuloDataCioObservar(1, d(1)), F.rotuloDataCioObservar(3, d(3))], ['hoje', 'amanhã', 'sexta, 06/11']);
     verificar('texto do cio provável', F.textoCioParaObservar({ tipo: 'ciclo', dias: 3, dataPrevista: d(3) }), 'provável cio sexta, 06/11');
@@ -1376,6 +1397,7 @@ console.log('\n--- buscarTodasAsLinhas (paginação do limite de 1000 linhas do 
   // ---------- Idade em meses (Meus animais) ----------
   {
     console.log('\nIdade em meses');
+
     const c = F.calcularIdadeEmMeses;
     verificar('nasceu em 03/11/2025, hoje 03/11/2026: 12 meses', c('2025-11-03', '2026-11-03'), 12);
     verificar('um dia antes de completar o mês: ainda 11 meses', c('2025-11-04', '2026-11-03'), 11);
