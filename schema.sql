@@ -645,6 +645,7 @@ create policy "So admin le os registros de acesso" on logs_acesso for select to 
 --   service_role (Edge Functions):
 --     animais, eventos_reprodutivos, eventos_sanitarios, qualidade_leite:  S---
 --     avisos_dispensados (a função respeita baixas e adiamentos):          S---
+--     conferencias_cio (o resumo semanal de cios respeita as respostas):   S---
 --     inscricoes_push, avisos_enviados:                                    SIUD
 --     as demais tabelas:                                                   ----
 --
